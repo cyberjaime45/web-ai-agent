@@ -5,8 +5,8 @@ browser page, ready to send to the AI planner.
 
 from __future__ import annotations
 
-from agent.schemas import InputField, PageState
-from browser.driver import BrowserDriver
+from schemas.models import InputField, PageState
+from tools.browser.driver import BrowserDriver
 
 
 def extract_page_state(driver: BrowserDriver) -> PageState:

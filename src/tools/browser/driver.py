@@ -18,9 +18,9 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
-from browser.navigation import NavigationMixin
-from browser.element import ElementMixin
-from browser.web_utils import WebUtilsMixin
+from tools.browser.navigation import NavigationMixin
+from tools.browser.element import ElementMixin
+from tools.browser.web_utils import WebUtilsMixin
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +29,9 @@ class BrowserDriver(NavigationMixin, ElementMixin, WebUtilsMixin):
     """Unified browser interaction layer.
 
     Composed from:
-    - :class:`~browser.Navigation.NavigationMixin` — URL navigation and history
-    - :class:`~browser.Element.ElementMixin`        — element extraction and actions
-    - :class:`~browser.WebUtils.WebUtilsMixin`      — screenshots and artifact capture
+    - :class:`~tools.browser.navigation.NavigationMixin` — URL navigation and history
+    - :class:`~tools.browser.element.ElementMixin`        — element extraction and actions
+    - :class:`~tools.browser.web_utils.WebUtilsMixin`     — screenshots and artifact capture
     """
 
     def __init__(self, page: Page, artifacts_dir: str = "artifacts") -> None:

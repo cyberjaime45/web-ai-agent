@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from playwright.sync_api import Page
 
 from agent.flow_parser import load_all_flows, FlowDefinition
-from browser.driver import BrowserDriver
+from tools.browser.driver import BrowserDriver
 from report_generator import generate_report
 
 # ── Load .env ──────────────────────────────────────────────────
@@ -190,7 +190,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
 
 @pytest.fixture(scope="session")
 def all_flows() -> dict[str, FlowDefinition]:
-    flows_dir = Path(__file__).parent / "flows"
+    flows_dir = Path(__file__).parent / "src" / "flows"
     return load_all_flows(flows_dir)
 
 

@@ -8,8 +8,8 @@ from __future__ import annotations
 import logging
 import time
 
-from agent.schemas import ActionResult, ActionType, AgentAction
-from browser.driver import BrowserDriver
+from schemas.models import ActionResult, ActionType, AgentAction
+from tools.browser.driver import BrowserDriver
 
 logger = logging.getLogger(__name__)
 

@@ -18,8 +18,8 @@ import pytest
 
 from agent.flow_parser import FlowDefinition
 from agent.runner import run_flow
-from browser.driver import BrowserDriver
-from browser.extractors import extract_page_state
+from tools.browser.driver import BrowserDriver
+from tools.browser.extractors import extract_page_state
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

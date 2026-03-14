@@ -8,7 +8,7 @@ import pytest
 
 from agent.flow_parser import FlowDefinition
 from agent.runner import run_flow
-from browser.driver import BrowserDriver
+from tools.browser.driver import BrowserDriver
 
 
 @pytest.mark.agent

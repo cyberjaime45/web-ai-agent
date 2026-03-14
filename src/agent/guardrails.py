@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from agent.schemas import ActionType, AgentAction, PageState
+from schemas.models import ActionType, AgentAction, PageState
 
 logger = logging.getLogger(__name__)
 

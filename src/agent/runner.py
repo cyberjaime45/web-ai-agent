@@ -18,10 +18,10 @@ from typing import Callable
 from agent.executor import execute_action
 from agent.flow_parser import FlowDefinition
 from agent.guardrails import GuardrailError, validate_action
-from agent.planner import AgentResponse, get_planner
-from agent.schemas import ActionResult, ActionType
-from browser.driver import BrowserDriver
-from browser.extractors import extract_page_state
+from agent.brain import AgentResponse, get_planner
+from schemas.models import ActionResult, ActionType
+from tools.browser.driver import BrowserDriver
+from tools.browser.extractors import extract_page_state
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ These validate the browser layer WITHOUT any AI involvement.
 """
 
 import pytest
-from browser.driver import BrowserDriver
+from tools.browser.driver import BrowserDriver
 
 
 @pytest.mark.smoke
