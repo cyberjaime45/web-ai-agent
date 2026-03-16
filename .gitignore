@@ -7,6 +7,9 @@
 ehthumbs.db
 Thumbs.db
 
+# Claude
+claude-*.log
+
 # External tool builders
 *.vscode
 *.vscode/*

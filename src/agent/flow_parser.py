@@ -165,10 +165,14 @@ def _parse_action(raw: str, step_num: int) -> FlowAction | None:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def parse_flow_file(filepath: Path) -> FlowDefinition:
-    """Parse a single .md flow file into a FlowDefinition."""
-    text = filepath.read_text(encoding="utf-8")
-    flow = FlowDefinition(name=filepath.stem, raw_markdown=text)
+def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
+    """Parse raw Markdown text into a FlowDefinition.
+
+    *name* is used as the fallback flow name when no ``# H1`` heading is
+    present (e.g. ``filepath.stem`` for file-based flows, ``"inline"`` for
+    content passed via ``--flow``).
+    """
+    flow = FlowDefinition(name=name, raw_markdown=text)
 
     # H1 heading → flow name
     h1 = re.match(r"^#\s+(.+)$", text, re.MULTILINE)
@@ -220,6 +224,14 @@ def parse_flow_file(filepath: Path) -> FlowDefinition:
     flow.notes            = _section_items(text, "Notes")
 
     return flow
+
+
+def parse_flow_file(filepath: Path) -> FlowDefinition:
+    """Parse a single .md flow file into a FlowDefinition."""
+    return parse_flow_markdown(
+        text=filepath.read_text(encoding="utf-8"),
+        name=filepath.stem,
+    )
 
 
 def load_all_flows(flows_dir: Path | str = "src/flows") -> dict[str, FlowDefinition]:

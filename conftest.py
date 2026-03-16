@@ -17,7 +17,7 @@ import pytest
 from dotenv import load_dotenv
 from playwright.sync_api import Page, sync_playwright
 
-from agent.flow_parser import load_all_flows, FlowDefinition, parse_flow_file
+from agent.flow_parser import load_all_flows, FlowDefinition, parse_flow_file, parse_flow_markdown
 from runner.flow_runner import FlowRunner
 from runner.actions import FlowResult
 from tools.browser.driver import BrowserDriver
@@ -96,6 +96,24 @@ class ProfessionalReportPlugin:
             theme_style=_THEME_STYLE,
         )
         print(f"\n📊 Report: {_REPORT_PATH}")
+
+
+# ── CLI options ─────────────────────────────────────────────────
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--flow",
+        default=None,
+        metavar="MARKDOWN",
+        help="Run a flow defined as raw Markdown text (passed inline).",
+    )
+    parser.addoption(
+        "--flow_file",
+        default=None,
+        metavar="PATH",
+        help="Run a flow from an explicit .md file path.",
+    )
 
 
 # ── Plugin registration ────────────────────────────────────────
@@ -192,6 +210,59 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
                 pass
 
 
+# ── Inline / explicit-path flow injection ─────────────────────
+#
+# Handles --flow "<markdown>" and --flow_file path/to/file.md.
+# Items are appended to the collected list so they go through the
+# same execution pipeline as file-discovered flows — no duplicate logic.
+
+
+def pytest_collection_modifyitems(
+    session: pytest.Session,
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    inline_md       = config.getoption("--flow",      default=None)
+    flow_file_path  = config.getoption("--flow_file", default=None)
+
+    if inline_md and flow_file_path:
+        pytest.exit(
+            "ERROR: --flow and --flow_file are mutually exclusive; use only one.",
+            returncode=4,
+        )
+
+    if inline_md is not None:
+        inline_md = inline_md.strip()
+        if not inline_md:
+            pytest.exit("ERROR: --flow content is empty.", returncode=4)
+        flow = parse_flow_markdown(inline_md)
+        if not flow.actions:
+            pytest.exit(
+                "ERROR: --flow content parsed to zero actions. "
+                "Check the Markdown format (needs a ## Steps section).",
+                returncode=4,
+            )
+        items.append(FlowItem.from_parent(session, name=flow.name, flow=flow))
+
+    elif flow_file_path is not None:
+        path = Path(flow_file_path)
+        if not path.exists():
+            pytest.exit(f"ERROR: --flow_file path not found: {path}", returncode=4)
+        if path.suffix.lower() != ".md":
+            pytest.exit(
+                f"ERROR: --flow_file must be a .md file, got '{path.suffix}'.",
+                returncode=4,
+            )
+        flow = parse_flow_file(path)
+        if not flow.actions:
+            pytest.exit(
+                f"ERROR: {path} parsed to zero actions. "
+                "Check the Markdown format (needs a ## Steps section).",
+                returncode=4,
+            )
+        items.append(FlowItem.from_parent(session, name=flow.name, flow=flow))
+
+
 # ── .md flow auto-discovery ────────────────────────────────────
 #
 # pytest_collect_file is called for every file pytest traverses.
@@ -280,6 +351,11 @@ class FlowFile(pytest.File):
 def pytest_collect_file(parent, file_path: Path):
     """Hook: turn every .md file in a flows/ directory into a test."""
     if file_path.suffix == ".md" and "flows" in file_path.parts:
+        # Skip auto-discovery when --flow_file explicitly targets this file —
+        # the injection in pytest_collection_modifyitems will handle it.
+        explicit = parent.config.getoption("--flow_file", default=None)
+        if explicit and Path(explicit).resolve() == file_path.resolve():
+            return None
         return FlowFile.from_parent(parent, path=file_path)
 
 

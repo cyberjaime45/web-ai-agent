@@ -12,7 +12,7 @@
 4. assert_text "WheelsUp"
 5. click_link "CHARTER UP"
 6. wait_for_load
-8. assert_url "charter-upp"
+8. assert_url "charter-up"
 9. screenshot "wu_explore_charter_up_page"
 
 ## Expected Outcome
