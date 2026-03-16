@@ -34,7 +34,7 @@ class BrowserDriver(NavigationMixin, ElementMixin, WebUtilsMixin):
     - :class:`~tools.browser.web_utils.WebUtilsMixin`     — screenshots and artifact capture
     """
 
-    def __init__(self, page: Page, artifacts_dir: str = "artifacts") -> None:
+    def __init__(self, page: Page, artifacts_dir: str = "reports/staging") -> None:
         self.page = page
         self.artifacts_dir = Path(artifacts_dir)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)

@@ -25,6 +25,16 @@ wheels/
 # Virtual environments
 .venv
 .env
-artifacts/
 reports/
 logs/
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Logs
+*.log

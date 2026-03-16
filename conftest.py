@@ -1,5 +1,8 @@
 """
 Shared pytest fixtures and hooks for the QA AI Agent framework.
+
+Auto-discovery: .md flow files in tests/flows/ are collected automatically
+by pytest_collect_file — no test_*.py files needed.
 """
 
 from __future__ import annotations
@@ -8,12 +11,15 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Generator
 
 import pytest
 from dotenv import load_dotenv
-from playwright.sync_api import Page
+from playwright.sync_api import Page, sync_playwright
 
-from agent.flow_parser import load_all_flows, FlowDefinition
+from agent.flow_parser import load_all_flows, FlowDefinition, parse_flow_file
+from runner.flow_runner import FlowRunner
+from runner.actions import FlowResult
 from tools.browser.driver import BrowserDriver
 from report_generator import generate_report
 
@@ -172,7 +178,8 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
     setattr(item, f"rep_{rep.when}", rep)
 
     if call.when == "call" and rep.failed:
-        driver: BrowserDriver | None = item.funcargs.get("browser_driver")  # type: ignore[assignment]
+        funcargs = getattr(item, "funcargs", None) or {}
+        driver: BrowserDriver | None = funcargs.get("browser_driver")  # type: ignore[assignment]
         if driver is not None:
             try:
                 safe_name = item.name.replace("/", "_").replace(":", "_")
@@ -185,20 +192,110 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
                 pass
 
 
+# ── .md flow auto-discovery ────────────────────────────────────
+#
+# pytest_collect_file is called for every file pytest traverses.
+# When it finds a .md file inside a "flows" directory it creates a
+# FlowFile node, which in turn yields one FlowItem per flow file.
+# FlowItem.runtest() launches its own Playwright browser so no
+# test_*.py file is needed — just drop a .md file in src/flows/.
+
+
+class _FlowFailure(Exception):
+    """Raised by FlowItem.runtest() to carry the FlowResult for reporting."""
+
+    def __init__(self, result: FlowResult) -> None:
+        self.result = result
+        super().__init__(result.error)
+
+
+class FlowItem(pytest.Item):
+    """A pytest test item backed by a .md flow file."""
+
+    def __init__(self, name: str, parent, flow: FlowDefinition) -> None:
+        super().__init__(name, parent)
+        self.flow = flow
+        self._artifacts = _REPORT_DIR
+        self._artifacts.mkdir(parents=True, exist_ok=True)
+
+    def runtest(self) -> None:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            ctx = browser.new_context(viewport={"width": 1280, "height": 720})
+            page = ctx.new_page()
+            page.set_default_timeout(self.flow.timeout)
+
+            runner = FlowRunner(artifacts_dir=str(self._artifacts))
+            result: FlowResult = runner.run(self.flow, page)
+
+            # Take a fresh failure screenshot while the browser is still open.
+            # This captures the exact page state at the moment of failure and
+            # is more reliable than relying on the last explicit `screenshot` step.
+            if not result.success:
+                try:
+                    safe = self.flow.name.replace(" ", "_")
+                    shot_path = str(self._artifacts / f"FAIL_{safe}.png")
+                    page.screenshot(path=shot_path)
+                    _annotate_failure_screenshot(shot_path, page)
+                    result.last_screenshot = shot_path
+                except Exception:
+                    pass  # best-effort; don't block test reporting
+
+                if result.last_screenshot:
+                    plugin = self.config.pluginmanager.get_plugin("professional_report")
+                    if plugin:
+                        plugin.record_screenshot(self.nodeid, result.last_screenshot)
+
+            ctx.close()
+            browser.close()
+
+        if not result.success:
+            raise _FlowFailure(result)
+
+    def repr_failure(self, excinfo) -> str:
+        if isinstance(excinfo.value, _FlowFailure):
+            r = excinfo.value.result
+            lines = [f"Flow '{r.flow_name}' failed — {r.error}", ""]
+            for s in r.steps:
+                icon = "✓" if s.success else "✗"
+                layer = f"[L{s.layer_used}]" if s.success else f"[L{s.layer_used} FAIL]"
+                lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {s.action.raw}")
+                if not s.success:
+                    lines.append(f"       {s.message}")
+            return "\n".join(lines)
+        return str(excinfo.value)
+
+    def reportinfo(self):
+        return self.fspath, 0, f"flow: {self.flow.name}"
+
+
+class FlowFile(pytest.File):
+    """Collects a single .md flow file as a pytest node."""
+
+    def collect(self) -> Generator:
+        flow = parse_flow_file(Path(self.fspath))
+        yield FlowItem.from_parent(self, name=flow.name, flow=flow)
+
+
+def pytest_collect_file(parent, file_path: Path):
+    """Hook: turn every .md file in a flows/ directory into a test."""
+    if file_path.suffix == ".md" and "flows" in file_path.parts:
+        return FlowFile.from_parent(parent, path=file_path)
+
+
 # ── Fixtures ───────────────────────────────────────────────────
 
 
 @pytest.fixture(scope="session")
 def all_flows() -> dict[str, FlowDefinition]:
-    flows_dir = Path(__file__).parent / "src" / "flows"
+    flows_dir = Path(__file__).parent / "tests" / "flows"
     return load_all_flows(flows_dir)
 
 
 @pytest.fixture
 def browser_driver(page: Page, tmp_path: Path) -> BrowserDriver:
-    artifacts_dir = Path(__file__).parent / "artifacts"
-    artifacts_dir.mkdir(exist_ok=True)
-    return BrowserDriver(page, artifacts_dir=str(artifacts_dir))
+    _REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    return BrowserDriver(page, artifacts_dir=str(_REPORT_DIR))
 
 
 @pytest.fixture
