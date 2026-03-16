@@ -45,6 +45,7 @@ logging.basicConfig(
 
 _PROJECT_ROOT = Path(__file__).parent
 _REPORT_DIR   = _PROJECT_ROOT / "reports" / _ENV
+_IMAGES_DIR   = _REPORT_DIR / "images"
 _REPORT_PATH  = _REPORT_DIR / "report.html"
 _HISTORY_PATH = _PROJECT_ROOT / "reports" / "run_history.json"
 
@@ -286,7 +287,7 @@ class FlowItem(pytest.Item):
     def __init__(self, name: str, parent, flow: FlowDefinition) -> None:
         super().__init__(name, parent)
         self.flow = flow
-        self._artifacts = _REPORT_DIR
+        self._artifacts = _IMAGES_DIR
         self._artifacts.mkdir(parents=True, exist_ok=True)
 
     def runtest(self) -> None:
@@ -370,8 +371,8 @@ def all_flows() -> dict[str, FlowDefinition]:
 
 @pytest.fixture
 def browser_driver(page: Page, tmp_path: Path) -> BrowserDriver:
-    _REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    return BrowserDriver(page, artifacts_dir=str(_REPORT_DIR))
+    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    return BrowserDriver(page, artifacts_dir=str(_IMAGES_DIR))
 
 
 @pytest.fixture

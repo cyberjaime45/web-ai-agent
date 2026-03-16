@@ -33,7 +33,7 @@ class WebUtilsMixin:
         filename = name or f"screenshot_{self._screenshot_counter:03d}"
         if not filename.endswith(".png"):
             filename += ".png"
-        path = self.artifacts_dir / "screenshots" / filename
+        path = self.artifacts_dir / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         self.page.screenshot(path=str(path), full_page=True)
         logger.info("Screenshot saved: %s", path)
@@ -48,7 +48,7 @@ class WebUtilsMixin:
         filename = name or f"viewport_{self._screenshot_counter:03d}"
         if not filename.endswith(".png"):
             filename += ".png"
-        path = self.artifacts_dir / "screenshots" / filename
+        path = self.artifacts_dir / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         self.page.screenshot(path=str(path), full_page=False)
         logger.info("Viewport screenshot saved: %s", path)

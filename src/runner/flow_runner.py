@@ -10,6 +10,7 @@ For every FlowAction in the flow:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from playwright.sync_api import Page
@@ -20,9 +21,11 @@ from runner.deterministic import DeterministicRunner
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "images"
+
 
 class FlowRunner:
-    def __init__(self, artifacts_dir: str | Path = "reports/staging"):
+    def __init__(self, artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR):
         self.artifacts_dir = Path(artifacts_dir)
         self._ai = AIResolver()
 

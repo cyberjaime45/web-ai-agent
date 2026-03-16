@@ -9,6 +9,7 @@ Raises if both fail — caller may then try Layer 3 (AI).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
@@ -18,9 +19,11 @@ from runner.locator import FallbackLocator
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "images"
+
 
 class DeterministicRunner:
-    def __init__(self, page: Page, artifacts_dir: str | Path = "reports/staging"):
+    def __init__(self, page: Page, artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR):
         self.page = page
         self.artifacts_dir = Path(artifacts_dir)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
