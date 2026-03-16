@@ -22,6 +22,7 @@ from runner.flow_runner import FlowRunner
 from runner.actions import FlowResult
 from tools.browser.driver import BrowserDriver
 from report_generator import generate_report
+from utils.banner import show_banner
 
 # ── Load .env ──────────────────────────────────────────────────
 
@@ -122,6 +123,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     plugin = ProfessionalReportPlugin()
     config.pluginmanager.register(plugin, "professional_report")
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    show_banner()
 
 
 # ── Screenshot annotation — draw red rectangles around error elements ──────────

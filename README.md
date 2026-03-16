@@ -1,151 +1,281 @@
-# QA AI Agent Framework
+# Web Agent
 
-An AI-driven web QA testing framework that reads test flows from Markdown files and executes them through an intelligent agent loop with Playwright browser automation.
+A Markdown-driven web automation framework that executes test flows through a 3-layer deterministic + AI runner, with automatic pytest discovery, environment-based reporting, and a polished terminal UI.
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│              QA Agent Orchestrator               │
-├─────────────────────────────────────────────────┤
-│                  Web QA Agent                    │
-│  ┌─────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │  Flow    │→ │   AI     │→ │  Guardrails   │  │
-│  │  Parser  │  │  Planner │  │  (Validation) │  │
-│  └─────────┘  └──────────┘  └───────┬───────┘  │
-│                                      │          │
-│  ┌──────────────┐  ┌────────────────▼────────┐  │
-│  │  Page State   │← │     Executor           │  │
-│  │  Extractor    │  │  (BrowserDriver)       │  │
-│  └──────────────┘  └────────────────────────┘  │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                     conftest.py                          │
+│   pytest_collect_file → FlowFile → FlowItem.runtest()    │
+│   --flow / --flow_file  (inline & explicit path modes)   │
+└─────────────────────────┬────────────────────────────────┘
+                          │ FlowDefinition
+                          ▼
+┌──────────────────────────────────────────────────────────┐
+│                  FlowRunner  (runner/)                   │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Layer 1 — DeterministicRunner                   │   │
+│  │  Exact Playwright role / label / placeholder     │   │
+│  │  locators.  Handles all 17 action types.         │   │
+│  └────────────────────┬─────────────────────────────┘   │
+│                       │ fails                            │
+│  ┌────────────────────▼─────────────────────────────┐   │
+│  │  Layer 2 — FallbackLocator                       │   │
+│  │  7 fuzzy strategies + selectolax similarity      │   │
+│  │  matching (threshold ≥ 0.6).                     │   │
+│  └────────────────────┬─────────────────────────────┘   │
+│                       │ fails                            │
+│  ┌────────────────────▼─────────────────────────────┐   │
+│  │  Layer 3 — AIResolver  (OpenAI, optional)        │   │
+│  │  Invoked only when L1 + L2 both fail.            │   │
+│  │  Skipped automatically if no OPENAI_API_KEY.     │   │
+│  └──────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+             reports/<ENVIRONMENT>/
+               report.html  report.json
+               assets/      images/
 ```
+
+---
 
 ## Quick Start
 
 ```bash
-# 1. Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# 1. Install dependencies (uv recommended)
+uv sync
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 2. Install Playwright browser
+uv run playwright install chromium
 
-# 3. Install Playwright browsers
-playwright install chromium
+# 3. Copy and configure environment
+cp .env.example .env
 
-# 4. Run smoke tests (deterministic, no AI)
-pytest tests/test_smoke.py -m smoke -v
+# 4. Run all flows
+uv run pytest
 
-# 5. Run agent-driven tests (uses rule-based planner by default)
-pytest tests/test_agent_flows.py -m agent -v
-
-# 6. Run everything
-pytest -v
+# 5. Run a specific flow file
+uv run pytest tests/flows/wheelsup_explore.md -v
 ```
 
-## Flows
+---
 
-Test flows live in the `flows/` directory as Markdown files. Each file defines:
+## Running Flows
 
-- **Target Application** — URL and description
-- **Credentials** — Login credentials (if needed)
-- **Steps** — Ordered list of actions to perform
-- **Expected Outcome** — What success looks like
-- **Error Scenarios** — Known failure conditions
+### Auto-discovery (default)
+Drop a `.md` file inside any `tests/flows/` directory — pytest picks it up automatically, no `test_*.py` needed.
 
-### Example: `flows/Login.md`
+```bash
+uv run pytest tests/flows/wheelsup_explore.md -v
+```
+
+### Inline Markdown via `--flow`
+Pass a complete flow as a raw Markdown string directly on the command line:
+
+```bash
+uv run pytest --flow "# My Flow
+## Config
+- url: https://example.com
+- timeout: 10000
+## Steps
+1. open \"https://example.com\"
+2. assert_text \"Example Domain\"
+" -v
+```
+
+### Explicit file path via `--flow_file`
+Point to any `.md` file regardless of its location:
+
+```bash
+uv run pytest --flow_file path/to/any_flow.md -v
+```
+
+> `--flow` and `--flow_file` are mutually exclusive.
+
+---
+
+## Flow File Format
+
+Flow files are plain Markdown. Place them in `tests/flows/`.
 
 ```markdown
-# Login Flow
+# Flow Name
 
-## Target Application
-- **URL**: https://example.com/login
-- **Description**: Main app login page
-
-## Credentials
-- **Username**: testuser
-- **Password**: testpass123
+## Config
+- url: https://example.com
+- timeout: 30000
 
 ## Steps
-1. Navigate to the login page
-2. Enter the username into the "Username" field
-3. Enter the password into the "Password" field
-4. Click the "Sign In" button
-5. Verify the page navigates to the dashboard
+1. open "https://example.com"
+2. wait_for_load
+3. assert_text "Expected text"
+4. click "Button label"
+5. fill "Field label" with "value"
+6. assert_url "expected-path"
+7. screenshot "step_name"
 
 ## Expected Outcome
-- URL changes to contain "dashboard"
-- Welcome message is displayed
+- Page loads successfully
+- Action completes as expected
 ```
 
-### Creating New Flows
+### Supported Step Actions
 
-1. Create a new `.md` file in `flows/` (e.g., `flows/Checkout.md`)
-2. Follow the section format above
-3. Add a fixture in `conftest.py` if you want a named shortcut
-4. Write a test in `tests/test_agent_flows.py` that uses it
+| Action | Example |
+|--------|---------|
+| `open` | `open "https://example.com"` |
+| `click` | `click "Submit"` |
+| `click_link` | `click_link "Learn More"` |
+| `click_button` | `click_button "Sign In"` |
+| `fill` | `fill "Email" with "user@example.com"` |
+| `select` | `select "Country" "United States"` |
+| `check` / `uncheck` | `check "Remember me"` |
+| `assert_text` | `assert_text "Welcome back"` |
+| `assert_title` | `assert_title "Dashboard"` |
+| `assert_url` | `assert_url "dashboard"` |
+| `wait` | `wait 2000` |
+| `wait_for_load` | `wait_for_load` |
+| `wait_for_element` | `wait_for_element ".modal"` |
+| `screenshot` | `screenshot "after_login"` |
+| `scroll` | `scroll down` |
+| `hover` | `hover "Membership"` |
 
-## AI Planner Modes
+**Aliases:** `go_to` / `navigate` / `goto` → `open` · `type` / `enter` → `fill` · `verify_text` / `assert` → `assert_text` · `verify_url` → `assert_url`
 
-### Rule-Based (Default, No API Key)
-The framework ships with a keyword-matching planner that maps flow steps to browser actions. Works out of the box for straightforward flows.
-
-### OpenAI-Backed (Set `OPENAI_API_KEY`)
-For complex flows requiring reasoning, set your API key:
-```bash
-export OPENAI_API_KEY=sk-your-key-here
-pytest tests/test_agent_flows.py -m agent -v
-```
-
-The framework auto-detects which planner to use.
+---
 
 ## Project Structure
 
 ```
-qa-ai-agent/
-├── agent/
-│   ├── flow_parser.py     # Reads .md flows into structured data
-│   ├── planner.py         # AI/rule-based action planning
-│   ├── executor.py        # Runs actions through browser
-│   ├── guardrails.py      # Validates actions before execution
-│   ├── runner.py          # Orchestrates the full agent loop
-│   └── schemas.py         # Pydantic models (PageState, Actions)
-├── browser/
-│   ├── driver.py          # Playwright wrapper with helpers
-│   └── extractors.py      # Page state extraction
-├── flows/
-│   ├── Login.md           # Login test flow
-│   ├── Navigation.md      # Navigation test flow
-│   └── FormValidation.md  # Form validation test flow
+web-agent/
+├── conftest.py                  # Pytest hooks, fixtures, flow auto-discovery
+├── report_generator.py          # HTML + JSON report builder
+├── pytest.ini                   # testpaths=tests, pythonpath=src
+├── pyproject.toml
+│
+├── src/
+│   ├── agent/
+│   │   ├── flow_parser.py       # Parses .md → FlowDefinition (markdown-it-py)
+│   │   ├── brain.py             # OpenAI-backed AI planner
+│   │   ├── executor.py          # Action executor for AI planner
+│   │   ├── guardrails.py        # Action validation
+│   │   ├── memory.py            # Agent memory
+│   │   └── prompts.py           # LLM prompt templates
+│   │
+│   ├── runner/
+│   │   ├── actions.py           # ActionType enum, FlowAction, StepResult, FlowResult
+│   │   ├── deterministic.py     # Layer 1 + Layer 2 runner
+│   │   ├── locator.py           # FallbackLocator (7 strategies + selectolax)
+│   │   ├── flow_runner.py       # Orchestrates L1 → L2 → L3
+│   │   └── ai_resolver.py       # Layer 3 OpenAI resolver
+│   │
+│   ├── tools/
+│   │   ├── browser/
+│   │   │   ├── driver.py        # BrowserDriver (NavigationMixin + ElementMixin + WebUtilsMixin)
+│   │   │   ├── navigation.py    # URL navigation, history, wait helpers
+│   │   │   ├── element.py       # Element extraction and interaction
+│   │   │   └── web_utils.py     # Screenshot and artifact capture
+│   │   └── database/            # Database client and queries
+│   │
+│   ├── schemas/
+│   │   └── models.py            # Pydantic models (PageState, InputField, etc.)
+│   │
+│   └── utils/
+│       └── banner.py            # Terminal startup banner (Rich)
+│
 ├── tests/
-│   ├── test_smoke.py      # Deterministic browser tests
-│   ├── test_flow_parser.py # Flow parsing tests
-│   └── test_agent_flows.py # AI agent-driven tests
-├── artifacts/             # Screenshots, logs, traces
-├── conftest.py            # Shared pytest fixtures
-├── pytest.ini             # Pytest configuration
-├── requirements.txt       # Python dependencies
-└── .env.example           # Environment variables template
+│   └── flows/
+│       └── wheelsup_explore.md  # WheelsUp smoke flow
+│
+└── reports/
+    └── <ENVIRONMENT>/           # e.g. staging/, qa1/, uat/
+        ├── report.html
+        ├── report.json
+        ├── assets/              # CSS + JS for the report
+        └── images/              # Screenshots from test runs
 ```
 
-## Execution Cycle
-
-For each flow step, the agent:
-1. **Extracts** structured page state (URL, labels, buttons, inputs, errors)
-2. **Plans** the next action(s) via AI or rules
-3. **Validates** through guardrails (target exists? visible? enabled?)
-4. **Executes** via Playwright
-5. **Records** the result and captures artifacts
-6. **Repeats** until flow completes or max steps reached
+---
 
 ## Configuration
 
-Copy `.env.example` to `.env` and customize:
+Copy `.env.example` to `.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | — | Enables LLM planner |
-| `HEADLESS` | `true` | Run browser headless |
-| `BROWSER` | `chromium` | Browser engine |
-| `CAPTURE_SCREENSHOTS` | `true` | Save screenshots |
+| `ENVIRONMENT` | `staging` | Report output directory (`reports/<ENVIRONMENT>/`) |
+| `BASE_URL` | — | Optional base URL override |
+| `OPENAI_API_KEY` | — | Enables Layer 3 AI resolver |
+| `LOG_LEVEL` | `info` | Logging verbosity |
+| `COVERAGE` | `0` | Enable coverage tracking in report |
+| `COVERAGE_TARGET` | `80` | Coverage % target shown in report |
+| `THEME_STYLE` | `system` | Report theme: `light`, `dark`, or `system` |
+
+### Multi-environment reports
+
+Set `ENVIRONMENT` before running to route all reports and screenshots to the correct folder:
+
+```bash
+ENVIRONMENT=qa1 uv run pytest tests/flows/wheelsup_explore.md
+# → writes to reports/qa1/
+```
+
+Supported environments: `staging`, `qa1`, `qa2`, `qa5`, `qa10`, `uat` (any string value is accepted).
+
+---
+
+## Reports
+
+After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report.html`.
+
+```
+reports/staging/
+├── report.html     # Interactive UI (charts, table, failure details)
+├── report.json     # Raw structured data
+├── assets/
+│   ├── report.css
+│   └── report.js
+└── images/
+    └── *.png       # All screenshots from the run
+```
+
+Open the report:
+```bash
+open reports/staging/report.html
+# or serve it:
+python -m http.server 8080 --directory reports/staging
+```
+
+---
+
+## Terminal Banner
+
+A startup banner is displayed at the beginning of every pytest session. To customise it, edit `BANNER_CONFIG` in `src/utils/banner.py`:
+
+```python
+BANNER_CONFIG = {
+    "agent_name": "Web Agent",
+    "version":    "1.0",
+    "author":     "Cyberjaime45",
+    "ascii_title": "...",      # any multi-line ASCII art string
+    "title_color": "dark_cyan",
+    "meta_color":  "dark_cyan",
+}
+```
+
+---
+
+## Layer Behaviour
+
+| Layer | Trigger | Strategy |
+|-------|---------|----------|
+| **L1 — Deterministic** | Always tried first | Exact Playwright `get_by_role`, `get_by_label`, `get_by_placeholder` |
+| **L2 — Fallback** | L1 fails | 7 fuzzy strategies + selectolax HTML similarity (≥ 0.6) |
+| **L3 — AI** | L1 + L2 fail | OpenAI call with page context; skipped if no `OPENAI_API_KEY` |
+
+Most flows run entirely on L1 with zero API calls. L2 handles case variations, extra whitespace, and partial text matches. L3 is the last resort for complex or dynamic pages.
