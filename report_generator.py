@@ -71,6 +71,8 @@ _LOCATOR_RE = re.compile(
     r"fill\(|click\(|goto\()"
 )
 
+_STEP_RE = re.compile(r"^\s+([✓✗])\s+(Step\s+\d+\s+\[L\d+[^\]]*\]\s+.+)$")
+
 
 def _parse_failure_details(longrepr: str) -> dict:
     if not longrepr:
@@ -96,7 +98,19 @@ def _parse_failure_details(longrepr: str) -> dict:
     code_lines = [ln for ln in lines
                   if ln.strip() and not ln.lstrip().startswith("E ") and not ln.strip().startswith("_ ")]
     short_trace = "\n".join(code_lines[-5:])
-    return {"assert_msg": assert_msg, "locators": locators, "short_trace": short_trace}
+    steps: list[dict] = []
+    for idx, ln in enumerate(lines):
+        m = _STEP_RE.match(ln)
+        if m:
+            passed = m.group(1) == "✓"
+            label = m.group(2).strip()
+            msg = ""
+            if not passed and idx + 1 < len(lines):
+                nxt = lines[idx + 1]
+                if nxt.strip() and not _STEP_RE.match(nxt):
+                    msg = nxt.strip()
+            steps.append({"label": label, "passed": passed, "msg": msg})
+    return {"assert_msg": assert_msg, "locators": locators, "short_trace": short_trace, "steps": steps}
 
 
 def _parse_nodeid(nodeid: str) -> tuple[str, str, str]:
@@ -526,7 +540,7 @@ body {
   background: var(--surface2);
   border-top: 1px dashed var(--border);
   gap: 1rem;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
 }
 .rdetail-inner.open { display: grid; }
 .rdetail-left { display: flex; flex-direction: column; gap: .5rem; }
@@ -544,6 +558,20 @@ body {
   padding: 2px 6px; border-radius: 0 3px 3px 0; margin: 1px 0;
   word-break: break-all;
 }
+.det-step { font-size: 0.95rem; padding: 1px 0; word-break: break-word; }
+.det-step.pass { color: var(--text); }
+.det-step.fail { color: var(--fail); font-weight: 500; }
+.det-step-icon { color: #22c55e; }
+.det-trace-wrap { display: flex; gap: .75rem; align-items: flex-start; }
+.det-trace-wrap .det-trace { flex: 1; min-width: 0; }
+.det-trace-shot { flex-shrink: 0; }
+.det-trace-shot img {
+  max-width: 200px; max-height: 130px; border-radius: 4px;
+  border: 1px solid var(--border); cursor: zoom-in;
+  display: block; transition: transform .15s;
+}
+.det-trace-shot img:hover { transform: scale(1.03); }
+.det-trace-shot .no-shot { font-size: 0.72rem; color: var(--label); }
 .det-trace {
   font-family: 'Cascadia Code','Fira Code','Courier New',monospace;
   font-size: 0.7rem; color: var(--text-2); background: var(--surface);
@@ -1159,30 +1187,59 @@ function buildFlakinessSVG(bars) {
 function buildDetailLeft(r) {
   let out = '<div class="rdetail-left">';
   const d = r.details || {};
+
+  // "What failed" — error message banner
   if (d.assert_msg) {
     out += '<div><div class="det-label">What failed</div><div class="det-msg">' + escHtml(d.assert_msg) + '</div></div>';
   }
-  if (d.locators && d.locators.length) {
-    out += '<div><div class="det-label">Locator / action tried</div>';
-    d.locators.forEach(function(l) { out += '<div class="det-loc">' + escHtml(l) + '</div>'; });
+
+  // Steps — only passing steps with green checkmark
+  var passingSteps = d.steps ? d.steps.filter(function(s) { return s.passed; }) : [];
+  if (passingSteps.length) {
+    out += '<div><div class="det-label">Steps</div>';
+    passingSteps.forEach(function(s) {
+      out += '<div class="det-step pass"><span class="det-step-icon">\u2713</span> ' + escHtml(s.label) + '</div>';
+    });
     out += '</div>';
   }
-  if (d.short_trace) {
-    out += '<div><div class="det-label">Stacktrace</div>' +
-      '<pre class="det-trace"><code class="hljs">' + hljsHighlight(d.short_trace) + '</code></pre></div>';
+
+  // Stacktrace — failed step + message inside code block, screenshot to the right
+  var failStep = d.steps && d.steps.filter(function(s) { return !s.passed; })[0];
+  if (failStep || d.short_trace) {
+    out += '<div><div class="det-label">Stacktrace</div>';
+    out += '<div class="det-trace-wrap">';
+
+    // Code block: failed step label + its error message
+    var traceContent = '';
+    if (failStep) {
+      traceContent += '\u2717 ' + failStep.label;
+      if (failStep.msg) traceContent += '\n' + failStep.msg;
+    } else if (d.short_trace) {
+      traceContent = d.short_trace;
+    }
+    out += '<pre class="det-trace"><code class="hljs">' + hljsHighlight(traceContent) + '</code></pre>';
+
+    // Screenshot inline to the right of code block
+    if (r.screenshot_path) {
+      out += '<div class="det-trace-shot">' +
+        '<img src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/>' +
+      '</div>';
+    }
+
+    out += '</div></div>';
   }
-  if (!d.assert_msg && !d.short_trace) {
+
+  if (!d.assert_msg && !failStep && !d.short_trace) {
     out += '<div style="color:var(--pass);font-size:.8rem">\u2713 Test passed with no errors.</div>';
   }
+
   out += '</div>';
   return out;
 }
 
 function buildDetailShot(r) {
-  if (!r.screenshot_path) return '<div class="rdetail-shot"><span class="no-shot">No screenshot</span></div>';
-  return '<div class="rdetail-shot">' +
-    '<img src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)" style="cursor:zoom-in"/>' +
-  '</div>';
+  // Screenshot is now embedded inside the Stacktrace section in buildDetailLeft.
+  return '';
 }
 
 function toggleDetail(i, trEl) {
@@ -1238,8 +1295,11 @@ function escHtml(s) {
 }
 
 function formatDur(s) {
-  if (s < 1) return Math.round(s * 1000) + ' ms';
-  return s.toFixed(2) + ' s';
+  const totalSec = Math.round(s);
+  if (totalSec < 60) return totalSec + 's';
+  const m = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return sec ? m + 'm ' + sec + 's' : m + 'm';
 }
 
 // ── Lightbox ──────────────────────────────────────────────────────────────────
@@ -1419,7 +1479,8 @@ function exportPDF() {
       startY: y,
       head:   [['Test', 'Status', 'Duration', 'Failure Details']],
       body:   D.results.map(function(r) {
-        const dur     = r.duration < 1 ? Math.round(r.duration * 1000) + 'ms' : r.duration.toFixed(2) + 's';
+        const totalSec = Math.round(r.duration);
+        const dur = totalSec < 60 ? totalSec + 's' : (Math.floor(totalSec/60) + 'm' + (totalSec%60 ? ' ' + (totalSec%60) + 's' : ''));
         const details = r.details && r.details.assert_msg
           ? r.details.assert_msg.substring(0, 80)
           : (r.outcome === 'passed' ? 'Passed' : '\u2014');

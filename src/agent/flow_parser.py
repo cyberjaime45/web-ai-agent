@@ -6,29 +6,55 @@ section (handles nested lists, inline formatting, and ordered numbers).
 
 Supported step syntax
 ─────────────────────
-open            "https://url"
-click           "Button Text"
-click_link      "Link Text"
-click_button    "Button Text"
-fill            "Field Label" with "value"
-fill            "Field Label" "value"
-select          "Dropdown Label" "Option Text"
-check           "Checkbox Label"
-uncheck         "Checkbox Label"
-assert_text     "expected text on page"
-assert_title    "expected page title"
-assert_url      "url-fragment"
-wait            2000
-wait_for_load
-wait_for_element ".css-selector"
-screenshot      "name"
-scroll          down | up | <pixels>
-hover           "Element Text"
+Navigation
+  open                     "https://url"
+  scroll                   down | up | <pixels>
+  scroll_to                "Element Text"
 
-Aliases: go_to / navigate / goto → open
-         type / enter             → fill
-         verify_text / assert     → assert_text
-         verify_url               → assert_url
+Interaction
+  click                    "Button Text"
+  click_link               "Link Text"
+  click_button             "Button Text"
+  double_click             "Element Text"
+  fill                     "Field Label" with "value"
+  fill                     "Field Label" "value"
+  clear                    "Field Label"
+  focus                    "Field Label"
+  select                   "Dropdown Label" "Option Text"
+  check                    "Checkbox Label"
+  uncheck                  "Checkbox Label"
+  hover                    "Element Text"
+  press_key                "Enter" | "Escape" | "Tab" | ...
+
+Assertions
+  assert_text              "expected text on page"
+  assert_title             "expected page title"
+  assert_url               "url-fragment"
+  assert_link              "Link Text"
+  assert_element_visible   "Element Text"
+  assert_element_hidden    "Element Text"
+  assert_button_enabled    "Button Text"
+  assert_button_disabled   "Button Text"
+
+Waits
+  wait                     2000
+  wait_for_load
+  wait_for_element         ".css-selector"
+  wait_for_text            "expected text"
+  wait_for_url             "url-fragment"
+
+Utilities
+  screenshot               "name"
+
+Aliases:
+  go_to / navigate / goto  → open
+  type / enter             → fill
+  verify_text / assert     → assert_text
+  verify_url               → assert_url
+  assert_visible           → assert_element_visible
+  assert_hidden            → assert_element_hidden
+  dblclick                 → double_click
+  key / keypress           → press_key
 """
 
 from __future__ import annotations

@@ -147,6 +147,96 @@ class DeterministicRunner:
             self.page.get_by_text(target, exact=True).first.hover()
             return self._ok(action, f"Hovered '{target}'", 1)
 
+        if t == ActionType.ASSERT_LINK:
+            text = a[0]
+            loc = self.page.get_by_role("link", name=text)
+            if loc.count() == 0:
+                raise AssertionError(f'Link with text "{text}" is not visible on the page.')
+            loc.first.wait_for(state="visible", timeout=5000)
+            return self._ok(action, f'Link "{text}" is visible', 1)
+
+        if t == ActionType.ASSERT_ELEMENT_VISIBLE:
+            text = a[0]
+            loc = self.page.get_by_text(text, exact=False)
+            if loc.count() == 0:
+                raise AssertionError(f'Element with text "{text}" is not visible on the page.')
+            loc.first.wait_for(state="visible", timeout=5000)
+            return self._ok(action, f'Element "{text}" is visible', 1)
+
+        if t == ActionType.ASSERT_ELEMENT_HIDDEN:
+            text = a[0]
+            loc = self.page.get_by_text(text, exact=False)
+            if loc.count() == 0 or loc.first.is_hidden():
+                return self._ok(action, f'Element "{text}" is not visible', 1)
+            raise AssertionError(f'Element with text "{text}" is still visible on the page.')
+
+        if t == ActionType.ASSERT_BUTTON_ENABLED:
+            target = a[0]
+            loc = self.page.get_by_role("button", name=target)
+            if loc.count() == 0:
+                raise AssertionError(f'Button "{target}" not found on the page.')
+            if loc.first.is_disabled():
+                raise AssertionError(f'Button "{target}" is disabled.')
+            return self._ok(action, f'Button "{target}" is enabled', 1)
+
+        if t == ActionType.ASSERT_BUTTON_DISABLED:
+            target = a[0]
+            loc = self.page.get_by_role("button", name=target)
+            if loc.count() == 0:
+                raise AssertionError(f'Button "{target}" not found on the page.')
+            if not loc.first.is_disabled():
+                raise AssertionError(f'Button "{target}" is enabled (expected disabled).')
+            return self._ok(action, f'Button "{target}" is disabled', 1)
+
+        if t == ActionType.WAIT_FOR_TEXT:
+            text = a[0]
+            self.page.get_by_text(text, exact=False).first.wait_for(state="visible", timeout=10000)
+            return self._ok(action, f'Text "{text}" appeared', 1)
+
+        if t == ActionType.WAIT_FOR_URL:
+            fragment = a[0]
+            self.page.wait_for_url(lambda url: fragment.lower() in url.lower(), timeout=10000)
+            return self._ok(action, f'URL contains "{fragment}"', 1)
+
+        if t == ActionType.PRESS_KEY:
+            key = a[0] if a else "Enter"
+            self.page.keyboard.press(key)
+            return self._ok(action, f'Pressed key "{key}"', 1)
+
+        if t == ActionType.CLEAR:
+            label = a[0]
+            loc = self.page.get_by_label(label, exact=True)
+            if loc.count() == 0:
+                loc = self.page.get_by_placeholder(label, exact=True)
+            loc.first.clear()
+            return self._ok(action, f'Cleared "{label}"', 1)
+
+        if t == ActionType.FOCUS:
+            label = a[0]
+            loc = self.page.get_by_label(label, exact=True)
+            if loc.count() == 0:
+                loc = self.page.get_by_placeholder(label, exact=True)
+            loc.first.focus()
+            return self._ok(action, f'Focused "{label}"', 1)
+
+        if t == ActionType.SCROLL_TO:
+            target = a[0]
+            loc = self.page.get_by_text(target, exact=False)
+            if loc.count() == 0:
+                raise AssertionError(f'Element with text "{target}" not found for scroll_to.')
+            loc.first.scroll_into_view_if_needed()
+            return self._ok(action, f'Scrolled to "{target}"', 1)
+
+        if t == ActionType.DOUBLE_CLICK:
+            target = a[0]
+            loc = self.page.get_by_role("button", name=target, exact=True)
+            if loc.count() == 0:
+                loc = self.page.get_by_role("link", name=target, exact=True)
+            if loc.count() == 0:
+                loc = self.page.get_by_text(target, exact=True)
+            loc.first.dblclick()
+            return self._ok(action, f'Double-clicked "{target}"', 1)
+
         raise ValueError(f"Unsupported action: {t}")
 
     # ── Layer 2 — fallback locators ───────────────────────────────
@@ -171,6 +261,48 @@ class DeterministicRunner:
             # Content search — look in raw HTML
             if a[0].lower() in self.page.content().lower():
                 return self._ok(action, f"[L2] Text '{a[0]}' found in HTML", 2)
+
+        elif t == ActionType.ASSERT_LINK:
+            text = a[0]
+            loc = self.page.locator(f'a:has-text("{text}")')
+            if loc.count() > 0 and loc.first.is_visible():
+                return self._ok(action, f'[L2] Link "{text}" is visible', 2)
+
+        elif t == ActionType.ASSERT_ELEMENT_VISIBLE:
+            if a[0].lower() in self.page.content().lower():
+                return self._ok(action, f'[L2] Element "{a[0]}" found in HTML', 2)
+
+        elif t == ActionType.ASSERT_ELEMENT_HIDDEN:
+            # Hidden element may still be in the DOM; accept if text absent from visible content
+            loc = self.page.get_by_text(a[0], exact=False)
+            if loc.count() == 0 or loc.first.is_hidden():
+                return self._ok(action, f'[L2] Element "{a[0]}" is not visible', 2)
+
+        elif t == ActionType.WAIT_FOR_TEXT:
+            if a[0].lower() in self.page.content().lower():
+                return self._ok(action, f'[L2] Text "{a[0]}" found in HTML', 2)
+
+        elif t in (ActionType.CLEAR, ActionType.FOCUS):
+            loc = self._locator.resolve_input(self.page, a[0])
+            if loc:
+                if t == ActionType.CLEAR:
+                    loc.fill("")
+                    return self._ok(action, f'[L2] Cleared "{a[0]}"', 2)
+                else:
+                    loc.focus()
+                    return self._ok(action, f'[L2] Focused "{a[0]}"', 2)
+
+        elif t == ActionType.DOUBLE_CLICK:
+            loc = self._locator.resolve_clickable(self.page, a[0])
+            if loc:
+                loc.dblclick()
+                return self._ok(action, f'[L2] Double-clicked "{a[0]}"', 2)
+
+        elif t == ActionType.SCROLL_TO:
+            loc = self.page.locator(f':has-text("{a[0]}")').last
+            if loc.count() > 0:
+                loc.scroll_into_view_if_needed()
+                return self._ok(action, f'[L2] Scrolled to "{a[0]}"', 2)
 
         raise RuntimeError(
             f"Layers 1+2 could not resolve step {action.step_num} "
