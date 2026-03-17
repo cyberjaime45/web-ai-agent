@@ -1,7 +1,7 @@
 """
-Shared pytest fixtures and hooks for the QA AI Agent framework.
+Shared pytest fixtures and hooks for the Web AI Agent runtime.
 
-Auto-discovery: .md flow files in tests/flows/ are collected automatically
+Auto-discovery: .md flow files in flows/ are collected automatically
 by pytest_collect_file — no test_*.py files needed.
 """
 
@@ -17,13 +17,13 @@ import pytest
 from dotenv import load_dotenv
 from playwright.sync_api import Page, sync_playwright
 
-from agent.flow_parser import load_all_flows, FlowDefinition, parse_flow_file, parse_flow_markdown
-from runner.flow_runner import FlowRunner
-from runner.actions import FlowResult
-from runner.providers import create_browser
-from tools.browser.driver import BrowserDriver
-from report_generator import generate_report
-from utils.banner import show_banner
+from app.flow.parser import load_all_flows, FlowDefinition, parse_flow_file, parse_flow_markdown
+from app.execution.engine import FlowRunner
+from app.schemas.actions import FlowResult
+from app.browser.session import create_browser
+from app.browser.driver import BrowserDriver
+from app.observability.reporter import generate_report
+from app.utils.banner import show_banner
 
 # ── Load .env ──────────────────────────────────────────────────
 
@@ -371,7 +371,7 @@ def pytest_collect_file(parent, file_path: Path):
 
 @pytest.fixture(scope="session")
 def all_flows() -> dict[str, FlowDefinition]:
-    flows_dir = Path(__file__).parent / "tests" / "flows"
+    flows_dir = Path(__file__).parent / "flows"
     return load_all_flows(flows_dir)
 
 
