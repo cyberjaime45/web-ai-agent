@@ -15,7 +15,6 @@ Output files:
 
 from __future__ import annotations
 
-import base64
 import datetime
 import html
 import json
@@ -46,13 +45,18 @@ def _get_category(class_str: str) -> str:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _encode_screenshot(path: str | None) -> str | None:
+def _screenshot_rel_path(path: str | None, report_dir: Path) -> str:
+    """Return a relative URL from report_dir to the screenshot file.
+
+    E.g. /abs/reports/staging/images/FAIL_foo.png → images/FAIL_foo.png
+    Returns '' when path is empty or outside report_dir.
+    """
     if not path:
-        return None
+        return ""
     try:
-        return base64.b64encode(Path(path).read_bytes()).decode("ascii")
-    except Exception:
-        return None
+        return str(Path(path).relative_to(report_dir)).replace("\\", "/")
+    except ValueError:
+        return ""
 
 
 def _duration_str(seconds: float) -> str:
@@ -716,39 +720,46 @@ function showBody() {
   if (el) el.hidden = false;
 }
 
-// ── Fetch data and bootstrap ──────────────────────────────────────────────────
+// ── Bootstrap — data is embedded inline, no HTTP fetch required ───────────────
 document.addEventListener('DOMContentLoaded', function() {
-  showLoading();
-  fetch('./report.json')
-    .then(function(res) {
-      if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + res.statusText);
-      return res.json();
-    })
-    .then(function(D) {
-      try {
-        window._QA_DATA = D;  // Cache for PDF export
-        showBody();
-        renderHeader(D);
-        renderSummary(D);
-        buildDonut(D);
-        renderDurationList(D);
-        buildTrend(D);
-        renderCategories(D);
-        renderHeatmap(D);
-        buildCoveragePie(D);
-        renderTable(D);
-        renderFooter(D);
-      } catch(e) {
-        console.error('Render error:', e);
-        showError('Render failed: ' + e.message);
-      }
-    })
-    .catch(function(err) {
-      console.error('Fetch error:', err);
-      showError(
-        'Could not load report.json. If viewing locally, please serve via HTTP: python -m http.server 8080'
-      );
-    });
+  try {
+    var D = window._QA_DATA;
+    if (!D || typeof D !== 'object') {
+      showError('Report data not found. Re-run the test suite to regenerate report.html.');
+      return;
+    }
+    // Ensure required top-level keys have safe defaults
+    D.meta        = D.meta        || {};
+    D.summary     = D.summary     || { total: 0, passed: 0, failed: 0, skipped: 0, pass_rate: 0 };
+    D.results     = D.results     || [];
+    D.categories  = D.categories  || [];
+    D.trend       = D.trend       || [];
+    D.heatmap     = D.heatmap     || [];
+    D.dur_list    = D.dur_list    || [];
+    D.meta.project          = D.meta.project          || 'QA Web Agent';
+    D.meta.environment      = D.meta.environment      || '';
+    D.meta.base_url         = D.meta.base_url         || '';
+    D.meta.log_level        = D.meta.log_level        || 'info';
+    D.meta.coverage         = D.meta.coverage         != null ? D.meta.coverage         : 0;
+    D.meta.coverage_target  = D.meta.coverage_target  != null ? D.meta.coverage_target  : 80;
+    D.meta.generated_at     = D.meta.generated_at     || '';
+    D.meta.duration         = D.meta.duration         || '0 ms';
+
+    showBody();
+    renderHeader(D);
+    renderSummary(D);
+    buildDonut(D);
+    renderDurationList(D);
+    buildTrend(D);
+    renderCategories(D);
+    renderHeatmap(D);
+    buildCoveragePie(D);
+    renderTable(D);
+    renderFooter(D);
+  } catch(e) {
+    console.error('Render error:', e);
+    showError('Render failed: ' + e.message);
+  }
 });
 
 // ── Header ───────────────────────────────────────────────────────────────────
@@ -1068,6 +1079,12 @@ function renderTable(D) {
   if (!tbody) return;
   try {
     tbody.innerHTML = '';
+    if (!D.results || !D.results.length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="5" style="text-align:center;padding:2rem;color:var(--text2)">No test results found.</td>';
+      tbody.appendChild(tr);
+      return;
+    }
     const frag = document.createDocumentFragment();
     D.results.forEach(function(r, i) {
       const oc = r.outcome;
@@ -1075,10 +1092,10 @@ function renderTable(D) {
       const flikSVG = buildFlakinessSVG(r.flakiness);
       // Details column: thumbnail for failed tests, text snippet otherwise
       let detailCell;
-      if (oc !== 'passed' && r.screenshot_b64) {
+      if (oc !== 'passed' && r.screenshot_path) {
         detailCell =
           '<img class="row-thumb" ' +
-          'src="data:image/png;base64,' + r.screenshot_b64 + '" ' +
+          'src="' + escHtml(r.screenshot_path) + '" ' +
           'alt="Failure screenshot — click to expand" ' +
           'title="Click row to expand failure details" />';
       } else if (oc !== 'passed') {
@@ -1162,9 +1179,9 @@ function buildDetailLeft(r) {
 }
 
 function buildDetailShot(r) {
-  if (!r.screenshot_b64) return '<div class="rdetail-shot"><span class="no-shot">No screenshot</span></div>';
+  if (!r.screenshot_path) return '<div class="rdetail-shot"><span class="no-shot">No screenshot</span></div>';
   return '<div class="rdetail-shot">' +
-    '<img src="data:image/png;base64,' + r.screenshot_b64 + '" alt="Failure screenshot" onclick="openLightbox(this.src)" style="cursor:zoom-in"/>' +
+    '<img src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)" style="cursor:zoom-in"/>' +
   '</div>';
 }
 
@@ -1439,10 +1456,10 @@ function exportPDF() {
 
     // ── PAGE 2: Failure screenshots ───────────────────────────────────────────
     const failedWithShots = D.results.filter(function(r) {
-      return r.outcome !== 'passed' && r.screenshot_b64;
+      return r.outcome !== 'passed' && r.screenshot_path;
     });
     const failedNoShots = D.results.filter(function(r) {
-      return r.outcome !== 'passed' && !r.screenshot_b64 && r.details && r.details.assert_msg;
+      return r.outcome !== 'passed' && !r.screenshot_path && r.details && r.details.assert_msg;
     });
 
     if (failedWithShots.length > 0 || failedNoShots.length > 0) {
@@ -1501,11 +1518,11 @@ function exportPDF() {
           y += 1;
         }
 
-        // Screenshot — only render when data is present, no red border
-        if (r.screenshot_b64) {
+        // Screenshot — only render when path is present, no red border
+        if (r.screenshot_path) {
           try {
             const shotH = 58; const shotW = Math.min(CW, shotH * (16 / 9));
-            pdf.addImage('data:image/png;base64,' + r.screenshot_b64, 'PNG', MG, y, shotW, shotH);
+            pdf.addImage(r.screenshot_path, 'PNG', MG, y, shotW, shotH);
             y += shotH + 3;
           } catch(_) { /* skip unrenderable image */ }
         }
@@ -1663,6 +1680,10 @@ _HTML_SHELL = """<!DOCTYPE html>
 
 </div><!-- /app -->
 
+<script>
+/* Inline report data — no HTTP fetch required, works with file:// */
+window._QA_DATA = __REPORT_DATA__;
+</script>
 <script src="assets/report.js"></script>
 </body>
 </html>
@@ -1707,7 +1728,7 @@ def generate_report(
             "duration":       round(r.get("duration", 0.0), 3),
             "env":            env,
             "details":        details,
-            "screenshot_b64": _encode_screenshot(r.get("screenshot")) or "",
+            "screenshot_path": _screenshot_rel_path(r.get("screenshot"), output_path.parent),
             "flakiness":      _flakiness_bars(r.get("outcome", "")),
         })
 
@@ -1778,16 +1799,20 @@ def generate_report(
     # 3. assets/report.js
     (assets_dir / "report.js").write_text(_JS, encoding="utf-8")
 
-    # 4. report.html — minimal shell
+    # 4. report.html — self-contained shell with data embedded inline
     title      = f"{html.escape(project_name)} \u2014 Test Report"
     safe_env   = html.escape(environment)
     safe_theme = html.escape(theme_style if theme_style in ("system", "light", "dark") else "system")
     # "system" → empty data-theme (CSS media query takes over); else force the value
     html_theme = "" if safe_theme == "system" else safe_theme
+    # Embed report_data as a JS literal so the report works without an HTTP server.
+    # Images reference relative paths (images/FAIL_name.png) rather than base64.
+    data_json = json.dumps(report_data, ensure_ascii=False)
     shell = (
         _HTML_SHELL
-        .replace("__TITLE__",  title)
-        .replace("__ENV__",    safe_env)
-        .replace("__THEME__",  html_theme)
+        .replace("__TITLE__",       title)
+        .replace("__ENV__",         safe_env)
+        .replace("__THEME__",       html_theme)
+        .replace("__REPORT_DATA__", data_json)
     )
     output_path.write_text(shell, encoding="utf-8")
