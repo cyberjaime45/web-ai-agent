@@ -1,4 +1,4 @@
-# WheelsUp Explore
+# WheelsUp Explore Page
 
 ## Config
 - url: https://wheelsup.com/

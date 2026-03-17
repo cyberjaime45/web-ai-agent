@@ -20,6 +20,7 @@ from playwright.sync_api import Page, sync_playwright
 from agent.flow_parser import load_all_flows, FlowDefinition, parse_flow_file, parse_flow_markdown
 from runner.flow_runner import FlowRunner
 from runner.actions import FlowResult
+from runner.providers import create_browser
 from tools.browser.driver import BrowserDriver
 from report_generator import generate_report
 from utils.banner import show_banner
@@ -297,7 +298,7 @@ class FlowItem(pytest.Item):
 
     def runtest(self) -> None:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = create_browser(pw, test_name=self.flow.name)
             ctx = browser.new_context(viewport={"width": 1280, "height": 720})
             page = ctx.new_page()
             page.set_default_timeout(self.flow.timeout)
