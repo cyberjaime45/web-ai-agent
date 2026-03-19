@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Callable
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
 
@@ -30,6 +31,85 @@ class DeterministicRunner:
         self._locator = FallbackLocator()
         self._shot_counter = 0
 
+        # ── L1 dispatch table ──────────────────────────────────────
+        self._l1_handlers: dict[ActionType, Callable[[FlowAction], StepResult]] = {
+            # Navigation
+            ActionType.GOTO:            self._h_goto,
+            ActionType.RELOAD:          self._h_reload,
+            ActionType.BACK:            self._h_back,
+            ActionType.WAIT_LOAD:       self._h_wait_load,
+            ActionType.SWITCH_TAB:      self._h_switch_tab,
+            ActionType.SCROLL:          self._h_scroll,
+            # Click
+            ActionType.CLICK:           self._h_click,
+            ActionType.CLICK_LINK_TEXT: self._h_click_link_text,
+            ActionType.CLICK_ID:        self._h_click_id,
+            ActionType.CLICK_BUTTON:    self._h_click_button,
+            ActionType.DOUBLE_CLICK:    self._h_double_click,
+            ActionType.RIGHT_CLICK:     self._h_right_click,
+            ActionType.HOVER:           self._h_hover,
+            # Input
+            ActionType.FILL:            self._h_fill,
+            ActionType.TYPE:            self._h_type,
+            ActionType.CLEAR:           self._h_clear,
+            ActionType.FOCUS:           self._h_focus,
+            ActionType.SELECT:          self._h_select,
+            ActionType.CHECK:           self._h_check,
+            ActionType.UNCHECK:         self._h_uncheck,
+            # Advanced
+            ActionType.DRAG_TO:         self._h_drag_to,
+            ActionType.UPLOAD:          self._h_upload,
+            # Table/Data
+            ActionType.READ_ROW:        self._h_read_row,
+            ActionType.TABLE_CLICK:     self._h_table_click,
+            ActionType.FIND_ROW:        self._h_find_row,
+            ActionType.COUNT_ELEMENTS:  self._h_count_elements,
+            ActionType.GET_ATTRIBUTE:   self._h_get_attribute,
+            # Assertions
+            ActionType.ASSERT_TEXT:     self._h_assert_text,
+            ActionType.ASSERT_NOT_TEXT: self._h_assert_not_text,
+            ActionType.ASSERT_VISIBLE:  self._h_assert_visible,
+            ActionType.ASSERT_HIDDEN:   self._h_assert_hidden,
+            ActionType.ASSERT_URL:      self._h_assert_url,
+            ActionType.ASSERT_ENABLED:  self._h_assert_enabled,
+            ActionType.ASSERT_DISABLED: self._h_assert_disabled,
+            ActionType.ASSERT_CHECKED:  self._h_assert_checked,
+            # Waits
+            ActionType.WAIT:            self._h_wait,
+            ActionType.WAIT_FOR_LOAD:   self._h_wait_for_load,
+            ActionType.WAIT_FOR_ELEMENT:self._h_wait_for_element,
+            ActionType.WAIT_FOR_TEXT:   self._h_wait_for_text,
+            ActionType.WAIT_FOR_URL:    self._h_wait_for_url,
+            # Utilities
+            ActionType.SCREENSHOT:      self._h_screenshot,
+            ActionType.PRESS:           self._h_press,
+        }
+
+        # ── L2 dispatch table ──────────────────────────────────────
+        self._l2_handlers: dict[ActionType, Callable[[FlowAction], StepResult | None]] = {
+            ActionType.CLICK:           self._l2_click,
+            ActionType.CLICK_BUTTON:    self._l2_click,
+            ActionType.CLICK_LINK_TEXT: self._l2_click,
+            ActionType.CLICK_ID:        self._l2_click_id,
+            ActionType.DOUBLE_CLICK:    self._l2_double_click,
+            ActionType.RIGHT_CLICK:     self._l2_right_click,
+            ActionType.HOVER:           self._l2_hover,
+            ActionType.FILL:            self._l2_fill,
+            ActionType.TYPE:            self._l2_type,
+            ActionType.CLEAR:           self._l2_clear_focus,
+            ActionType.FOCUS:           self._l2_clear_focus,
+            ActionType.SELECT:          self._l2_select,
+            ActionType.CHECK:           self._l2_check,
+            ActionType.UNCHECK:         self._l2_uncheck,
+            ActionType.DRAG_TO:         self._l2_drag_to,
+            ActionType.ASSERT_TEXT:     self._l2_assert_text,
+            ActionType.ASSERT_NOT_TEXT: self._l2_assert_not_text,
+            ActionType.ASSERT_VISIBLE:  self._l2_assert_visible,
+            ActionType.ASSERT_HIDDEN:   self._l2_assert_hidden,
+            ActionType.WAIT_FOR_TEXT:   self._l2_wait_for_text,
+            ActionType.SCROLL:          self._l2_scroll,
+        }
+
     # ── Public entry point ────────────────────────────────────────
 
     def execute(self, action: FlowAction) -> StepResult:
@@ -40,204 +120,354 @@ class DeterministicRunner:
             logger.debug(f"[L1] Step {action.step_num} failed: {exc}")
             return self._layer2(action, original_error=str(exc))
 
-    # ── Layer 1 — exact locators ──────────────────────────────────
+    # ── Layer 1 — dispatch ────────────────────────────────────────
 
     def _layer1(self, action: FlowAction) -> StepResult:
-        t, a = action.type, action.args
+        handler = self._l1_handlers.get(action.type)
+        if not handler:
+            raise ValueError(f"No L1 handler for {action.type.value}")
+        return handler(action)
 
-        if t == ActionType.OPEN:
-            self.page.goto(a[0], wait_until="domcontentloaded")
-            return self._ok(action, f"Opened {a[0]}", 1)
+    # ── L1 handlers: Navigation ───────────────────────────────────
 
-        if t in (ActionType.CLICK, ActionType.CLICK_BUTTON):
-            target = a[0]
-            loc = self.page.get_by_role("button", name=target, exact=True)
+    def _h_goto(self, action: FlowAction) -> StepResult:
+        self.page.goto(action.args[0], wait_until="domcontentloaded")
+        return self._ok(action, f"Opened {action.args[0]}", 1)
+
+    def _h_reload(self, action: FlowAction) -> StepResult:
+        self.page.reload(wait_until="domcontentloaded")
+        return self._ok(action, "Page reloaded", 1)
+
+    def _h_back(self, action: FlowAction) -> StepResult:
+        self.page.go_back(wait_until="domcontentloaded")
+        return self._ok(action, "Navigated back", 1)
+
+    def _h_wait_load(self, action: FlowAction) -> StepResult:
+        state = action.args[0] if action.args else "domcontentloaded"
+        self.page.wait_for_load_state(state)
+        return self._ok(action, f"Waited for load state '{state}'", 1)
+
+    def _h_switch_tab(self, action: FlowAction) -> StepResult:
+        idx = int(action.args[0])
+        pages = self.page.context.pages
+        if idx >= len(pages):
+            raise ValueError(f"Tab index {idx} out of range (have {len(pages)} tabs)")
+        self.page = pages[idx]
+        return self._ok(action, f"Switched to tab {idx}", 1)
+
+    def _h_scroll(self, action: FlowAction) -> StepResult:
+        direction = action.args[0].lower() if action.args else "down"
+        # If arg looks like element text (not a direction keyword or number),
+        # treat as scroll-to-element (absorbs old SCROLL_TO behavior)
+        if direction in ("down", "bottom"):
+            self.page.keyboard.press("End")
+        elif direction in ("up", "top"):
+            self.page.keyboard.press("Home")
+        elif direction.lstrip("-").isdigit():
+            self.page.mouse.wheel(0, int(direction))
+        else:
+            # Scroll to element by text
+            loc = self.page.get_by_text(direction, exact=False)
             if loc.count() == 0:
-                loc = self.page.get_by_role("link", name=target, exact=True)
-            loc.first.click()
-            return self._ok(action, f"Clicked '{target}'", 1)
+                raise AssertionError(f'Element with text "{direction}" not found for scroll.')
+            loc.first.scroll_into_view_if_needed()
+        return self._ok(action, f"Scrolled {direction}", 1)
 
-        if t == ActionType.CLICK_LINK:
-            target = a[0]
-            self.page.get_by_role("link", name=target, exact=True).first.click()
-            return self._ok(action, f"Clicked link '{target}'", 1)
+    # ── L1 handlers: Click ────────────────────────────────────────
 
-        if t == ActionType.FILL:
-            label, value = a[0], a[1] if len(a) > 1 else ""
-            loc = self.page.get_by_label(label, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_placeholder(label, exact=True)
-            loc.first.fill(value)
-            return self._ok(action, f"Filled '{label}' = '{value}'", 1)
+    def _h_click(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_role("button", name=target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("link", name=target, exact=True)
+        loc.first.click()
+        return self._ok(action, f"Clicked '{target}'", 1)
 
-        if t == ActionType.SELECT:
-            label, option = a[0], a[1] if len(a) > 1 else ""
-            loc = self.page.get_by_label(label, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_role("combobox", name=label, exact=True)
-            loc.first.select_option(option)
-            return self._ok(action, f"Selected '{option}' in '{label}'", 1)
+    def _h_click_link_text(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        self.page.get_by_role("link", name=target, exact=True).first.click()
+        return self._ok(action, f"Clicked link '{target}'", 1)
 
-        if t == ActionType.CHECK:
-            target = a[0]
-            loc = self.page.get_by_label(target, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_role("checkbox", name=target, exact=True)
-            loc.first.check()
-            return self._ok(action, f"Checked '{target}'", 1)
+    def _h_click_id(self, action: FlowAction) -> StepResult:
+        selector = action.args[0]
+        # Accept both "#id" CSS selectors and bare "id" strings
+        if not selector.startswith(("#", ".", "[")):
+            selector = f"#{selector}"
+        self.page.locator(selector).first.click()
+        return self._ok(action, f"Clicked element '{selector}'", 1)
 
-        if t == ActionType.UNCHECK:
-            target = a[0]
-            loc = self.page.get_by_label(target, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_role("checkbox", name=target, exact=True)
-            loc.first.uncheck()
-            return self._ok(action, f"Unchecked '{target}'", 1)
+    def _h_click_button(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_role("button", name=target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("link", name=target, exact=True)
+        loc.first.click()
+        return self._ok(action, f"Clicked button '{target}'", 1)
 
-        if t == ActionType.ASSERT_TEXT:
-            expected = a[0]
-            self.page.get_by_text(expected).first.wait_for(state="visible", timeout=5000)
-            return self._ok(action, f"Text '{expected}' visible", 1)
+    def _h_double_click(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_role("button", name=target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("link", name=target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_text(target, exact=True)
+        loc.first.dblclick()
+        return self._ok(action, f'Double-clicked "{target}"', 1)
 
-        if t == ActionType.ASSERT_TITLE:
-            expected = a[0]
+    def _h_right_click(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_role("button", name=target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("link", name=target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_text(target, exact=True)
+        loc.first.click(button="right")
+        return self._ok(action, f'Right-clicked "{target}"', 1)
+
+    def _h_hover(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        self.page.get_by_text(target, exact=True).first.hover()
+        return self._ok(action, f"Hovered '{target}'", 1)
+
+    # ── L1 handlers: Input ────────────────────────────────────────
+
+    def _h_fill(self, action: FlowAction) -> StepResult:
+        label = action.args[0]
+        value = action.args[1] if len(action.args) > 1 else ""
+        loc = self.page.get_by_label(label, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_placeholder(label, exact=True)
+        loc.first.fill(value)
+        return self._ok(action, f"Filled '{label}' = '{value}'", 1)
+
+    def _h_type(self, action: FlowAction) -> StepResult:
+        label = action.args[0]
+        value = action.args[1] if len(action.args) > 1 else ""
+        loc = self.page.get_by_label(label, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_placeholder(label, exact=True)
+        loc.first.press_sequentially(value)
+        return self._ok(action, f"Typed '{value}' into '{label}'", 1)
+
+    def _h_clear(self, action: FlowAction) -> StepResult:
+        label = action.args[0]
+        loc = self.page.get_by_label(label, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_placeholder(label, exact=True)
+        loc.first.clear()
+        return self._ok(action, f'Cleared "{label}"', 1)
+
+    def _h_focus(self, action: FlowAction) -> StepResult:
+        label = action.args[0]
+        loc = self.page.get_by_label(label, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_placeholder(label, exact=True)
+        loc.first.focus()
+        return self._ok(action, f'Focused "{label}"', 1)
+
+    def _h_select(self, action: FlowAction) -> StepResult:
+        label = action.args[0]
+        option = action.args[1] if len(action.args) > 1 else ""
+        loc = self.page.get_by_label(label, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("combobox", name=label, exact=True)
+        loc.first.select_option(option)
+        return self._ok(action, f"Selected '{option}' in '{label}'", 1)
+
+    def _h_check(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_label(target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("checkbox", name=target, exact=True)
+        loc.first.check()
+        return self._ok(action, f"Checked '{target}'", 1)
+
+    def _h_uncheck(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_label(target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("checkbox", name=target, exact=True)
+        loc.first.uncheck()
+        return self._ok(action, f"Unchecked '{target}'", 1)
+
+    # ── L1 handlers: Advanced ─────────────────────────────────────
+
+    def _h_drag_to(self, action: FlowAction) -> StepResult:
+        source, target = action.args[0], action.args[1]
+        self.page.get_by_text(source).first.drag_to(
+            self.page.get_by_text(target).first
+        )
+        return self._ok(action, f'Dragged "{source}" to "{target}"', 1)
+
+    def _h_upload(self, action: FlowAction) -> StepResult:
+        selector, filepath = action.args[0], action.args[1]
+        self.page.locator(selector).set_input_files(filepath)
+        return self._ok(action, f'Uploaded "{filepath}" to "{selector}"', 1)
+
+    # ── L1 handlers: Table/Data ───────────────────────────────────
+
+    def _h_read_row(self, action: FlowAction) -> StepResult:
+        text = action.args[0]
+        row = self.page.locator(f'tr:has-text("{text}")').first
+        row.wait_for(state="visible", timeout=5000)
+        cells = row.locator("td, th").all_text_contents()
+        return self._ok(action, f"Row [{text}]: {cells}", 1)
+
+    def _h_table_click(self, action: FlowAction) -> StepResult:
+        row_text = action.args[0]
+        click_target = action.args[1] if len(action.args) > 1 else None
+        row = self.page.locator(f'tr:has-text("{row_text}")').first
+        row.wait_for(state="visible", timeout=5000)
+        if click_target:
+            row.get_by_text(click_target).first.click()
+        else:
+            row.click()
+        msg = f'Clicked in row "{row_text}"'
+        if click_target:
+            msg += f' on "{click_target}"'
+        return self._ok(action, msg, 1)
+
+    def _h_find_row(self, action: FlowAction) -> StepResult:
+        text = action.args[0]
+        loc = self.page.locator(f'tr:has-text("{text}")')
+        if loc.count() == 0:
+            raise AssertionError(f'No table row containing "{text}" found.')
+        return self._ok(action, f'Found row with "{text}"', 1)
+
+    def _h_count_elements(self, action: FlowAction) -> StepResult:
+        selector = action.args[0]
+        count = self.page.locator(selector).count()
+        return self._ok(action, f'Count("{selector}") = {count}', 1)
+
+    def _h_get_attribute(self, action: FlowAction) -> StepResult:
+        selector, attr_name = action.args[0], action.args[1]
+        value = self.page.locator(selector).first.get_attribute(attr_name)
+        return self._ok(action, f'{selector}[{attr_name}] = "{value}"', 1)
+
+    # ── L1 handlers: Assertions ───────────────────────────────────
+
+    def _h_assert_text(self, action: FlowAction) -> StepResult:
+        expected = action.args[0]
+        # Backward compat: old "assert_title" alias — check page title first
+        if action.raw.lower().startswith("assert_title"):
             title = self.page.title()
             if expected.lower() not in title.lower():
                 raise AssertionError(f"Title '{title}' does not contain '{expected}'")
             return self._ok(action, f"Title contains '{expected}'", 1)
+        self.page.get_by_text(expected).first.wait_for(state="visible", timeout=5000)
+        return self._ok(action, f"Text '{expected}' visible", 1)
 
-        if t == ActionType.ASSERT_URL:
-            fragment = a[0]
-            url = self.page.url
-            if fragment.lower() not in url.lower():
-                raise AssertionError(f"URL '{url}' does not contain '{fragment}'")
-            return self._ok(action, f"URL contains '{fragment}'", 1)
+    def _h_assert_not_text(self, action: FlowAction) -> StepResult:
+        text = action.args[0]
+        loc = self.page.get_by_text(text, exact=False)
+        if loc.count() == 0 or loc.first.is_hidden():
+            return self._ok(action, f'Text "{text}" is absent/hidden', 1)
+        raise AssertionError(f'Text "{text}" is still visible on the page.')
 
-        if t == ActionType.WAIT:
-            ms = int(a[0]) if a and a[0].isdigit() else 1000
-            self.page.wait_for_timeout(ms)
-            return self._ok(action, f"Waited {ms} ms", 1)
-
-        if t == ActionType.WAIT_FOR_LOAD:
-            self.page.wait_for_load_state("domcontentloaded")
-            return self._ok(action, "Page load complete", 1)
-
-        if t == ActionType.WAIT_FOR_ELEMENT:
-            selector = a[0]
-            self.page.locator(selector).first.wait_for(state="visible")
-            return self._ok(action, f"Element '{selector}' visible", 1)
-
-        if t == ActionType.SCREENSHOT:
-            name = a[0] if a else f"step_{action.step_num}"
-            path = self._screenshot(name)
-            return self._ok(action, f"Screenshot saved: {path}", 1, screenshot=path)
-
-        if t == ActionType.SCROLL:
-            direction = a[0].lower() if a else "down"
-            if direction in ("down", "bottom"):
-                self.page.keyboard.press("End")
-            elif direction in ("up", "top"):
-                self.page.keyboard.press("Home")
-            elif direction.lstrip("-").isdigit():
-                self.page.mouse.wheel(0, int(direction))
-            return self._ok(action, f"Scrolled {direction}", 1)
-
-        if t == ActionType.HOVER:
-            target = a[0]
-            self.page.get_by_text(target, exact=True).first.hover()
-            return self._ok(action, f"Hovered '{target}'", 1)
-
-        if t == ActionType.ASSERT_LINK:
-            text = a[0]
+    def _h_assert_visible(self, action: FlowAction) -> StepResult:
+        text = action.args[0]
+        # Backward compat: old "assert_link" alias — check links first
+        if action.raw.lower().startswith("assert_link"):
             loc = self.page.get_by_role("link", name=text)
             if loc.count() == 0:
-                raise AssertionError(f'Link with text "{text}" is not visible on the page.')
+                raise AssertionError(f'Link with text "{text}" is not visible.')
             loc.first.wait_for(state="visible", timeout=5000)
             return self._ok(action, f'Link "{text}" is visible', 1)
+        loc = self.page.get_by_text(text, exact=False)
+        if loc.count() == 0:
+            raise AssertionError(f'Element with text "{text}" is not visible.')
+        loc.first.wait_for(state="visible", timeout=5000)
+        return self._ok(action, f'Element "{text}" is visible', 1)
 
-        if t == ActionType.ASSERT_ELEMENT_VISIBLE:
-            text = a[0]
-            loc = self.page.get_by_text(text, exact=False)
-            if loc.count() == 0:
-                raise AssertionError(f'Element with text "{text}" is not visible on the page.')
-            loc.first.wait_for(state="visible", timeout=5000)
-            return self._ok(action, f'Element "{text}" is visible', 1)
+    def _h_assert_hidden(self, action: FlowAction) -> StepResult:
+        text = action.args[0]
+        loc = self.page.get_by_text(text, exact=False)
+        if loc.count() == 0 or loc.first.is_hidden():
+            return self._ok(action, f'Element "{text}" is not visible', 1)
+        raise AssertionError(f'Element with text "{text}" is still visible.')
 
-        if t == ActionType.ASSERT_ELEMENT_HIDDEN:
-            text = a[0]
-            loc = self.page.get_by_text(text, exact=False)
-            if loc.count() == 0 or loc.first.is_hidden():
-                return self._ok(action, f'Element "{text}" is not visible', 1)
-            raise AssertionError(f'Element with text "{text}" is still visible on the page.')
+    def _h_assert_url(self, action: FlowAction) -> StepResult:
+        fragment = action.args[0]
+        url = self.page.url
+        if fragment.lower() not in url.lower():
+            raise AssertionError(f"URL '{url}' does not contain '{fragment}'")
+        return self._ok(action, f"URL contains '{fragment}'", 1)
 
-        if t == ActionType.ASSERT_BUTTON_ENABLED:
-            target = a[0]
-            loc = self.page.get_by_role("button", name=target)
-            if loc.count() == 0:
-                raise AssertionError(f'Button "{target}" not found on the page.')
-            if loc.first.is_disabled():
-                raise AssertionError(f'Button "{target}" is disabled.')
-            return self._ok(action, f'Button "{target}" is enabled', 1)
-
-        if t == ActionType.ASSERT_BUTTON_DISABLED:
-            target = a[0]
-            loc = self.page.get_by_role("button", name=target)
-            if loc.count() == 0:
-                raise AssertionError(f'Button "{target}" not found on the page.')
+    def _h_assert_enabled(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_role("button", name=target)
+        if loc.count() == 0:
+            loc = self.page.get_by_text(target, exact=True)
+        if loc.count() == 0:
+            raise AssertionError(f'Element "{target}" not found.')
+        if action.negated:
+            # Backward compat: assert_button_disabled mapped to ASSERT_ENABLED with negated=True
             if not loc.first.is_disabled():
-                raise AssertionError(f'Button "{target}" is enabled (expected disabled).')
-            return self._ok(action, f'Button "{target}" is disabled', 1)
+                raise AssertionError(f'Element "{target}" is enabled (expected disabled).')
+            return self._ok(action, f'Element "{target}" is disabled', 1)
+        if loc.first.is_disabled():
+            raise AssertionError(f'Element "{target}" is disabled.')
+        return self._ok(action, f'Element "{target}" is enabled', 1)
 
-        if t == ActionType.WAIT_FOR_TEXT:
-            text = a[0]
-            self.page.get_by_text(text, exact=False).first.wait_for(state="visible", timeout=10000)
-            return self._ok(action, f'Text "{text}" appeared', 1)
+    def _h_assert_disabled(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_role("button", name=target)
+        if loc.count() == 0:
+            loc = self.page.get_by_text(target, exact=True)
+        if loc.count() == 0:
+            raise AssertionError(f'Element "{target}" not found.')
+        if not loc.first.is_disabled():
+            raise AssertionError(f'Element "{target}" is enabled (expected disabled).')
+        return self._ok(action, f'Element "{target}" is disabled', 1)
 
-        if t == ActionType.WAIT_FOR_URL:
-            fragment = a[0]
-            self.page.wait_for_url(lambda url: fragment.lower() in url.lower(), timeout=10000)
-            return self._ok(action, f'URL contains "{fragment}"', 1)
+    def _h_assert_checked(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        loc = self.page.get_by_label(target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_role("checkbox", name=target, exact=True)
+        if loc.count() == 0:
+            raise AssertionError(f'Checkbox "{target}" not found.')
+        if not loc.first.is_checked():
+            raise AssertionError(f'Checkbox "{target}" is not checked.')
+        return self._ok(action, f'Checkbox "{target}" is checked', 1)
 
-        if t == ActionType.PRESS_KEY:
-            key = a[0] if a else "Enter"
-            self.page.keyboard.press(key)
-            return self._ok(action, f'Pressed key "{key}"', 1)
+    # ── L1 handlers: Waits ────────────────────────────────────────
 
-        if t == ActionType.CLEAR:
-            label = a[0]
-            loc = self.page.get_by_label(label, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_placeholder(label, exact=True)
-            loc.first.clear()
-            return self._ok(action, f'Cleared "{label}"', 1)
+    def _h_wait(self, action: FlowAction) -> StepResult:
+        ms = int(action.args[0]) if action.args and action.args[0].isdigit() else 1000
+        self.page.wait_for_timeout(ms)
+        return self._ok(action, f"Waited {ms} ms", 1)
 
-        if t == ActionType.FOCUS:
-            label = a[0]
-            loc = self.page.get_by_label(label, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_placeholder(label, exact=True)
-            loc.first.focus()
-            return self._ok(action, f'Focused "{label}"', 1)
+    def _h_wait_for_load(self, action: FlowAction) -> StepResult:
+        self.page.wait_for_load_state("domcontentloaded")
+        return self._ok(action, "Page load complete", 1)
 
-        if t == ActionType.SCROLL_TO:
-            target = a[0]
-            loc = self.page.get_by_text(target, exact=False)
-            if loc.count() == 0:
-                raise AssertionError(f'Element with text "{target}" not found for scroll_to.')
-            loc.first.scroll_into_view_if_needed()
-            return self._ok(action, f'Scrolled to "{target}"', 1)
+    def _h_wait_for_element(self, action: FlowAction) -> StepResult:
+        selector = action.args[0]
+        self.page.locator(selector).first.wait_for(state="visible")
+        return self._ok(action, f"Element '{selector}' visible", 1)
 
-        if t == ActionType.DOUBLE_CLICK:
-            target = a[0]
-            loc = self.page.get_by_role("button", name=target, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_role("link", name=target, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_text(target, exact=True)
-            loc.first.dblclick()
-            return self._ok(action, f'Double-clicked "{target}"', 1)
+    def _h_wait_for_text(self, action: FlowAction) -> StepResult:
+        text = action.args[0]
+        self.page.get_by_text(text, exact=False).first.wait_for(state="visible", timeout=10000)
+        return self._ok(action, f'Text "{text}" appeared', 1)
 
-        raise ValueError(f"Unsupported action: {t}")
+    def _h_wait_for_url(self, action: FlowAction) -> StepResult:
+        fragment = action.args[0]
+        self.page.wait_for_url(lambda url: fragment.lower() in url.lower(), timeout=10000)
+        return self._ok(action, f'URL contains "{fragment}"', 1)
+
+    # ── L1 handlers: Utilities ────────────────────────────────────
+
+    def _h_screenshot(self, action: FlowAction) -> StepResult:
+        name = action.args[0] if action.args else f"step_{action.step_num}"
+        path = self._screenshot(name)
+        return self._ok(action, f"Screenshot saved: {path}", 1, screenshot=path)
+
+    def _h_press(self, action: FlowAction) -> StepResult:
+        key = action.args[0] if action.args else "Enter"
+        self.page.keyboard.press(key)
+        return self._ok(action, f'Pressed key "{key}"', 1)
 
     # ── Layer 2 — fallback locators ───────────────────────────────
 
@@ -245,69 +475,151 @@ class DeterministicRunner:
         t, a = action.type, action.args
         logger.debug(f"[L2] Attempting fallback for '{t.value}' target='{a[0] if a else ''}'")
 
-        if t in (ActionType.CLICK, ActionType.CLICK_BUTTON, ActionType.CLICK_LINK):
-            loc = self._locator.resolve_clickable(self.page, a[0])
-            if loc:
-                loc.click()
-                return self._ok(action, f"[L2] Clicked '{a[0]}'", 2)
-
-        elif t == ActionType.FILL:
-            loc = self._locator.resolve_input(self.page, a[0])
-            if loc:
-                loc.fill(a[1] if len(a) > 1 else "")
-                return self._ok(action, f"[L2] Filled '{a[0]}'", 2)
-
-        elif t == ActionType.ASSERT_TEXT:
-            # Content search — look in raw HTML
-            if a[0].lower() in self.page.content().lower():
-                return self._ok(action, f"[L2] Text '{a[0]}' found in HTML", 2)
-
-        elif t == ActionType.ASSERT_LINK:
-            text = a[0]
-            loc = self.page.locator(f'a:has-text("{text}")')
-            if loc.count() > 0 and loc.first.is_visible():
-                return self._ok(action, f'[L2] Link "{text}" is visible', 2)
-
-        elif t == ActionType.ASSERT_ELEMENT_VISIBLE:
-            if a[0].lower() in self.page.content().lower():
-                return self._ok(action, f'[L2] Element "{a[0]}" found in HTML', 2)
-
-        elif t == ActionType.ASSERT_ELEMENT_HIDDEN:
-            # Hidden element may still be in the DOM; accept if text absent from visible content
-            loc = self.page.get_by_text(a[0], exact=False)
-            if loc.count() == 0 or loc.first.is_hidden():
-                return self._ok(action, f'[L2] Element "{a[0]}" is not visible', 2)
-
-        elif t == ActionType.WAIT_FOR_TEXT:
-            if a[0].lower() in self.page.content().lower():
-                return self._ok(action, f'[L2] Text "{a[0]}" found in HTML', 2)
-
-        elif t in (ActionType.CLEAR, ActionType.FOCUS):
-            loc = self._locator.resolve_input(self.page, a[0])
-            if loc:
-                if t == ActionType.CLEAR:
-                    loc.fill("")
-                    return self._ok(action, f'[L2] Cleared "{a[0]}"', 2)
-                else:
-                    loc.focus()
-                    return self._ok(action, f'[L2] Focused "{a[0]}"', 2)
-
-        elif t == ActionType.DOUBLE_CLICK:
-            loc = self._locator.resolve_clickable(self.page, a[0])
-            if loc:
-                loc.dblclick()
-                return self._ok(action, f'[L2] Double-clicked "{a[0]}"', 2)
-
-        elif t == ActionType.SCROLL_TO:
-            loc = self.page.locator(f':has-text("{a[0]}")').last
-            if loc.count() > 0:
-                loc.scroll_into_view_if_needed()
-                return self._ok(action, f'[L2] Scrolled to "{a[0]}"', 2)
+        handler = self._l2_handlers.get(t)
+        if handler:
+            result = handler(action)
+            if result is not None:
+                return result
 
         raise RuntimeError(
             f"Layers 1+2 could not resolve step {action.step_num} "
             f"({t.value} {a}). Original: {original_error}"
         )
+
+    # ── L2 handlers ───────────────────────────────────────────────
+
+    def _l2_click(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_clickable(self.page, action.args[0])
+        if loc:
+            loc.click()
+            return self._ok(action, f"[L2] Clicked '{action.args[0]}'", 2)
+        return None
+
+    def _l2_click_id(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_by_id(self.page, action.args[0])
+        if loc:
+            loc.click()
+            return self._ok(action, f"[L2] Clicked ID '{action.args[0]}'", 2)
+        return None
+
+    def _l2_double_click(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_clickable(self.page, action.args[0])
+        if loc:
+            loc.dblclick()
+            return self._ok(action, f'[L2] Double-clicked "{action.args[0]}"', 2)
+        return None
+
+    def _l2_right_click(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_clickable(self.page, action.args[0])
+        if loc:
+            loc.click(button="right")
+            return self._ok(action, f'[L2] Right-clicked "{action.args[0]}"', 2)
+        return None
+
+    def _l2_hover(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_clickable(self.page, action.args[0])
+        if loc:
+            loc.hover()
+            return self._ok(action, f'[L2] Hovered "{action.args[0]}"', 2)
+        return None
+
+    def _l2_fill(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_input(self.page, action.args[0])
+        if loc:
+            loc.fill(action.args[1] if len(action.args) > 1 else "")
+            return self._ok(action, f"[L2] Filled '{action.args[0]}'", 2)
+        return None
+
+    def _l2_type(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_input(self.page, action.args[0])
+        if loc:
+            loc.press_sequentially(action.args[1] if len(action.args) > 1 else "")
+            return self._ok(action, f"[L2] Typed into '{action.args[0]}'", 2)
+        return None
+
+    def _l2_clear_focus(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_input(self.page, action.args[0])
+        if loc:
+            if action.type == ActionType.CLEAR:
+                loc.fill("")
+                return self._ok(action, f'[L2] Cleared "{action.args[0]}"', 2)
+            else:
+                loc.focus()
+                return self._ok(action, f'[L2] Focused "{action.args[0]}"', 2)
+        return None
+
+    def _l2_select(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_input(self.page, action.args[0])
+        if loc:
+            loc.select_option(action.args[1] if len(action.args) > 1 else "")
+            return self._ok(action, f"[L2] Selected in '{action.args[0]}'", 2)
+        return None
+
+    def _l2_check(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_checkbox(self.page, action.args[0])
+        if loc:
+            loc.check()
+            return self._ok(action, f"[L2] Checked '{action.args[0]}'", 2)
+        return None
+
+    def _l2_uncheck(self, action: FlowAction) -> StepResult | None:
+        loc = self._locator.resolve_checkbox(self.page, action.args[0])
+        if loc:
+            loc.uncheck()
+            return self._ok(action, f"[L2] Unchecked '{action.args[0]}'", 2)
+        return None
+
+    def _l2_drag_to(self, action: FlowAction) -> StepResult | None:
+        src = self._locator.resolve_clickable(self.page, action.args[0])
+        dst = self._locator.resolve_clickable(self.page, action.args[1])
+        if src and dst:
+            src.drag_to(dst)
+            return self._ok(action, f'[L2] Dragged "{action.args[0]}" to "{action.args[1]}"', 2)
+        return None
+
+    def _l2_assert_text(self, action: FlowAction) -> StepResult | None:
+        if action.args[0].lower() in self.page.content().lower():
+            return self._ok(action, f"[L2] Text '{action.args[0]}' found in HTML", 2)
+        return None
+
+    def _l2_assert_not_text(self, action: FlowAction) -> StepResult | None:
+        if action.args[0].lower() not in self.page.content().lower():
+            return self._ok(action, f'[L2] Text "{action.args[0]}" absent from HTML', 2)
+        return None
+
+    def _l2_assert_visible(self, action: FlowAction) -> StepResult | None:
+        # Backward compat: assert_link alias
+        if action.raw.lower().startswith("assert_link"):
+            loc = self.page.locator(f'a:has-text("{action.args[0]}")')
+            if loc.count() > 0 and loc.first.is_visible():
+                return self._ok(action, f'[L2] Link "{action.args[0]}" is visible', 2)
+            return None
+        if action.args[0].lower() in self.page.content().lower():
+            return self._ok(action, f'[L2] Element "{action.args[0]}" found in HTML', 2)
+        return None
+
+    def _l2_assert_hidden(self, action: FlowAction) -> StepResult | None:
+        loc = self.page.get_by_text(action.args[0], exact=False)
+        if loc.count() == 0 or loc.first.is_hidden():
+            return self._ok(action, f'[L2] Element "{action.args[0]}" is not visible', 2)
+        return None
+
+    def _l2_wait_for_text(self, action: FlowAction) -> StepResult | None:
+        if action.args[0].lower() in self.page.content().lower():
+            return self._ok(action, f'[L2] Text "{action.args[0]}" found in HTML', 2)
+        return None
+
+    def _l2_scroll(self, action: FlowAction) -> StepResult | None:
+        if not action.args:
+            return None
+        target = action.args[0]
+        # Only fallback for scroll-to-element (text targets)
+        if target.lower() not in ("up", "down", "top", "bottom") and not target.lstrip("-").isdigit():
+            loc = self.page.locator(f':has-text("{target}")').last
+            if loc.count() > 0:
+                loc.scroll_into_view_if_needed()
+                return self._ok(action, f'[L2] Scrolled to "{target}"', 2)
+        return None
 
     # ── helpers ───────────────────────────────────────────────────
 

@@ -7,7 +7,7 @@ Resolution order for clickable elements:
   2. Case-insensitive role+name
   3. get_by_text exact
   4. get_by_text partial
-  5. selectolax fuzzy HTML search (similarity ≥ 0.6)
+  5. selectolax fuzzy HTML search (similarity >= 0.6)
 
 Resolution order for inputs:
   1. get_by_label exact
@@ -15,7 +15,7 @@ Resolution order for inputs:
   3. get_by_placeholder exact
   4. get_by_placeholder partial
   5. get_by_role "textbox" exact / partial
-  6. selectolax label→for→input lookup
+  6. selectolax label->for->input lookup
 """
 
 from __future__ import annotations
@@ -65,6 +65,46 @@ class FallbackLocator:
                 return loc
         return None
 
+    def resolve_checkbox(self, page: Page, target: str) -> Locator | None:
+        """Resolve a checkbox or radio element by label or role."""
+        for strategy in (
+            lambda: page.get_by_label(target, exact=True),
+            lambda: page.get_by_label(target),
+            lambda: page.get_by_role("checkbox", name=target, exact=True),
+            lambda: page.get_by_role("checkbox", name=target),
+            lambda: page.get_by_role("radio", name=target, exact=True),
+            lambda: page.get_by_role("radio", name=target),
+        ):
+            loc = self._try(strategy)
+            if loc is not None:
+                return loc
+        return None
+
+    def resolve_by_id(self, page: Page, element_id: str) -> Locator | None:
+        """Resolve an element by ID, data-testid, or data-test-id."""
+        # Strip leading # if present
+        clean_id = element_id.lstrip("#")
+        for strategy in (
+            lambda: page.locator(f"#{clean_id}"),
+            lambda: page.locator(f'[data-testid="{clean_id}"]'),
+            lambda: page.locator(f'[data-test-id="{clean_id}"]'),
+        ):
+            loc = self._try(strategy)
+            if loc is not None:
+                return loc
+        return None
+
+    def resolve_table_row(self, page: Page, text: str) -> Locator | None:
+        """Resolve a table row containing the given text."""
+        for strategy in (
+            lambda: page.locator(f'tr:has-text("{text}")'),
+            lambda: page.locator(f'[role="row"]:has-text("{text}")'),
+        ):
+            loc = self._try(strategy)
+            if loc is not None:
+                return loc
+        return None
+
     # ── helpers ───────────────────────────────────────────────────────────
 
     @staticmethod
@@ -92,7 +132,7 @@ class FallbackLocator:
                     best_score, best_text = score, text
 
             if best_text:
-                logger.debug(f"[L2] Fuzzy match '{target}' → '{best_text}' ({best_score:.2f})")
+                logger.debug(f"[L2] Fuzzy match '{target}' -> '{best_text}' ({best_score:.2f})")
                 return self._try(lambda: page.get_by_text(best_text))
         except Exception as exc:
             logger.debug(f"[L2] fuzzy_clickable error: {exc}")

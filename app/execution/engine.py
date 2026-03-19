@@ -15,7 +15,7 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
-from app.schemas.actions import FlowAction, FlowResult, StepResult
+from app.schemas.actions import AI_ONLY_ACTIONS, FlowAction, FlowResult, StepResult
 from app.layers.ai_resolver import AIResolver
 from app.layers.deterministic import DeterministicRunner
 
@@ -65,6 +65,18 @@ class FlowRunner:
         page: Page,
         runner: DeterministicRunner,
     ) -> StepResult:
+        # AI-native actions bypass L1/L2 entirely
+        if action.type in AI_ONLY_ACTIONS:
+            ai_result = self._ai.resolve_ai_action(action, page)
+            if ai_result is not None:
+                return ai_result
+            return StepResult(
+                action=action, success=False,
+                message=f"AI action failed: {action.type.value}",
+                layer_used=3,
+                error="AI resolver returned None (missing API key or LLM error)",
+            )
+
         try:
             return runner.execute(action)   # Layer 1 → Layer 2 internally
         except Exception as exc:

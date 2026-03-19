@@ -17,7 +17,7 @@ import pytest
 from dotenv import load_dotenv
 from playwright.sync_api import Page, sync_playwright
 
-from app.flow.parser import load_all_flows, FlowDefinition, parse_flow_file, parse_flow_markdown
+from app.flow.parser import FlowParseError, load_all_flows, FlowDefinition, parse_flow_file, parse_flow_markdown
 from app.execution.engine import FlowRunner
 from app.schemas.actions import FlowResult
 from app.browser.session import create_browser
@@ -331,6 +331,12 @@ class FlowItem(pytest.Item):
             raise _FlowFailure(result)
 
     def repr_failure(self, excinfo) -> str:
+        if isinstance(excinfo.value, FlowParseError):
+            e = excinfo.value
+            return (
+                f"Flow parse error at step {e.step_num}: {e}\n"
+                f"  Raw: {e.raw!r}"
+            )
         if isinstance(excinfo.value, _FlowFailure):
             r = excinfo.value.result
             lines = [f"Flow '{r.flow_name}' failed — {r.error}", ""]
@@ -351,7 +357,12 @@ class FlowFile(pytest.File):
     """Collects a single .md flow file as a pytest node."""
 
     def collect(self) -> Generator:
-        flow = parse_flow_file(Path(self.fspath))
+        try:
+            flow = parse_flow_file(Path(self.fspath))
+        except FlowParseError as exc:
+            import warnings
+            warnings.warn(f"Failed to parse flow {self.fspath}: {exc}")
+            return
         yield FlowItem.from_parent(self, name=flow.name, flow=flow)
 
 

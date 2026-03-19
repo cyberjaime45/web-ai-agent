@@ -4,57 +4,18 @@ Flow Parser — Parses .md flow files into FlowDefinition objects.
 Uses markdown-it-py to correctly extract list items from each ##
 section (handles nested lists, inline formatting, and ordered numbers).
 
-Supported step syntax
-─────────────────────
-Navigation
-  open                     "https://url"
-  scroll                   down | up | <pixels>
-  scroll_to                "Element Text"
+Supported syntax
+────────────────
+Old (space-separated):
+  click "Button Text"
+  fill "Username" with "admin"
+  fill "Username" "admin"
 
-Interaction
-  click                    "Button Text"
-  click_link               "Link Text"
-  click_button             "Button Text"
-  double_click             "Element Text"
-  fill                     "Field Label" with "value"
-  fill                     "Field Label" "value"
-  clear                    "Field Label"
-  focus                    "Field Label"
-  select                   "Dropdown Label" "Option Text"
-  check                    "Checkbox Label"
-  uncheck                  "Checkbox Label"
-  hover                    "Element Text"
-  press_key                "Enter" | "Escape" | "Tab" | ...
+New (colon-pipe):
+  click: "Button Text"
+  fill: "Username" | "admin"
 
-Assertions
-  assert_text              "expected text on page"
-  assert_title             "expected page title"
-  assert_url               "url-fragment"
-  assert_link              "Link Text"
-  assert_element_visible   "Element Text"
-  assert_element_hidden    "Element Text"
-  assert_button_enabled    "Button Text"
-  assert_button_disabled   "Button Text"
-
-Waits
-  wait                     2000
-  wait_for_load
-  wait_for_element         ".css-selector"
-  wait_for_text            "expected text"
-  wait_for_url             "url-fragment"
-
-Utilities
-  screenshot               "name"
-
-Aliases:
-  go_to / navigate / goto  → open
-  type / enter             → fill
-  verify_text / assert     → assert_text
-  verify_url               → assert_url
-  assert_visible           → assert_element_visible
-  assert_hidden            → assert_element_hidden
-  dblclick                 → double_click
-  key / keypress           → press_key
+Both syntaxes are fully supported and can be mixed within a flow.
 """
 
 from __future__ import annotations
@@ -66,9 +27,25 @@ from typing import Optional
 
 from markdown_it import MarkdownIt
 
-from app.schemas.actions import ACTION_ALIASES, ActionType, FlowAction
+from app.schemas.actions import (
+    ACTION_ALIASES,
+    ACTION_ARG_SPEC,
+    ActionType,
+    FlowAction,
+    _NEGATED_ALIASES,
+    _OLD_VALUE_MAP,
+)
 
 _md = MarkdownIt()
+
+
+class FlowParseError(ValueError):
+    """Raised when a flow step cannot be parsed."""
+
+    def __init__(self, message: str, step_num: int = 0, raw: str = ""):
+        self.step_num = step_num
+        self.raw = raw
+        super().__init__(message)
 
 
 @dataclass
@@ -136,56 +113,145 @@ def _section_lines(text: str, header: str) -> list[str]:
     return [ln.strip() for ln in m.group(1).splitlines() if ln.strip()]
 
 
-# ── Action parsing ────────────────────────────────────────────────────────────
+# ── 4-stage action parsing pipeline ──────────────────────────────────────────
+#
+#   raw text → _tokenize → _normalize → _validate → _build → FlowAction
+#
+
+_COLON_RE = re.compile(r"^(\w+)\s*:\s*(.*)", re.DOTALL)
+_QUOTED_RE = re.compile(r'"([^"]*)"')
+
+
+def _tokenize(raw: str) -> tuple[str, str, str]:
+    """
+    Stage 1: Split raw step text into (keyword, raw_args, syntax_format).
+
+    Detects colon syntax (new) vs space-separated (old).
+    """
+    raw = raw.strip()
+
+    # Try new colon syntax first: `click: "Login"`
+    m = _COLON_RE.match(raw)
+    if m:
+        return m.group(1).lower(), m.group(2).strip(), "new"
+
+    # Old space-separated syntax: `click "Login"`
+    parts = raw.split(None, 1)
+    keyword = parts[0].lower()
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    return keyword, rest, "old"
+
+
+def _normalize(
+    keyword: str, raw_args: str, syntax: str
+) -> tuple[ActionType, list[str], bool]:
+    """
+    Stage 2: Resolve keyword to ActionType and parse arguments.
+
+    Returns (action_type, args_list, negated).
+    """
+    negated = keyword in _NEGATED_ALIASES
+
+    # Resolve action type: try enum value, then aliases, then old value map
+    action_type: ActionType | None = None
+    try:
+        action_type = ActionType(keyword)
+    except ValueError:
+        action_type = ACTION_ALIASES.get(keyword) or _OLD_VALUE_MAP.get(keyword)
+
+    if action_type is None:
+        raise FlowParseError(f"Unknown action keyword: '{keyword}'")
+
+    # Parse arguments based on syntax format
+    if syntax == "new":
+        # New syntax: split on pipe, strip quotes from each part
+        if raw_args:
+            parts = [p.strip() for p in raw_args.split("|")]
+            args = []
+            for part in parts:
+                # Strip surrounding quotes if present
+                qm = _QUOTED_RE.search(part)
+                if qm:
+                    args.append(qm.group(1))
+                elif part:
+                    args.append(part)
+        else:
+            args = []
+    else:
+        # Old syntax: strip "with" separator, extract quoted args
+        rest_clean = re.sub(r"\bwith\b", "", raw_args, count=1).strip()
+        args = _QUOTED_RE.findall(rest_clean)
+        # For bare unquoted single args: wait 2000, scroll down
+        if not args and rest_clean:
+            args = [rest_clean.strip()]
+
+    return action_type, args, negated
+
+
+def _validate(
+    action_type: ActionType, args: list[str], step_num: int, raw: str
+) -> None:
+    """
+    Stage 3: Validate argument count against ACTION_ARG_SPEC.
+    """
+    spec = ACTION_ARG_SPEC.get(action_type)
+    if spec is None:
+        return  # No spec defined — skip validation
+
+    min_args, max_args = spec
+    n = len(args)
+    if n < min_args or n > max_args:
+        if min_args == max_args:
+            expected = f"exactly {min_args}"
+        else:
+            expected = f"{min_args}-{max_args}"
+        raise FlowParseError(
+            f"Step {step_num}: '{action_type.value}' expects {expected} "
+            f"arg(s), got {n}. Raw: {raw!r}",
+            step_num=step_num,
+            raw=raw,
+        )
+
+
+def _build(
+    action_type: ActionType,
+    args: list[str],
+    negated: bool,
+    raw: str,
+    step_num: int,
+) -> FlowAction:
+    """Stage 4: Construct the FlowAction."""
+    return FlowAction(
+        type=action_type,
+        args=args,
+        raw=raw,
+        step_num=step_num,
+        negated=negated,
+    )
 
 
 def _parse_action(raw: str, step_num: int) -> FlowAction | None:
     """
-    Parse a single step line (already stripped of its list number/bullet)
-    into a FlowAction.
+    Parse a single step line into a FlowAction using the 4-stage pipeline.
 
-    Examples
-    ────────
-    open "https://example.com"          → OPEN, ["https://example.com"]
-    fill "Username" with "student"      → FILL, ["Username", "student"]
-    fill "Username" "student"           → FILL, ["Username", "student"]
-    click "Submit"                      → CLICK, ["Submit"]
-    wait 2000                           → WAIT, ["2000"]
-    wait_for_load                       → WAIT_FOR_LOAD, []
-    scroll down                         → SCROLL, ["down"]
+    Returns None for blank lines. Falls back to WAIT(0) for unknown keywords
+    so the AI planner can still consume flow.steps[].
     """
     raw = raw.strip()
     if not raw:
         return None
 
-    parts   = raw.split(None, 1)
-    keyword = parts[0].lower()
-    rest    = parts[1].strip() if len(parts) > 1 else ""
-
-    # Resolve action type
-    action_type: ActionType | None = None
     try:
-        action_type = ActionType(keyword)
-    except ValueError:
-        action_type = ACTION_ALIASES.get(keyword)
-
-    if action_type is None:
+        keyword, raw_args, syntax = _tokenize(raw)
+        action_type, args, negated = _normalize(keyword, raw_args, syntax)
+        _validate(action_type, args, step_num, raw)
+        return _build(action_type, args, negated, raw, step_num)
+    except FlowParseError:
         # Unknown keyword — keep as a raw WAIT(0) placeholder so the AI planner
         # can still consume flow.steps[] while the deterministic runner skips it.
-        return FlowAction(type=ActionType.WAIT, args=["0"], raw=raw, step_num=step_num)
-
-    # Strip the literal word "with" used as a readability separator:
-    #   fill "Username" with "student" → fill "Username" "student"
-    rest_clean = re.sub(r"\bwith\b", "", rest, count=1).strip()
-
-    # Extract all quoted args first
-    args: list[str] = re.findall(r'"([^"]*)"', rest_clean)
-
-    # For actions that accept bare (unquoted) single args: wait 2000, scroll down
-    if not args and rest_clean:
-        args = [rest_clean.strip()]
-
-    return FlowAction(type=action_type, args=args, raw=raw, step_num=step_num)
+        return FlowAction(
+            type=ActionType.WAIT, args=["0"], raw=raw, step_num=step_num
+        )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
