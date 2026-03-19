@@ -48,7 +48,7 @@ def _get_category(class_str: str) -> str:
 def _screenshot_rel_path(path: str | None, report_dir: Path) -> str:
     """Return a relative URL from report_dir to the screenshot file.
 
-    E.g. /abs/reports/staging/images/FAIL_foo.png → images/FAIL_foo.png
+    E.g. /abs/reports/staging/images/<uuid>.png → images/<uuid>.png
     Returns '' when path is empty or outside report_dir.
     """
     if not path:
@@ -76,10 +76,38 @@ _STEP_RE = re.compile(r"^\s+([✓✗])\s+(Step\s+\d+\s+\[L\d+[^\]]*\]\s+.+)$")
 
 def _parse_failure_details(longrepr: str) -> dict:
     if not longrepr:
-        return {"assert_msg": "", "locators": [], "short_trace": ""}
+        return {"assert_msg": "", "locators": [], "short_trace": "", "steps": []}
     lines = longrepr.splitlines()
+
+    # ── Parse steps first (✓/✗ lines) ────────────────────────────────────────
+    steps: list[dict] = []
+    step_line_indices: set[int] = set()
+    for idx, ln in enumerate(lines):
+        m = _STEP_RE.match(ln)
+        if m:
+            passed = m.group(1) == "✓"
+            label = m.group(2).strip()
+            msg = ""
+            step_line_indices.add(idx)
+            if not passed and idx + 1 < len(lines):
+                nxt = lines[idx + 1]
+                if nxt.strip() and not _STEP_RE.match(nxt):
+                    msg = nxt.strip()
+                    step_line_indices.add(idx + 1)
+            steps.append({"label": label, "passed": passed, "msg": msg})
+
+    # ── Assert message ────────────────────────────────────────────────────────
+    # 1) Try E-prefixed lines (standard pytest failures)
     e_lines = [ln.lstrip("E").strip() for ln in lines if ln.lstrip().startswith("E ")]
     assert_msg = e_lines[-1] if e_lines else ""
+    # 2) Try "Flow '...' failed" header (custom flow failures)
+    if not assert_msg:
+        for ln in lines:
+            s = ln.strip()
+            if s.startswith("Flow ") and "failed" in s:
+                assert_msg = s
+                break
+    # 3) Fallback to common error prefixes
     if not assert_msg:
         for ln in reversed(lines):
             s = ln.strip()
@@ -88,6 +116,8 @@ def _parse_failure_details(longrepr: str) -> dict:
                 break
     if len(assert_msg) > 260:
         assert_msg = assert_msg[:257] + "…"
+
+    # ── Locators ──────────────────────────────────────────────────────────────
     locators: list[str] = []
     for ln in lines:
         if _LOCATOR_RE.search(ln):
@@ -95,21 +125,17 @@ def _parse_failure_details(longrepr: str) -> dict:
             if c and c not in locators:
                 locators.append(c)
     locators = locators[:3]
-    code_lines = [ln for ln in lines
-                  if ln.strip() and not ln.lstrip().startswith("E ") and not ln.strip().startswith("_ ")]
-    short_trace = "\n".join(code_lines[-5:])
-    steps: list[dict] = []
-    for idx, ln in enumerate(lines):
-        m = _STEP_RE.match(ln)
-        if m:
-            passed = m.group(1) == "✓"
-            label = m.group(2).strip()
-            msg = ""
-            if not passed and idx + 1 < len(lines):
-                nxt = lines[idx + 1]
-                if nxt.strip() and not _STEP_RE.match(nxt):
-                    msg = nxt.strip()
-            steps.append({"label": label, "passed": passed, "msg": msg})
+
+    # ── Short trace — exclude step lines and their error messages ─────────────
+    trace_lines = [
+        ln for idx, ln in enumerate(lines)
+        if ln.strip()
+        and idx not in step_line_indices
+        and not ln.lstrip().startswith("E ")
+        and not ln.strip().startswith("_ ")
+    ]
+    short_trace = "\n".join(trace_lines[-5:])
+
     return {"assert_msg": assert_msg, "locators": locators, "short_trace": short_trace, "steps": steps}
 
 
@@ -176,476 +202,116 @@ _DUMMY_HEATMAP = [
 # ── CSS ───────────────────────────────────────────────────────────────────────
 
 _CSS = """
-/* ── LIGHT THEME (default) ── */
-:root {
-  --bg:          #f7f6f3;
-  --surface:     #ffffff;
-  --surface2:    #f1f0ed;
-  --border:      #e5e3de;
-  --text:        #1a1a2e;
-  --text-2:      #4b5563;
-  --label:       #9ca3af;
-  --pass:        #15803d;
-  --pass-bg:     #dcfce7;
-  --pass-chart:  #4ade80;
-  --fail:        #b91c1c;
-  --fail-bg:     #fee2e2;
-  --fail-chart:  #f87171;
-  --skip:        #b45309;
-  --skip-bg:     #fef3c7;
-  --skip-chart:  #fb923c;
-  --env-text:    #0e7490;
-  --env-bg:      #e0f2fe;
-  --cat-text:    #0e7490;
-  --cat-bg:      #e0f2fe;
-  --shadow:      0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
-  --radius:      8px;
-  --chart-grid:  #e5e7eb;
-  --chart-text:  #6b7280;
+/* ── QA-SPECIFIC COLOR VARIABLES ── */
+:root, [data-bs-theme="light"] {
+  --qa-pass:     #15803d;
+  --qa-pass-bg:  #dcfce7;
+  --qa-fail:     #b91c1c;
+  --qa-fail-bg:  #fee2e2;
+  --qa-skip:     #b45309;
+  --qa-skip-bg:  #fef3c7;
+  --chart-grid:  var(--bs-border-color);
+  --chart-text:  var(--bs-secondary-color);
+  --chart-bg:    var(--bs-body-bg);
+}
+[data-bs-theme="dark"] {
+  --qa-pass:     #4ade80;
+  --qa-pass-bg:  rgba(74,222,128,.12);
+  --qa-fail:     #f87171;
+  --qa-fail-bg:  rgba(248,113,113,.12);
+  --qa-skip:     #fb923c;
+  --qa-skip-bg:  rgba(251,146,60,.12);
+  --chart-grid:  var(--bs-border-color);
+  --chart-text:  var(--bs-secondary-color);
+  --chart-bg:    var(--bs-body-bg);
 }
 
-/* ── DARK THEME — system ── */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    --bg:          #0f172a;
-    --surface:     #1e293b;
-    --surface2:    #2d3f55;
-    --border:      #334155;
-    --text:        #f1f5f9;
-    --text-2:      #94a3b8;
-    --label:       #64748b;
-    --pass:        #4ade80;
-    --pass-bg:     rgba(74,222,128,.12);
-    --fail:        #f87171;
-    --fail-bg:     rgba(248,113,113,.12);
-    --skip:        #fb923c;
-    --skip-bg:     rgba(251,146,60,.12);
-    --env-text:    #38bdf8;
-    --env-bg:      rgba(56,189,248,.12);
-    --cat-text:    #38bdf8;
-    --cat-bg:      rgba(56,189,248,.12);
-    --shadow:      0 2px 8px rgba(0,0,0,.4);
-    --chart-grid:  #334155;
-    --chart-text:  #94a3b8;
-  }
-}
-
-/* ── DARK THEME — forced ── */
-:root[data-theme="dark"] {
-  --bg:          #0f172a;
-  --surface:     #1e293b;
-  --surface2:    #2d3f55;
-  --border:      #334155;
-  --text:        #f1f5f9;
-  --text-2:      #94a3b8;
-  --label:       #64748b;
-  --pass:        #4ade80;
-  --pass-bg:     rgba(74,222,128,.12);
-  --fail:        #f87171;
-  --fail-bg:     rgba(248,113,113,.12);
-  --skip:        #fb923c;
-  --skip-bg:     rgba(251,146,60,.12);
-  --env-text:    #38bdf8;
-  --env-bg:      rgba(56,189,248,.12);
-  --cat-text:    #38bdf8;
-  --cat-bg:      rgba(56,189,248,.12);
-  --shadow:      0 2px 8px rgba(0,0,0,.4);
-  --chart-grid:  #334155;
-  --chart-text:  #94a3b8;
-}
-
-/* ── RESET & BASE ── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-/* Ensure [hidden] always hides elements — prevents CSS display rules from overriding */
+/* ── Ensure [hidden] always wins ── */
 [hidden] { display: none !important; }
-html { font-size: 14px; }
-body {
-  font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1.55;
-  min-height: 100vh;
-  padding: 0;
-}
 
-/* ── APP CONTAINER — max-width 1280px centered ── */
+/* ── App container ── */
 #app { max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 
-/* ── HEADER ── */
-.rpt-header {
-  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-  padding: 1rem 0 1.25rem;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-}
+/* ── Logo badge ── */
 .rpt-logo {
   width: 38px; height: 38px; border-radius: 8px;
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   display: flex; align-items: center; justify-content: center;
   color: #fff; font-weight: 800; font-size: 1rem; flex-shrink: 0;
 }
-.rpt-title { font-size: 1.15rem; font-weight: 700; color: var(--text); }
-.rpt-sub {
-  font-size: 0.76rem; color: var(--text-2); margin-top: 2px;
-  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-}
-.env-tag {
-  display: inline-block; padding: 1px 8px; border-radius: 999px;
-  background: var(--env-bg); color: var(--env-text);
-  font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
-}
-.rpt-spacer { flex: 1; }
-.rpt-actions { display: flex; gap: .5rem; align-items: center; }
 
-/* ── BUTTONS ── */
-.btn {
-  cursor: pointer; border: 1px solid var(--border);
-  border-radius: 6px; padding: .35rem .75rem;
-  font-size: 0.75rem; font-weight: 600; background: var(--surface);
-  color: var(--text-2); transition: background .15s, color .15s;
-}
-.btn:hover { background: var(--surface2); color: var(--text); }
-.btn-pdf {
-  background: #6366f1; color: #fff; border-color: #6366f1;
-}
-.btn-pdf:hover { background: #4f46e5; border-color: #4f46e5; color: #fff; }
-.btn-pdf.loading { opacity: .7; cursor: wait; }
-
-/* ── SECTION LABEL ── */
-.sec-label {
-  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .1em; color: var(--label); margin-bottom: .75rem;
-}
-
-/* ── CARDS ── */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.1rem 1.25rem;
-  box-shadow: var(--shadow);
-}
-
-/* ── STAT CARDS ── */
-.stat-cards {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: .75rem;
-  margin-bottom: 1rem;
-}
-.stat-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: .9rem 1rem;
-  box-shadow: var(--shadow);
-  display: flex; flex-direction: column; gap: .25rem;
-}
-.stat-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--label); }
+/* ── Stat card value colours ── */
 .stat-value { font-size: 1.6rem; font-weight: 800; line-height: 1; }
 .stat-value.blue   { color: #6366f1; }
-.stat-value.green  { color: var(--pass); }
-.stat-value.red    { color: var(--fail); }
-.stat-value.orange { color: var(--skip); }
+.stat-value.green  { color: var(--qa-pass); }
+.stat-value.red    { color: var(--qa-fail); }
+.stat-value.orange { color: var(--qa-skip); }
 .stat-value.purple { color: #8b5cf6; }
 
-/* ── TOP ROW — 3 col grid ── */
-.top-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-/* ── RESULT DISTRIBUTION CARD ── */
+/* ── Chart canvas wrappers ── */
 .dist-donut-wrap { position: relative; height: 160px; }
-.dist-legend { margin-top: .75rem; }
-.dist-legend-row {
-  display: flex; align-items: center; gap: .5rem;
-  padding: .25rem 0;
-  font-size: 0.8rem;
-}
-.dist-legend-row + .dist-legend-row { border-top: 1px solid var(--border); }
-.leg-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.leg-name { flex: 1; color: var(--text-2); }
-.leg-val { font-weight: 700; font-variant-numeric: tabular-nums; }
-.leg-val.pass { color: var(--pass); }
-.leg-val.fail { color: var(--fail); }
-.leg-val.skip { color: var(--skip); }
+.trend-wrap      { position: relative; height: 160px; }
+.cov-pie-wrap    { position: relative; height: 130px; }
 
-/* ── DURATION LIST ── */
-.dur-list { display: flex; flex-direction: column; gap: .45rem; }
-.dur-row {
-  display: grid; grid-template-columns: 1fr auto auto;
-  align-items: center; gap: .5rem; font-size: 0.78rem;
-}
-.dur-name { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dur-bar-wrap { width: 80px; height: 4px; background: var(--border); border-radius: 2px; }
-.dur-bar { height: 100%; border-radius: 2px; background: #4ade80; min-width: 2px; }
-.dur-bar.fail { background: #f87171; }
-.dur-val { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; white-space: nowrap; }
+/* ── Duration bar override ── */
+.dur-bar-custom { height: 4px; }
 
-/* ── TREND CARD ── */
-.trend-wrap { position: relative; height: 160px; }
-
-/* ── MID ROW — 3 col: 1.5fr 2fr 1.1fr ── */
-.mid-row {
-  display: grid;
-  grid-template-columns: 1.5fr 2fr 1.1fr;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-/* ── BY CATEGORY CARD ── */
-.cat-list { display: flex; flex-direction: column; gap: .6rem; }
-.cat-row { display: flex; align-items: center; gap: .6rem; font-size: 0.78rem; }
-.cat-badge {
-  display: inline-block; min-width: 78px;
-  padding: .2rem .55rem; border-radius: 4px;
-  background: var(--cat-bg); color: var(--cat-text);
-  font-size: 0.7rem; font-weight: 600; text-align: center; flex-shrink: 0;
-}
-.cat-bar-wrap { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
-.cat-bar-inner { display: flex; height: 100%; }
-.cat-seg-fail { background: #f87171; }
-.cat-seg-pass { background: #4ade80; }
-.cat-count { font-size: 0.72rem; color: var(--text-2); white-space: nowrap; text-align: right; min-width: 52px; }
-.cat-count span { color: var(--label); }
-
-/* ── HEATMAP CARD ── */
-.heat-grid-wrap { overflow-x: auto; }
+/* ── Heatmap grid ── */
 .heat-grid {
   display: grid;
   grid-template-columns: 36px repeat(7, 28px);
-  gap: 3px;
-  font-size: 0.68rem;
-  min-width: 240px;
+  gap: 3px; font-size: 0.68rem; min-width: 240px;
 }
-.heat-corner { color: var(--label); }
-.heat-day-hdr { text-align: center; color: var(--label); font-weight: 600; }
-.heat-wk-label { color: var(--label); font-size: 0.66rem; display: flex; align-items: center; }
 .heat-cell {
   width: 28px; height: 22px; border-radius: 3px;
   display: flex; align-items: center; justify-content: center;
   font-size: 0.65rem; font-weight: 600; color: rgba(0,0,0,.5);
 }
-.heat-legend {
-  margin-top: .6rem; display: flex; align-items: center;
-  gap: .3rem; font-size: 0.68rem; color: var(--label);
-}
-.heat-legend-grad { display: flex; gap: 2px; }
-.heat-legend-grad span {
-  width: 14px; height: 10px; border-radius: 2px; display: inline-block;
-}
 
-/* ── COVERAGE PIE CARD ── */
-.cov-pie-wrap { position: relative; height: 130px; }
-.cov-info {
-  margin-top: .6rem; font-size: 0.76rem; color: var(--text-2);
-  display: flex; flex-direction: column; gap: .3rem;
-}
-.cov-info-row { display: flex; justify-content: space-between; align-items: center; }
-.cov-status { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; }
-.cov-status.met  { background: var(--pass-bg); color: var(--pass); }
-.cov-status.miss { background: var(--fail-bg); color: var(--fail); }
+/* ── Flakiness SVG wrapper ── */
+.flik-wrap { display: inline-block; vertical-align: middle; }
 
-/* ── RESULTS TABLE — font-size: 0.96rem for tbody ── */
-.results-wrap { overflow-x: auto; }
-.rtable {
-  width: 100%; border-collapse: separate; border-spacing: 0 4px;
-  font-size: 0.8rem;
-}
-.rtable thead th {
-  text-align: left; padding: .4rem .8rem;
-  font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .08em; color: var(--label);
-  border-bottom: 1px solid var(--border);
-}
-.rtable tbody tr.rrow {
-  background: var(--surface); cursor: pointer;
-  transition: background .1s;
-}
-.rtable tbody tr.rrow:hover { background: var(--surface2); }
-.rtable tbody tr.rrow td {
-  padding: .6rem .8rem; vertical-align: middle;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  font-size: 0.96rem;
-}
-.rtable tbody tr.rrow td:first-child {
-  border-left: 1px solid var(--border);
-  border-radius: var(--radius) 0 0 var(--radius);
-}
-.rtable tbody tr.rrow td:last-child {
-  border-right: 1px solid var(--border);
-  border-radius: 0 var(--radius) var(--radius) 0;
-}
-.rtable tbody tr.rdetail td {
-  padding: 0;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  border-radius: 0 0 var(--radius) var(--radius);
-  overflow: hidden;
-}
-
-/* ── TEST NAME/CLASS CELLS ── */
-.t-name { font-weight: 600; color: var(--text); }
-.t-cls { font-size: 0.68rem; color: var(--text-2); margin-top: 2px; }
-.t-expand { font-size: 0.65rem; color: var(--label); margin-top: 3px; }
-
-/* ── BADGE (passed/failed/skipped) ── */
-.badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: .18rem .55rem; border-radius: 999px;
-  font-size: 0.7rem; font-weight: 700;
-}
-.badge.passed  { background: var(--pass-bg); color: var(--pass); }
-.badge.failed  { background: var(--fail-bg); color: var(--fail); }
-.badge.skipped { background: var(--skip-bg); color: var(--skip); }
-.badge.error   { background: var(--fail-bg); color: var(--fail); }
-.badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-
-/* ── ENV CHIP ── */
-.env-chip {
-  display: inline-block; padding: .15rem .5rem; border-radius: 4px;
-  background: var(--env-bg); color: var(--env-text);
-  font-size: 0.68rem; font-weight: 600;
-}
-.dur-cell { font-variant-numeric: tabular-nums; color: var(--text-2); }
-.det-snippet { font-size: 0.75rem; color: var(--text-2); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ── SCREENSHOT THUMBNAIL IN TABLE ROW ── */
+/* ── Screenshot thumbnail ── */
 .row-thumb {
-  height: 75px; width: auto; border-radius: 4px;
-  border: none; cursor: zoom-in;
-  display: block; margin-left: auto;        /* right-align within the cell */
+  height: 75px; width: auto; border-radius: 4px; border: none;
+  cursor: zoom-in; display: block; margin-left: auto;
   transition: opacity .15s, transform .15s; object-fit: contain;
 }
 .row-thumb:hover { opacity: .85; transform: scale(1.04); }
-.no-shot-placeholder {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 60px; height: 36px; border-radius: 4px;
-  background: var(--surface2); border: 1px dashed var(--border);
-  font-size: 0.65rem; color: var(--label); text-align: center; line-height: 1.2;
+
+/* ── Detail steps ── */
+.det-step { font-size: 0.95rem; padding: 2px 0; word-break: break-word; line-height: 1.5; }
+.det-step-msg {
+  font-size: 0.82rem; padding: 2px 0 4px 22px;
+  border-left: 2px solid var(--qa-fail); margin-left: 8px;
+}
+.det-stacktrace-section {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--bs-border-color);
 }
 
-/* ── FLAKINESS BAR (SVG container) ── */
-.flik-wrap { display: inline-block; vertical-align: middle; }
-
-/* ── EXPANDABLE DETAIL ROW ── */
-.rdetail-inner {
-  display: none;
-  padding: .9rem 1rem;
-  background: var(--surface2);
-  border-top: 1px dashed var(--border);
-  gap: 1rem;
-  grid-template-columns: 1fr;
+/* ── Stacktrace code block ── */
+.det-trace {
+  font-size: 0.82rem; white-space: pre-wrap; word-break: break-word;
+  max-height: 220px; overflow-y: auto; line-height: 1.6;
 }
-.rdetail-inner.open { display: grid; }
-.rdetail-left { display: flex; flex-direction: column; gap: .5rem; }
-
-/* ── DETAIL SUB-SECTIONS ── */
-.det-label {
-  font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .08em; color: var(--label); margin-bottom: .15rem;
-}
-.det-msg { font-size: 0.78rem; color: var(--fail); font-weight: 500; word-break: break-word; }
-.det-loc {
-  font-family: 'Cascadia Code','Fira Code','Courier New',monospace;
-  font-size: 0.72rem; color: #60a5fa;
-  background: rgba(96,165,250,.07); border-left: 2px solid #60a5fa;
-  padding: 2px 6px; border-radius: 0 3px 3px 0; margin: 1px 0;
-  word-break: break-all;
-}
-.det-step { font-size: 0.95rem; padding: 1px 0; word-break: break-word; }
-.det-step.pass { color: var(--text); }
-.det-step.fail { color: var(--fail); font-weight: 500; }
-.det-step-icon { color: #22c55e; }
-.det-trace-wrap { display: flex; gap: .75rem; align-items: flex-start; }
-.det-trace-wrap .det-trace { flex: 1; min-width: 0; }
-.det-trace-shot { flex-shrink: 0; }
+.det-trace code.hljs { background: transparent; padding: 0; font-size: inherit; }
 .det-trace-shot img {
-  max-width: 200px; max-height: 130px; border-radius: 4px;
-  border: 1px solid var(--border); cursor: zoom-in;
-  display: block; transition: transform .15s;
+  max-width: 220px; max-height: 150px; border-radius: 4px;
+  cursor: zoom-in; display: block; transition: transform .15s;
 }
 .det-trace-shot img:hover { transform: scale(1.03); }
-.det-trace-shot .no-shot { font-size: 0.72rem; color: var(--label); }
-.det-trace {
-  font-family: 'Cascadia Code','Fira Code','Courier New',monospace;
-  font-size: 0.7rem; color: var(--text-2); background: var(--surface);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: .5rem .7rem; white-space: pre-wrap; word-break: break-word;
-  max-height: 160px; overflow-y: auto;
+.det-trace-shot-img {
+  max-width: 320px; max-height: 200px; cursor: zoom-in;
+  display: block; transition: transform .15s;
 }
-/* Let highlight.js provide its own colours inside our layout shell */
-.det-trace code.hljs { background: transparent; padding: 0; font-size: inherit; }
-.rdetail-shot img {
-  max-width: 220px; max-height: 140px; border-radius: 5px;
-  border: 1px solid var(--border); cursor: zoom-in;
-  transition: transform .15s;
-}
-.rdetail-shot img:hover { transform: scale(1.03); }
-.rdetail-shot .no-shot { font-size: 0.72rem; color: var(--label); }
+.det-trace-shot-img:hover { transform: scale(1.03); }
 
-/* ── LIGHTBOX ── */
-#lightbox {
-  display: none; position: fixed; inset: 0;
-  background: rgba(0,0,0,.88); z-index: 9999;
-  align-items: center; justify-content: center; cursor: zoom-out;
-}
-#lightbox.open { display: flex; }
-#lightbox img { max-width: 95vw; max-height: 95vh; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,.8); }
-
-/* ── LOADING STATE ── */
-#loading-state {
-  display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 1rem; padding: 4rem 2rem;
-  color: var(--text-2); font-size: 0.9rem;
-}
-.spinner {
-  width: 36px; height: 36px; border-radius: 50%;
-  border: 3px solid var(--border);
-  border-top-color: #6366f1;
-  animation: spin .7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* ── ERROR STATE ── */
-#error-state {
-  display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: .75rem; padding: 4rem 2rem;
-  text-align: center;
-}
-.error-icon { font-size: 2.5rem; }
-#error-state h2 { font-size: 1.1rem; color: var(--fail); }
-#error-state p { font-size: 0.85rem; color: var(--text-2); max-width: 480px; }
-.error-hint { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: .75rem 1rem; font-size: 0.82rem !important; }
-.error-hint code { font-family: 'Cascadia Code','Fira Code','Courier New',monospace; color: #60a5fa; }
-
-/* ── FOOTER ── */
-.rpt-footer {
-  margin-top: 2rem; padding-top: 1.25rem;
-  border-top: 1px solid var(--border);
-  display: flex; justify-content: space-between;
-  font-size: 0.72rem; color: var(--label);
-}
-
-/* ── PRINT / PDF ── */
+/* ── Print / PDF ── */
 @media print {
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-  .rpt-actions, #lightbox { display: none !important; }
-  body { background: var(--bg) !important; }
+  .rpt-actions, .modal { display: none !important; }
   .card { box-shadow: none !important; break-inside: avoid; }
-  .top-row, .mid-row { page-break-inside: avoid; }
-}
-
-/* ── RESPONSIVE ── */
-@media (max-width: 900px) {
-  .top-row { grid-template-columns: 1fr; }
-  .mid-row  { grid-template-columns: 1fr; }
-  .stat-cards { grid-template-columns: repeat(2, 1fr); }
 }
 """
 
@@ -660,32 +326,45 @@ _JS = r"""
 let donutChart, trendChart, covChart;
 
 // ── Theme ────────────────────────────────────────────────────────────────────
-const THEMES = ['', 'light', 'dark'];
+// Modes: 'system' | 'light' | 'dark'
+const THEMES = ['system', 'light', 'dark'];
 let themeIdx = 0;
+
+function getEffectiveTheme() {
+  const mode = THEMES[themeIdx];
+  if (mode === 'light' || mode === 'dark') return mode;
+  // system — read OS preference
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+}
+
+function applyTheme() {
+  document.documentElement.setAttribute('data-bs-theme', getEffectiveTheme());
+}
 
 (function initTheme() {
   try {
-    // Priority: localStorage override → embedded default from .env → system
-    const saved        = localStorage.getItem('qa_theme');
-    const envDefault   = document.documentElement.getAttribute('data-default-theme') || '';
-    const resolved     = (saved !== null) ? saved : envDefault;
+    const saved      = localStorage.getItem('qa_theme');
+    const envDefault = document.documentElement.getAttribute('data-default-theme') || '';
+    const resolved   = (saved !== null) ? saved : envDefault;
     themeIdx = THEMES.indexOf(resolved);
     if (themeIdx < 0) themeIdx = 0;
-    const t = THEMES[themeIdx];
-    if (t) document.documentElement.setAttribute('data-theme', t);
-    else   document.documentElement.removeAttribute('data-theme');
+    applyTheme();
     updateThemeBtn();
     updateHljsTheme();
+    // Listen for OS theme changes when in system mode
+    if (window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+        if (THEMES[themeIdx] === 'system') { applyTheme(); updateChartTheme(); updateHljsTheme(); }
+      });
+    }
   } catch(e) { console.warn('Theme init failed:', e); }
 })();
 
 function cycleTheme() {
   try {
     themeIdx = (themeIdx + 1) % THEMES.length;
-    const t = THEMES[themeIdx];
-    if (t) document.documentElement.setAttribute('data-theme', t);
-    else   document.documentElement.removeAttribute('data-theme');
-    localStorage.setItem('qa_theme', t);
+    applyTheme();
+    localStorage.setItem('qa_theme', THEMES[themeIdx]);
     updateThemeBtn();
     updateChartTheme();
     updateHljsTheme();
@@ -693,9 +372,9 @@ function cycleTheme() {
 }
 
 function updateThemeBtn() {
-  const labels = ['\u2299 System', '\u2600 Light', '\uD83C\uDF19 Dark'];
+  const icons  = ['<i class="bi bi-circle-half"></i> System', '<i class="bi bi-sun"></i> Light', '<i class="bi bi-moon"></i> Dark'];
   const btn = document.getElementById('theme-btn');
-  if (btn) btn.textContent = labels[themeIdx];
+  if (btn) btn.innerHTML = icons[themeIdx];
 }
 
 function cssVar(name) {
@@ -706,9 +385,7 @@ function cssVar(name) {
 function updateHljsTheme() {
   const link = document.getElementById('hljs-theme');
   if (!link) return;
-  const forced = document.documentElement.getAttribute('data-theme');
-  const isDark = forced === 'dark' ||
-    (!forced && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const isDark = getEffectiveTheme() === 'dark';
   link.href = isDark
     ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'
     : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
@@ -748,7 +425,7 @@ function showBody() {
   if (el) el.hidden = false;
 }
 
-// ── Bootstrap — data is embedded inline, no HTTP fetch required ───────────────
+// ── Data init — data is embedded inline, no HTTP fetch required ───────────────
 document.addEventListener('DOMContentLoaded', function() {
   try {
     var D = window._QA_DATA;
@@ -797,25 +474,25 @@ function renderHeader(D) {
   const m = D.meta;
   const s = D.summary;
   const overall = s.failed === 0
-    ? '<span style="color:var(--pass);font-weight:700">ALL PASSED</span>'
-    : '<span style="color:var(--fail);font-weight:700">' + s.failed + ' TEST' + (s.failed > 1 ? 'S' : '') + ' FAILED</span>';
+    ? '<span class="text-success fw-bold">ALL PASSED</span>'
+    : '<span class="text-danger fw-bold">' + s.failed + ' TEST' + (s.failed > 1 ? 'S' : '') + ' FAILED</span>';
   el.innerHTML =
     '<div class="rpt-logo" aria-hidden="true">QA</div>' +
     '<div>' +
-      '<div class="rpt-title">' + escHtml(m.project) + '</div>' +
-      '<div class="rpt-sub">' +
-        '<span class="env-tag">' + escHtml(m.environment) + '</span>' +
+      '<div class="fw-bold fs-6">' + escHtml(m.project) + '</div>' +
+      '<div class="text-secondary small d-flex align-items-center gap-2 flex-wrap mt-1">' +
+        '<span class="badge rounded-pill text-bg-info text-uppercase">' + escHtml(m.environment) + '</span>' +
         (m.base_url ? '<span>BASE: ' + escHtml(m.base_url) + '</span>' : '') +
         '<span>LOG: ' + escHtml(m.log_level.toUpperCase()) + '</span>' +
         '<span>\u00b7</span>' +
         overall +
       '</div>' +
     '</div>' +
-    '<div class="rpt-spacer"></div>' +
-    '<div class="rpt-actions">' +
-      '<span style="font-size:.72rem;color:var(--label)">' + escHtml(m.generated_at) + '</span>' +
-      '<button class="btn" id="theme-btn" onclick="cycleTheme()" aria-label="Toggle color theme">\u2299 System</button>' +
-      '<button class="btn btn-pdf" id="pdf-btn" onclick="exportPDF()" aria-label="Export report as PDF">\u2193 Export PDF</button>' +
+    '<div class="flex-grow-1"></div>' +
+    '<div class="d-flex gap-2 align-items-center">' +
+      '<span class="text-body-tertiary" style="font-size:.72rem">' + escHtml(m.generated_at) + '</span>' +
+      '<button class="btn btn-outline-secondary btn-sm" id="theme-btn" onclick="cycleTheme()" aria-label="Toggle color theme"><i class="bi bi-circle-half"></i> System</button>' +
+      '<button class="btn btn-primary btn-sm" id="pdf-btn" onclick="exportPDF()" aria-label="Export report as PDF"><i class="bi bi-file-earmark-pdf"></i> Export PDF</button>' +
     '</div>';
   updateThemeBtn();
 }
@@ -834,10 +511,10 @@ function renderSummary(D) {
     { label: 'Duration', value: m.duration, color: 'purple' },
   ];
   el.innerHTML = cards.map(function(c) {
-    return '<div class="stat-card">' +
-      '<div class="stat-label">' + escHtml(c.label) + '</div>' +
+    return '<div class="col"><div class="card h-100"><div class="card-body p-2">' +
+      '<div class="text-uppercase text-body-tertiary fw-bold" style="font-size:.65rem;letter-spacing:.08em">' + escHtml(c.label) + '</div>' +
       '<div class="stat-value ' + c.color + '">' + escHtml(String(c.value)) + '</div>' +
-    '</div>';
+    '</div></div></div>';
   }).join('');
 }
 
@@ -859,10 +536,10 @@ function buildDonut(D) {
         chart.ctx.textAlign = 'center';
         chart.ctx.textBaseline = 'middle';
         chart.ctx.font = 'bold 26px system-ui';
-        chart.ctx.fillStyle = cssVar('--text');
+        chart.ctx.fillStyle = cssVar('--bs-body-color');
         chart.ctx.fillText(pr + '%', cx, cy - 9);
         chart.ctx.font = '600 10px system-ui';
-        chart.ctx.fillStyle = cssVar('--label');
+        chart.ctx.fillStyle = cssVar('--bs-secondary-color');
         chart.ctx.fillText('PASS RATE', cx, cy + 11);
         chart.ctx.restore();
       }
@@ -875,7 +552,7 @@ function buildDonut(D) {
         datasets: [{
           data: [D.summary.passed, D.summary.failed, D.summary.skipped],
           backgroundColor: ['#4ade80', '#f87171', '#fb923c'],
-          borderColor: cssVar('--surface'),
+          borderColor: cssVar('--bs-body-bg'),
           borderWidth: 3,
           hoverOffset: 5,
         }]
@@ -897,15 +574,15 @@ function buildDonut(D) {
     const legEl = document.getElementById('dist-legend');
     if (legEl) {
       const items = [
-        { color: '#4ade80', label: 'Passed',  val: D.summary.passed,  cls: 'pass' },
-        { color: '#f87171', label: 'Failed',  val: D.summary.failed,  cls: 'fail' },
-        { color: '#fb923c', label: 'Skipped', val: D.summary.skipped, cls: 'skip' },
+        { color: '#4ade80', label: 'Passed',  val: D.summary.passed,  cls: 'text-success' },
+        { color: '#f87171', label: 'Failed',  val: D.summary.failed,  cls: 'text-danger'  },
+        { color: '#fb923c', label: 'Skipped', val: D.summary.skipped, cls: 'text-warning' },
       ];
       legEl.innerHTML = items.map(function(it) {
-        return '<div class="dist-legend-row">' +
-          '<div class="leg-dot" style="background:' + it.color + '"></div>' +
-          '<div class="leg-name">' + it.label + '</div>' +
-          '<div class="leg-val ' + it.cls + '">' + it.val + '</div>' +
+        return '<div class="d-flex align-items-center gap-2 py-1 border-top">' +
+          '<span class="rounded-circle flex-shrink-0" style="width:10px;height:10px;background:' + it.color + '"></span>' +
+          '<span class="flex-grow-1 text-secondary">' + it.label + '</span>' +
+          '<span class="fw-bold ' + it.cls + '" style="font-variant-numeric:tabular-nums">' + it.val + '</span>' +
         '</div>';
       }).join('');
     }
@@ -921,12 +598,12 @@ function renderDurationList(D) {
     const maxDur = list.reduce(function(m, r) { return Math.max(m, r.duration); }, 0.001) || 0.001;
     el.innerHTML = list.map(function(r) {
       const pct = Math.round(r.duration / maxDur * 100);
-      const failCls = r.outcome !== 'passed' ? ' fail' : '';
+      const barColor = r.outcome !== 'passed' ? 'bg-danger' : 'bg-success';
       const name = r.name.length > 30 ? r.name.substring(0, 30) + '\u2026' : r.name;
-      return '<div class="dur-row">' +
-        '<span class="dur-name" title="' + escHtml(r.name) + '">' + escHtml(name) + '</span>' +
-        '<div class="dur-bar-wrap"><div class="dur-bar' + failCls + '" style="width:' + pct + '%"></div></div>' +
-        '<span class="dur-val">' + formatDur(r.duration) + '</span>' +
+      return '<div class="d-flex align-items-center gap-2 small">' +
+        '<span class="text-secondary text-truncate" style="flex:1" title="' + escHtml(r.name) + '">' + escHtml(name) + '</span>' +
+        '<div class="progress dur-bar-custom" style="width:80px"><div class="progress-bar ' + barColor + '" style="width:' + pct + '%;min-width:2px"></div></div>' +
+        '<span class="fw-semibold" style="font-variant-numeric:tabular-nums;white-space:nowrap">' + formatDur(r.duration) + '</span>' +
       '</div>';
     }).join('');
   } catch(e) { console.error('renderDurationList error:', e); }
@@ -974,18 +651,16 @@ function renderCategories(D) {
       const passPct = total ? Math.round(cat.passed / total * 100) : 0;
       const statusTxt = total === 0 ? '0 / 0' :
         cat.failed > 0
-          ? cat.failed + ' / ' + total + '<br><span style="color:var(--fail)">fail</span>'
-          : cat.passed + ' / ' + total + '<br><span style="color:var(--pass)">pass</span>';
+          ? cat.failed + ' / ' + total + '<br><span class="text-danger">fail</span>'
+          : cat.passed + ' / ' + total + '<br><span class="text-success">pass</span>';
       el.insertAdjacentHTML('beforeend',
-        '<div class="cat-row">' +
-          '<div class="cat-badge">' + escHtml(cat.name) + '</div>' +
-          '<div class="cat-bar-wrap">' +
-            '<div class="cat-bar-inner">' +
-              '<div class="cat-seg-fail" style="width:' + failPct + '%"></div>' +
-              '<div class="cat-seg-pass" style="width:' + passPct + '%"></div>' +
-            '</div>' +
+        '<div class="d-flex align-items-center gap-2 small mb-1">' +
+          '<span class="badge text-bg-info text-center" style="min-width:78px">' + escHtml(cat.name) + '</span>' +
+          '<div class="progress flex-grow-1" style="height:8px">' +
+            '<div class="progress-bar bg-danger" style="width:' + failPct + '%"></div>' +
+            '<div class="progress-bar bg-success" style="width:' + passPct + '%"></div>' +
           '</div>' +
-          '<div class="cat-count">' + statusTxt + '</div>' +
+          '<div class="text-secondary text-end" style="min-width:52px;font-size:.72rem">' + statusTxt + '</div>' +
         '</div>');
     });
   } catch(e) { console.error('renderCategories error:', e); }
@@ -993,7 +668,7 @@ function renderCategories(D) {
 
 // ── Failure heatmap ───────────────────────────────────────────────────────────
 function heatColor(v) {
-  if (v === 0) return 'var(--border)';
+  if (v === 0) return 'var(--bs-border-color)';
   if (v === 1) return '#bbf7d0';
   if (v === 2) return '#fde68a';
   if (v === 3) return '#fb923c';
@@ -1006,12 +681,12 @@ function renderHeatmap(D) {
   try {
     grid.innerHTML = '';
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    grid.insertAdjacentHTML('beforeend', '<div class="heat-corner"></div>');
+    grid.insertAdjacentHTML('beforeend', '<div class="text-body-tertiary"></div>');
     days.forEach(function(d) {
-      grid.insertAdjacentHTML('beforeend', '<div class="heat-day-hdr">' + d + '</div>');
+      grid.insertAdjacentHTML('beforeend', '<div class="text-center text-body-tertiary fw-semibold">' + d + '</div>');
     });
     D.heatmap.forEach(function(wk, wi) {
-      grid.insertAdjacentHTML('beforeend', '<div class="heat-wk-label">Wk ' + (wi + 1) + '</div>');
+      grid.insertAdjacentHTML('beforeend', '<div class="text-body-tertiary d-flex align-items-center" style="font-size:.66rem">Wk ' + (wi + 1) + '</div>');
       wk.forEach(function(v) {
         grid.insertAdjacentHTML('beforeend',
           '<div class="heat-cell" style="background:' + heatColor(v) + '">' + (v || '') + '</div>');
@@ -1020,13 +695,13 @@ function renderHeatmap(D) {
 
     const legEl = document.getElementById('heat-legend');
     if (legEl) {
-      const colors = ['var(--border)', '#bbf7d0', '#fde68a', '#fb923c', '#f87171'];
+      const colors = ['var(--bs-border-color)', '#bbf7d0', '#fde68a', '#fb923c', '#f87171'];
       legEl.innerHTML =
-        '<span>fewer</span>' +
-        '<div class="heat-legend-grad">' +
-          colors.map(function(c) { return '<span style="background:' + c + '"></span>'; }).join('') +
-        '</div>' +
-        '<span>more failures</span>';
+        '<span class="text-body-tertiary small">fewer</span>' +
+        '<span class="d-flex gap-1">' +
+          colors.map(function(c) { return '<span style="width:14px;height:10px;border-radius:2px;display:inline-block;background:' + c + '"></span>'; }).join('') +
+        '</span>' +
+        '<span class="text-body-tertiary small">more failures</span>';
     }
   } catch(e) { console.error('renderHeatmap error:', e); }
 }
@@ -1057,7 +732,7 @@ function buildCoveragePie(D) {
         chart.ctx.fillStyle = covColor;
         chart.ctx.fillText(cov + '%', cx, cy - 8);
         chart.ctx.font = '600 9px system-ui';
-        chart.ctx.fillStyle = cssVar('--label');
+        chart.ctx.fillStyle = cssVar('--bs-secondary-color');
         chart.ctx.fillText('COVERAGE', cx, cy + 9);
         chart.ctx.restore();
       }
@@ -1070,8 +745,8 @@ function buildCoveragePie(D) {
         labels: ['Covered', 'Uncovered'],
         datasets: [{
           data: [cov, remaining],
-          backgroundColor: [covColor, cssVar('--border')],
-          borderColor: cssVar('--surface'),
+          backgroundColor: [covColor, cssVar('--bs-border-color')],
+          borderColor: cssVar('--bs-body-bg'),
           borderWidth: 2,
           hoverOffset: 3,
         }]
@@ -1090,10 +765,10 @@ function buildCoveragePie(D) {
     const infoEl = document.getElementById('cov-info');
     if (infoEl) {
       const statusHtml = met
-        ? '<span class="cov-status met">\u2713 Target met</span>'
-        : '<span class="cov-status miss">\u2717 Below target</span>';
+        ? '<span class="badge text-bg-success"><i class="bi bi-check-circle-fill"></i> Target met</span>'
+        : '<span class="badge text-bg-danger"><i class="bi bi-x-circle-fill"></i> Below target</span>';
       infoEl.innerHTML =
-        '<div class="cov-info-row">' +
+        '<div class="d-flex justify-content-between align-items-center mt-2 small text-secondary">' +
           '<span>Target: <strong>' + tgt + '%</strong></span>' +
           statusHtml +
         '</div>';
@@ -1109,14 +784,15 @@ function renderTable(D) {
     tbody.innerHTML = '';
     if (!D.results || !D.results.length) {
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="5" style="text-align:center;padding:2rem;color:var(--text2)">No test results found.</td>';
+      tr.innerHTML = '<td colspan="5" class="text-center text-secondary py-4">No test results found.</td>';
       tbody.appendChild(tr);
       return;
     }
     const frag = document.createDocumentFragment();
     D.results.forEach(function(r, i) {
       const oc = r.outcome;
-      const badge = '<span class="badge ' + oc + '"><span class="dot"></span> ' + escHtml(oc) + '</span>';
+      const badgeCls = oc === 'passed' ? 'text-bg-success' : (oc === 'failed' || oc === 'error' ? 'text-bg-danger' : 'text-bg-warning');
+      const badge = '<span class="badge rounded-pill ' + badgeCls + '">' + escHtml(oc) + '</span>';
       const flikSVG = buildFlakinessSVG(r.flakiness);
       // Details column: thumbnail for failed tests, text snippet otherwise
       let detailCell;
@@ -1127,14 +803,15 @@ function renderTable(D) {
           'alt="Failure screenshot — click to expand" ' +
           'title="Click row to expand failure details" />';
       } else if (oc !== 'passed') {
-        detailCell = '<span class="no-shot-placeholder">no<br>shot</span>';
+        detailCell = '<span class="d-inline-flex align-items-center justify-content-center border border-dashed rounded bg-body-secondary text-body-tertiary" style="width:60px;height:36px;font-size:.65rem;line-height:1.2">no<br>shot</span>';
       } else {
-        detailCell = '<span class="det-snippet" style="color:var(--pass)">\u2713 All assertions passed</span>';
+        detailCell = '<span class="text-success small"><i class="bi bi-check-circle-fill"></i> All assertions passed</span>';
       }
 
       // Main row
       const tr = document.createElement('tr');
-      tr.className = 'rrow';
+      tr.className = 'align-middle';
+      tr.style.cursor = 'pointer';
       tr.setAttribute('aria-expanded', 'false');
       tr.setAttribute('tabindex', '0');
       tr.setAttribute('aria-label', 'Test: ' + r.name + ', status: ' + oc);
@@ -1142,26 +819,30 @@ function renderTable(D) {
       tr.onkeydown = function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(i, tr); } };
       tr.innerHTML =
         '<td>' +
-          '<div class="t-name">' + escHtml(r.name) + '</div>' +
-          '<div class="t-cls">' + escHtml((r.cls || '').split('::').pop() || (r.cls || '')) + '</div>' +
-          '<div class="t-expand" id="expand-hint-' + i + '">\u25b6 expand</div>' +
+          '<div class="fw-semibold">' + escHtml(r.name) + '</div>' +
+          '<div class="text-secondary" style="font-size:.68rem">' + escHtml((r.cls || '').split('::').pop() || (r.cls || '')) + '</div>' +
+          '<div class="text-body-tertiary" style="font-size:.65rem" id="expand-hint-' + i + '"><i class="bi bi-chevron-right"></i> expand</div>' +
         '</td>' +
         '<td>' + badge + '</td>' +
-        '<td class="dur-cell">' + formatDur(r.duration) + '</td>' +
+        '<td class="text-secondary" style="font-variant-numeric:tabular-nums">' + formatDur(r.duration) + '</td>' +
         '<td><div class="flik-wrap">' + flikSVG + '</div></td>' +
         '<td>' + detailCell + '</td>';
 
-      // Detail row
+      // Detail row (collapsed by default)
       const trDetail = document.createElement('tr');
-      trDetail.className = 'rdetail';
+      trDetail.className = 'collapse-row';
       trDetail.id = 'rdetail-' + i;
       const td = document.createElement('td');
       td.setAttribute('colspan', '5');
-      const inner = document.createElement('div');
-      inner.className = 'rdetail-inner';
-      inner.id = 'rdetail-inner-' + i;
-      inner.innerHTML = buildDetailLeft(r) + buildDetailShot(r);
-      td.appendChild(inner);
+      td.style.padding = '0';
+      const collapseDiv = document.createElement('div');
+      collapseDiv.className = 'collapse';
+      collapseDiv.id = 'collapse-' + i;
+      const innerDiv = document.createElement('div');
+      innerDiv.className = 'p-3 bg-body-secondary border-top';
+      innerDiv.innerHTML = buildDetailLeft(r);
+      collapseDiv.appendChild(innerDiv);
+      td.appendChild(collapseDiv);
       trDetail.appendChild(td);
 
       frag.appendChild(tr);
@@ -1185,70 +866,73 @@ function buildFlakinessSVG(bars) {
 }
 
 function buildDetailLeft(r) {
-  let out = '<div class="rdetail-left">';
+  let out = '<div class="d-flex flex-column gap-2">';
   const d = r.details || {};
 
   // "What failed" — error message banner
   if (d.assert_msg) {
-    out += '<div><div class="det-label">What failed</div><div class="det-msg">' + escHtml(d.assert_msg) + '</div></div>';
+    out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">What failed</div><div class="text-danger fw-medium" style="font-size:.78rem;word-break:break-word">' + escHtml(d.assert_msg) + '</div></div>';
   }
 
-  // Steps — only passing steps with green checkmark
-  var passingSteps = d.steps ? d.steps.filter(function(s) { return s.passed; }) : [];
-  if (passingSteps.length) {
-    out += '<div><div class="det-label">Steps</div>';
-    passingSteps.forEach(function(s) {
-      out += '<div class="det-step pass"><span class="det-step-icon">\u2713</span> ' + escHtml(s.label) + '</div>';
+  // Steps — show ALL steps (pass and fail)
+  var allSteps = d.steps || [];
+  if (allSteps.length) {
+    out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">Steps</div>';
+    allSteps.forEach(function(s) {
+      if (s.passed) {
+        out += '<div class="det-step"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + '</div>';
+      } else {
+        out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + '</div>';
+        if (s.msg) out += '<div class="det-step-msg text-secondary">' + escHtml(s.msg) + '</div>';
+      }
     });
     out += '</div>';
   }
 
-  // Stacktrace — failed step + message inside code block, screenshot to the right
-  var failStep = d.steps && d.steps.filter(function(s) { return !s.passed; })[0];
-  if (failStep || d.short_trace) {
-    out += '<div><div class="det-label">Stacktrace</div>';
-    out += '<div class="det-trace-wrap">';
+  // Stacktrace — only show trace context (no duplicate step info)
+  if (d.short_trace) {
+    out += '<div class="det-stacktrace-section"><div class="text-uppercase text-danger fw-bold mb-1" style="font-size:.82rem;letter-spacing:.04em">Stacktrace</div>';
+    out += '<div class="d-flex gap-3 align-items-start">';
 
-    // Code block: failed step label + its error message
-    var traceContent = '';
-    if (failStep) {
-      traceContent += '\u2717 ' + failStep.label;
-      if (failStep.msg) traceContent += '\n' + failStep.msg;
-    } else if (d.short_trace) {
-      traceContent = d.short_trace;
-    }
-    out += '<pre class="det-trace"><code class="hljs">' + hljsHighlight(traceContent) + '</code></pre>';
+    out += '<pre class="det-trace font-monospace bg-body border rounded p-2 flex-grow-1"><code class="hljs">' + hljsHighlight(d.short_trace) + '</code></pre>';
 
-    // Screenshot inline to the right of code block
     if (r.screenshot_path) {
-      out += '<div class="det-trace-shot">' +
-        '<img src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/>' +
+      out += '<div class="det-trace-shot flex-shrink-0">' +
+        '<img class="border rounded" src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/>' +
       '</div>';
     }
 
     out += '</div></div>';
+  } else if (r.screenshot_path) {
+    // No trace but there is a screenshot — show it standalone
+    out += '<div class="det-stacktrace-section"><div class="text-uppercase text-danger fw-bold mb-1" style="font-size:.82rem;letter-spacing:.04em">Screenshot</div>';
+    out += '<div><img class="border rounded det-trace-shot-img" src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/></div>';
+    out += '</div>';
   }
 
-  if (!d.assert_msg && !failStep && !d.short_trace) {
-    out += '<div style="color:var(--pass);font-size:.8rem">\u2713 Test passed with no errors.</div>';
+  if (!d.assert_msg && !allSteps.length && !d.short_trace) {
+    out += '<div class="text-success small"><i class="bi bi-check-circle-fill"></i> Test passed with no errors.</div>';
   }
 
   out += '</div>';
   return out;
 }
 
-function buildDetailShot(r) {
-  // Screenshot is now embedded inside the Stacktrace section in buildDetailLeft.
-  return '';
-}
-
 function toggleDetail(i, trEl) {
-  const inner = document.getElementById('rdetail-inner-' + i);
-  const hint  = document.getElementById('expand-hint-' + i);
-  if (!inner) return;
-  const isOpen = inner.classList.toggle('open');
-  if (hint) hint.textContent = isOpen ? '\u25bc collapse' : '\u25b6 expand';
-  if (trEl) trEl.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  const collapseEl = document.getElementById('collapse-' + i);
+  const hint = document.getElementById('expand-hint-' + i);
+  if (!collapseEl) return;
+  var bsCollapse = bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+  var isOpen = collapseEl.classList.contains('show');
+  if (isOpen) {
+    bsCollapse.hide();
+    if (hint) hint.innerHTML = '<i class="bi bi-chevron-right"></i> expand';
+    if (trEl) trEl.setAttribute('aria-expanded', 'false');
+  } else {
+    bsCollapse.show();
+    if (hint) hint.innerHTML = '<i class="bi bi-chevron-down"></i> collapse';
+    if (trEl) trEl.setAttribute('aria-expanded', 'true');
+  }
 }
 
 // ── Footer ────────────────────────────────────────────────────────────────────
@@ -1266,9 +950,9 @@ function updateChartTheme() {
   try {
     const grid = cssVar('--chart-grid');
     const txt  = cssVar('--chart-text');
-    const surf = cssVar('--surface');
+    const bg   = cssVar('--bs-body-bg');
     if (donutChart) {
-      donutChart.data.datasets[0].borderColor = surf;
+      donutChart.data.datasets[0].borderColor = bg;
       donutChart.update();
     }
     if (trendChart) {
@@ -1279,7 +963,7 @@ function updateChartTheme() {
       trendChart.update();
     }
     if (covChart) {
-      covChart.data.datasets[0].borderColor = surf;
+      covChart.data.datasets[0].borderColor = bg;
       covChart.update();
     }
   } catch(e) { console.error('updateChartTheme error:', e); }
@@ -1302,37 +986,54 @@ function formatDur(s) {
   return sec ? m + 'm ' + sec + 's' : m + 'm';
 }
 
-// ── Lightbox ──────────────────────────────────────────────────────────────────
+// ── Lightbox (Bootstrap Modal) ────────────────────────────────────────────────
 function openLightbox(src) {
   const img = document.getElementById('lightbox-img');
-  const lb  = document.getElementById('lightbox');
   if (img) img.src = src;
-  if (lb)  lb.classList.add('open');
+  var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('lightboxModal'));
+  modal.show();
 }
-
-function closeLightbox() {
-  const lb = document.getElementById('lightbox');
-  if (lb) lb.classList.remove('open');
-}
-
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeLightbox();
-});
 
 // ── PDF Export — programmatic jsPDF + autoTable ───────────────────────────────
-function exportPDF() {
+
+// Load an image from a relative URL and return a data URL via canvas
+function _loadImageAsDataURL(src) {
+  return new Promise(function(resolve) {
+    var img = new Image();
+    img.onload = function() {
+      var canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = function() { resolve(''); };
+    img.src = src;
+  });
+}
+
+async function exportPDF() {
   const btn = document.getElementById('pdf-btn');
-  if (btn) { btn.classList.add('loading'); btn.textContent = '\u23f3 Generating\u2026'; }
+  if (btn) { btn.classList.add('disabled'); btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Generating\u2026'; }
   try {
     const D = window._QA_DATA;
     if (!D) throw new Error('Report data not loaded yet.');
 
+    // Pre-load all failure screenshots as data URLs
+    const shotCache = {};
+    const failedResults = D.results.filter(function(r) { return r.outcome !== 'passed' && r.screenshot_path; });
+    for (var fi = 0; fi < failedResults.length; fi++) {
+      var sp = failedResults[fi].screenshot_path;
+      if (sp && !shotCache[sp]) {
+        shotCache[sp] = await _loadImageAsDataURL(sp);
+      }
+    }
+
     const { jsPDF } = window.jspdf;
 
     // ── Detect current effective theme ──
-    const forcedTheme = document.documentElement.getAttribute('data-theme');
-    const systemDark  = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const isDark      = forcedTheme === 'dark' || (!forcedTheme && systemDark);
+    const bsTheme    = document.documentElement.getAttribute('data-bs-theme');
+    const isDark     = bsTheme === 'dark';
 
     // ── Theme colour palettes ──
     const T = isDark ? {
@@ -1386,7 +1087,7 @@ function exportPDF() {
 
     // Sub-header
     let y = 28;
-    y += 2;  // small gap below header bar — BASE/LOG/DURATION removed per spec
+    y += 2;
 
     // Stat cards (5 boxes)
     const stats = [
@@ -1447,14 +1148,12 @@ function exportPDF() {
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(9);
     pdf.setTextColor(...covColor);
-    // covered value
     pdf.text(cov + '%', MG, y);
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(7.5);
     pdf.setTextColor(...T.text2);
     pdf.text('covered', MG + 10, y);
     y += 5;
-    // target value
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(9);
     pdf.setTextColor(...T.text);
@@ -1481,9 +1180,19 @@ function exportPDF() {
       body:   D.results.map(function(r) {
         const totalSec = Math.round(r.duration);
         const dur = totalSec < 60 ? totalSec + 's' : (Math.floor(totalSec/60) + 'm' + (totalSec%60 ? ' ' + (totalSec%60) + 's' : ''));
-        const details = r.details && r.details.assert_msg
-          ? r.details.assert_msg.substring(0, 80)
-          : (r.outcome === 'passed' ? 'Passed' : '\u2014');
+        var details = '';
+        if (r.outcome === 'passed') {
+          details = 'Passed';
+        } else if (r.details && r.details.steps) {
+          var fStep = r.details.steps.filter(function(s) { return !s.passed; })[0];
+          if (fStep) details = fStep.label.substring(0, 80);
+          else if (r.details.assert_msg) details = r.details.assert_msg.substring(0, 80);
+          else details = '\u2014';
+        } else if (r.details && r.details.assert_msg) {
+          details = r.details.assert_msg.substring(0, 80);
+        } else {
+          details = '\u2014';
+        }
         return [r.name.substring(0, 42), r.outcome, dur, details];
       }),
       margin: { left: MG, right: MG },
@@ -1507,7 +1216,6 @@ function exportPDF() {
         if (data.section === 'body' && data.column.index === 1) {
           data.cell.styles.textColor = statusColor(data.cell.raw);
         }
-        // "Passed" in the Failure Details column — dark green, no icon
         if (data.section === 'body' && data.column.index === 3 && data.cell.raw === 'Passed') {
           data.cell.styles.textColor = T.pass;
         }
@@ -1515,17 +1223,11 @@ function exportPDF() {
       theme: 'grid',
     });
 
-    // ── PAGE 2: Failure screenshots ───────────────────────────────────────────
-    const failedWithShots = D.results.filter(function(r) {
-      return r.outcome !== 'passed' && r.screenshot_path;
-    });
-    const failedNoShots = D.results.filter(function(r) {
-      return r.outcome !== 'passed' && !r.screenshot_path && r.details && r.details.assert_msg;
-    });
+    // ── PAGE 2: Failure Details & Screenshots ──────────────────────────────────
+    const allFailed = D.results.filter(function(r) { return r.outcome !== 'passed'; });
 
-    if (failedWithShots.length > 0 || failedNoShots.length > 0) {
+    if (allFailed.length > 0) {
       newPage();
-      // Page header stripe
       pdf.setFillColor(...T.accent);
       pdf.rect(0, 0, PW, 12, 'F');
       pdf.setFont('helvetica', 'bold');
@@ -1535,11 +1237,14 @@ function exportPDF() {
 
       y = 20;
 
-      // Failed with screenshots first
-      failedWithShots.forEach(function(r) {
-        if (y > 230) { newPage(); y = 14; }
+      allFailed.forEach(function(r) {
+        // Estimate space needed: name(7) + details(~15) + screenshot(~65) + separator(6)
+        var needsSpace = 30;
+        var shotData = r.screenshot_path ? shotCache[r.screenshot_path] : '';
+        if (shotData) needsSpace += 65;
+        if (y + needsSpace > 275) { newPage(); y = 14; }
 
-        // Test name chip
+        // 1. Test name
         pdf.setFillColor(...T.fail);
         pdf.roundedRect(MG, y, 4, 4, 0.5, 0.5, 'F');
         pdf.setFont('helvetica', 'bold');
@@ -1548,18 +1253,29 @@ function exportPDF() {
         pdf.text(r.name.substring(0, 65), MG + 6, y + 3);
         y += 7;
 
-        // Class path
-        if (r.cls) {
-          pdf.setFont('helvetica', 'normal');
-          pdf.setFontSize(6.5);
-          pdf.setTextColor(...T.label);
-          pdf.text(r.cls, MG, y);
-          y += 5;
-        }
+        // 2. Failure details — failed step from parsed steps
+        var failStep = (r.details && r.details.steps)
+          ? r.details.steps.filter(function(s) { return !s.passed; })[0]
+          : null;
 
-        // Error message
-        if (r.details && r.details.assert_msg) {
-          const msgLines = pdf.splitTextToSize('\u2717 ' + r.details.assert_msg, CW);
+        if (failStep) {
+          var stepLine = pdf.splitTextToSize('\u2717 ' + failStep.label, CW);
+          pdf.setFont('courier', 'bold');
+          pdf.setFontSize(7);
+          pdf.setTextColor(...T.fail);
+          pdf.text(stepLine.slice(0, 2), MG, y);
+          y += stepLine.slice(0, 2).length * 3.8;
+          if (failStep.msg) {
+            var msgLine = pdf.splitTextToSize('  ' + failStep.msg, CW - 4);
+            pdf.setFont('courier', 'normal');
+            pdf.setFontSize(6.5);
+            pdf.setTextColor(...T.text2);
+            pdf.text(msgLine.slice(0, 3), MG + 2, y);
+            y += msgLine.slice(0, 3).length * 3.5;
+          }
+          y += 2;
+        } else if (r.details && r.details.assert_msg) {
+          var msgLines = pdf.splitTextToSize('\u2717 ' + r.details.assert_msg, CW);
           pdf.setFont('helvetica', 'normal');
           pdf.setFontSize(7);
           pdf.setTextColor(...T.fail);
@@ -1567,50 +1283,21 @@ function exportPDF() {
           y += msgLines.slice(0, 3).length * 3.8 + 2;
         }
 
-        // Locators tried
-        if (r.details && r.details.locators && r.details.locators.length) {
-          pdf.setFont('courier', 'normal');
-          pdf.setFontSize(6.5);
-          pdf.setTextColor(...T.text2);
-          r.details.locators.slice(0, 2).forEach(function(l) {
-            pdf.text('\u2192 ' + l.substring(0, 80), MG + 2, y);
-            y += 3.8;
-          });
-          y += 1;
-        }
-
-        // Screenshot — only render when path is present, no red border
-        if (r.screenshot_path) {
+        // 3. Screenshot
+        if (shotData) {
           try {
-            const shotH = 58; const shotW = Math.min(CW, shotH * (16 / 9));
-            pdf.addImage(r.screenshot_path, 'PNG', MG, y, shotW, shotH);
+            var shotH = 58;
+            var shotW = Math.min(CW, shotH * (16 / 9));
+            pdf.addImage(shotData, 'PNG', MG, y, shotW, shotH);
             y += shotH + 3;
           } catch(_) { /* skip unrenderable image */ }
         }
 
-        // Divider
+        // Separator
         pdf.setDrawColor(...T.border);
         pdf.setLineWidth(0.15);
         pdf.line(MG, y, PW - MG, y);
         y += 6;
-      });
-
-      // Failed without screenshots (details only)
-      failedNoShots.forEach(function(r) {
-        if (y > 260) { newPage(); y = 14; }
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(...T.fail);
-        pdf.text('\u2717 ' + r.name.substring(0, 65), MG, y);
-        y += 5;
-        if (r.details && r.details.assert_msg) {
-          const lines = pdf.splitTextToSize(r.details.assert_msg, CW);
-          pdf.setFont('helvetica', 'normal');
-          pdf.setFontSize(7);
-          pdf.setTextColor(...T.text2);
-          pdf.text(lines.slice(0, 4), MG, y);
-          y += lines.slice(0, 4).length * 3.8 + 4;
-        }
       });
     }
 
@@ -1622,7 +1309,7 @@ function exportPDF() {
     alert('PDF generation failed: ' + e.message + '\n\nCheck the browser console for details.');
     console.error('exportPDF error:', e);
   }
-  if (btn) { btn.classList.remove('loading'); btn.textContent = '\u2193 Export PDF'; }
+  if (btn) { btn.classList.remove('disabled'); btn.innerHTML = '<i class="bi bi-file-earmark-pdf"></i> Export PDF'; }
 }
 """
 
@@ -1630,13 +1317,18 @@ function exportPDF() {
 # ── HTML shell ────────────────────────────────────────────────────────────────
 
 _HTML_SHELL = """<!DOCTYPE html>
-<html lang="en" data-theme="" data-default-theme="__THEME__">
+<html lang="en" data-bs-theme="light" data-default-theme="__THEME__">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <meta name="description" content="QA Test Report \u2014 __ENV__"/>
   <meta name="robots" content="noindex"/>
   <title>__TITLE__</title>
+  <!-- Bootstrap 5.3.3 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <!-- Bootstrap Icons 1.11.3 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <!-- Custom overrides -->
   <link rel="stylesheet" href="assets/report.css"/>
   <!-- highlight.js — theme toggled by JS based on current colour mode -->
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"/>
@@ -1648,96 +1340,128 @@ _HTML_SHELL = """<!DOCTYPE html>
 </head>
 <body>
 
-<!-- Lightbox -->
-<div id="lightbox" role="dialog" aria-modal="true" aria-label="Screenshot preview" onclick="closeLightbox()">
-  <img id="lightbox-img" src="" alt="Failure screenshot"/>
+<!-- Lightbox Modal -->
+<div class="modal fade" id="lightboxModal" tabindex="-1" aria-label="Screenshot preview" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered">
+    <div class="modal-content bg-transparent border-0">
+      <div class="text-center">
+        <img id="lightbox-img" src="" alt="Failure screenshot" class="img-fluid rounded shadow-lg" style="max-height:90vh"/>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="app">
-  <header class="rpt-header" id="rpt-header" role="banner"></header>
+  <header class="d-flex align-items-center gap-3 py-3 border-bottom flex-wrap mb-3" id="rpt-header" role="banner"></header>
 
   <!-- Loading state -->
-  <div id="loading-state" role="status" aria-live="polite">
-    <div class="spinner"></div>
-    <p>Loading report data\u2026</p>
+  <div id="loading-state" class="d-flex flex-column align-items-center justify-content-center gap-3 py-5" role="status" aria-live="polite">
+    <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading\u2026</span></div>
+    <p class="text-secondary">Loading report data\u2026</p>
   </div>
 
   <!-- Error state -->
-  <div id="error-state" hidden aria-live="assertive">
-    <div class="error-icon">\u26a0</div>
-    <h2>Report data unavailable</h2>
-    <p id="error-detail"></p>
-    <p class="error-hint">
+  <div id="error-state" hidden class="d-flex flex-column align-items-center justify-content-center gap-3 py-5 text-center" aria-live="assertive">
+    <div style="font-size:2.5rem"><i class="bi bi-exclamation-triangle text-warning"></i></div>
+    <h2 class="fs-5 text-danger">Report data unavailable</h2>
+    <p class="text-secondary" id="error-detail" style="max-width:480px"></p>
+    <div class="alert alert-warning small" style="max-width:480px">
       If viewing locally, serve via HTTP:<br/>
       <code>python -m http.server 8080</code>
-    </p>
+    </div>
   </div>
 
   <!-- Report body (hidden until data loaded) -->
   <div id="pdf-body" hidden>
 
     <!-- Summary stat cards (JS fills) -->
-    <div class="stat-cards" id="stat-cards"></div>
+    <div class="row row-cols-2 row-cols-md-5 g-2 mb-3" id="stat-cards"></div>
 
     <!-- Row 1: Distribution \u00b7 Durations \u00b7 Trend -->
-    <div class="top-row">
-      <div class="card" id="card-distribution">
-        <div class="sec-label">Result Distribution</div>
-        <div class="dist-donut-wrap"><canvas id="donutChart" aria-label="Result distribution donut chart"></canvas></div>
-        <div class="dist-legend" id="dist-legend"></div>
+    <div class="row g-3 mb-3">
+      <div class="col-md-4">
+        <div class="card h-100" id="card-distribution">
+          <div class="card-body">
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Result Distribution</div>
+            <div class="dist-donut-wrap"><canvas id="donutChart" aria-label="Result distribution donut chart"></canvas></div>
+            <div id="dist-legend" class="mt-2"></div>
+          </div>
+        </div>
       </div>
-      <div class="card" id="card-durations">
-        <div class="sec-label">Test Durations</div>
-        <div class="dur-list" id="dur-list"></div>
+      <div class="col-md-4">
+        <div class="card h-100" id="card-durations">
+          <div class="card-body">
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Test Durations</div>
+            <div class="d-flex flex-column gap-1" id="dur-list"></div>
+          </div>
+        </div>
       </div>
-      <div class="card" id="card-trend">
-        <div class="sec-label">Pass Rate Trend \u2014 Last 8 Runs</div>
-        <div class="trend-wrap"><canvas id="trendChart" aria-label="Pass rate trend bar chart"></canvas></div>
+      <div class="col-md-4">
+        <div class="card h-100" id="card-trend">
+          <div class="card-body">
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Pass Rate Trend \u2014 Last 8 Runs</div>
+            <div class="trend-wrap"><canvas id="trendChart" aria-label="Pass rate trend bar chart"></canvas></div>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- Row 2: Category \u00b7 Heatmap \u00b7 Coverage -->
-    <div class="mid-row">
-      <div class="card" id="card-categories">
-        <div class="sec-label">By Category</div>
-        <div class="cat-list" id="cat-list"></div>
-      </div>
-      <div class="card" id="card-heatmap">
-        <div class="sec-label">Failure Heatmap \u2014 Last 4 Weeks</div>
-        <div class="heat-grid-wrap">
-          <div class="heat-grid" id="heat-grid"></div>
+    <div class="row g-3 mb-3">
+      <div class="col-md-4">
+        <div class="card h-100" id="card-categories">
+          <div class="card-body">
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">By Category</div>
+            <div id="cat-list"></div>
+          </div>
         </div>
-        <div class="heat-legend" id="heat-legend"></div>
       </div>
-      <div class="card" id="card-coverage">
-        <div class="sec-label">Code Coverage</div>
-        <div class="cov-pie-wrap"><canvas id="coverageChart" aria-label="Coverage pie chart"></canvas></div>
-        <div class="cov-info" id="cov-info"></div>
+      <div class="col-md-5">
+        <div class="card h-100" id="card-heatmap">
+          <div class="card-body">
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Failure Heatmap \u2014 Last 4 Weeks</div>
+            <div class="overflow-auto">
+              <div class="heat-grid" id="heat-grid"></div>
+            </div>
+            <div class="d-flex align-items-center gap-1 mt-2" id="heat-legend"></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card h-100" id="card-coverage">
+          <div class="card-body">
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Code Coverage</div>
+            <div class="cov-pie-wrap"><canvas id="coverageChart" aria-label="Coverage pie chart"></canvas></div>
+            <div id="cov-info"></div>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- Row 3: Test Results -->
-    <div class="card" id="card-results">
-      <div class="sec-label">Test Results</div>
-      <div class="results-wrap">
-        <table class="rtable" role="table">
-          <thead>
-            <tr>
-              <th scope="col" style="width:28%">Test</th>
-              <th scope="col" style="width:11%">Status</th>
-              <th scope="col" style="width:9%">Duration</th>
-              <th scope="col" style="width:8%">Flakiness</th>
-              <th scope="col">Details</th>
-            </tr>
-          </thead>
-          <tbody id="results-tbody"></tbody>
-        </table>
+    <div class="card mb-3" id="card-results">
+      <div class="card-body">
+        <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Test Results</div>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0" role="table">
+            <thead>
+              <tr class="text-uppercase text-body-tertiary" style="font-size:.66rem;letter-spacing:.08em">
+                <th scope="col" style="width:28%">Test</th>
+                <th scope="col" style="width:11%">Status</th>
+                <th scope="col" style="width:9%">Duration</th>
+                <th scope="col" style="width:8%">Flakiness</th>
+                <th scope="col">Details</th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
   </div><!-- /pdf-body -->
 
-  <footer class="rpt-footer" id="rpt-footer" role="contentinfo"></footer>
+  <footer class="d-flex justify-content-between border-top pt-3 text-body-tertiary small" id="rpt-footer" role="contentinfo"></footer>
 
 </div><!-- /app -->
 
@@ -1745,6 +1469,7 @@ _HTML_SHELL = """<!DOCTYPE html>
 /* Inline report data — no HTTP fetch required, works with file:// */
 window._QA_DATA = __REPORT_DATA__;
 </script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/report.js"></script>
 </body>
 </html>
@@ -1864,10 +1589,10 @@ def generate_report(
     title      = f"{html.escape(project_name)} \u2014 Test Report"
     safe_env   = html.escape(environment)
     safe_theme = html.escape(theme_style if theme_style in ("system", "light", "dark") else "system")
-    # "system" → empty data-theme (CSS media query takes over); else force the value
-    html_theme = "" if safe_theme == "system" else safe_theme
+    # Store the theme preference in data-default-theme; JS initTheme() reads it
+    html_theme = safe_theme
     # Embed report_data as a JS literal so the report works without an HTTP server.
-    # Images reference relative paths (images/FAIL_name.png) rather than base64.
+    # Images reference relative paths (images/<uuid>.png) resolved by the browser.
     data_json = json.dumps(report_data, ensure_ascii=False)
     shell = (
         _HTML_SHELL

@@ -1,7 +1,7 @@
 # Home Page
 
 ## Config
-- url: https://wheelsup.com/
+- url: https://wheelsup.com
 - timeout: 30000
 
 ## Steps

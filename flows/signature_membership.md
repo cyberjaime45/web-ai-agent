@@ -1,12 +1,10 @@
 # Signature Membership Page
 
-## Config
-- url: https://wheelsup.com/signature-membership
-- timeout: 30000
-
 ## Steps
+- goto: https://wheelsup.com/signature-membership
+- wait_for_load
 - assert_text: "The Wheels Up Signature Membership"
-- assert_text: "TDesigned for the way you move"
+- assert_text: "Designed for the way you move"
 - assert_text: "Flexibility without complexity"
 - assert_text: "Fly your way"
 - assert_text: "Anywhere, anytime"

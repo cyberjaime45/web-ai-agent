@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Generator
 
@@ -178,13 +179,9 @@ def _annotate_failure_screenshot(shot_path: str, page) -> None:
                             [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
                             outline=(220, 38, 38),
                         )
-        else:
-            # No error element found — draw a small ✕ marker in the top-right corner
-            w, h = img.size
-            m, s = 8, 28
-            draw.rectangle([w - m - s, m, w - m, m + s], outline=(220, 38, 38), width=3)
-            draw.line([w - m - s, m, w - m, m + s], fill=(220, 38, 38), width=2)
-            draw.line([w - m, m, w - m - s, m + s], fill=(220, 38, 38), width=2)
+
+        if not rects:
+            return  # No identifiable error elements — keep screenshot clean
 
         img.save(shot_path)
     except Exception:
@@ -207,8 +204,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
         driver: BrowserDriver | None = funcargs.get("browser_driver")  # type: ignore[assignment]
         if driver is not None:
             try:
-                safe_name = item.name.replace("/", "_").replace(":", "_")
-                shot_path = driver.capture_screenshot(f"FAIL_{safe_name}")
+                shot_path = driver.capture_screenshot(str(uuid.uuid4()))
                 _annotate_failure_screenshot(shot_path, driver.page)
                 plugin = item.config.pluginmanager.get_plugin("professional_report")
                 if plugin is not None:
@@ -311,8 +307,7 @@ class FlowItem(pytest.Item):
             # is more reliable than relying on the last explicit `screenshot` step.
             if not result.success:
                 try:
-                    safe = self.flow.name.replace(" ", "_")
-                    shot_path = str(self._artifacts / f"FAIL_{safe}.png")
+                    shot_path = str(self._artifacts / f"{uuid.uuid4()}.png")
                     page.screenshot(path=shot_path)
                     _annotate_failure_screenshot(shot_path, page)
                     result.last_screenshot = shot_path
