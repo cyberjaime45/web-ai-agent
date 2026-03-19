@@ -157,8 +157,6 @@ class DeterministicRunner:
 
     def _h_scroll(self, action: FlowAction) -> StepResult:
         direction = action.args[0].lower() if action.args else "down"
-        # If arg looks like element text (not a direction keyword or number),
-        # treat as scroll-to-element (absorbs old SCROLL_TO behavior)
         if direction in ("down", "bottom"):
             self.page.keyboard.press("End")
         elif direction in ("up", "top"):
@@ -348,12 +346,6 @@ class DeterministicRunner:
 
     def _h_assert_text(self, action: FlowAction) -> StepResult:
         expected = action.args[0]
-        # Backward compat: old "assert_title" alias — check page title first
-        if action.raw.lower().startswith("assert_title"):
-            title = self.page.title()
-            if expected.lower() not in title.lower():
-                raise AssertionError(f"Title '{title}' does not contain '{expected}'")
-            return self._ok(action, f"Title contains '{expected}'", 1)
         self.page.get_by_text(expected).first.wait_for(state="visible", timeout=5000)
         return self._ok(action, f"Text '{expected}' visible", 1)
 
@@ -366,13 +358,6 @@ class DeterministicRunner:
 
     def _h_assert_visible(self, action: FlowAction) -> StepResult:
         text = action.args[0]
-        # Backward compat: old "assert_link" alias — check links first
-        if action.raw.lower().startswith("assert_link"):
-            loc = self.page.get_by_role("link", name=text)
-            if loc.count() == 0:
-                raise AssertionError(f'Link with text "{text}" is not visible.')
-            loc.first.wait_for(state="visible", timeout=5000)
-            return self._ok(action, f'Link "{text}" is visible', 1)
         loc = self.page.get_by_text(text, exact=False)
         if loc.count() == 0:
             raise AssertionError(f'Element with text "{text}" is not visible.')
@@ -400,11 +385,6 @@ class DeterministicRunner:
             loc = self.page.get_by_text(target, exact=True)
         if loc.count() == 0:
             raise AssertionError(f'Element "{target}" not found.')
-        if action.negated:
-            # Backward compat: assert_button_disabled mapped to ASSERT_ENABLED with negated=True
-            if not loc.first.is_disabled():
-                raise AssertionError(f'Element "{target}" is enabled (expected disabled).')
-            return self._ok(action, f'Element "{target}" is disabled', 1)
         if loc.first.is_disabled():
             raise AssertionError(f'Element "{target}" is disabled.')
         return self._ok(action, f'Element "{target}" is enabled', 1)
@@ -588,12 +568,6 @@ class DeterministicRunner:
         return None
 
     def _l2_assert_visible(self, action: FlowAction) -> StepResult | None:
-        # Backward compat: assert_link alias
-        if action.raw.lower().startswith("assert_link"):
-            loc = self.page.locator(f'a:has-text("{action.args[0]}")')
-            if loc.count() > 0 and loc.first.is_visible():
-                return self._ok(action, f'[L2] Link "{action.args[0]}" is visible', 2)
-            return None
         if action.args[0].lower() in self.page.content().lower():
             return self._ok(action, f'[L2] Element "{action.args[0]}" found in HTML', 2)
         return None

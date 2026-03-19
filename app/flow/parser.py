@@ -4,18 +4,14 @@ Flow Parser — Parses .md flow files into FlowDefinition objects.
 Uses markdown-it-py to correctly extract list items from each ##
 section (handles nested lists, inline formatting, and ordered numbers).
 
-Supported syntax
-────────────────
-Old (space-separated):
-  click "Button Text"
-  fill "Username" with "admin"
-  fill "Username" "admin"
+Syntax
+──────
+  keyword: "arg1" | "arg2"
 
-New (colon-pipe):
   click: "Button Text"
   fill: "Username" | "admin"
-
-Both syntaxes are fully supported and can be mixed within a flow.
+  wait_for_load
+  scroll: "down"
 """
 
 from __future__ import annotations
@@ -28,12 +24,9 @@ from typing import Optional
 from markdown_it import MarkdownIt
 
 from app.schemas.actions import (
-    ACTION_ALIASES,
     ACTION_ARG_SPEC,
     ActionType,
     FlowAction,
-    _NEGATED_ALIASES,
-    _OLD_VALUE_MAP,
 )
 
 _md = MarkdownIt()
@@ -122,70 +115,54 @@ _COLON_RE = re.compile(r"^(\w+)\s*:\s*(.*)", re.DOTALL)
 _QUOTED_RE = re.compile(r'"([^"]*)"')
 
 
-def _tokenize(raw: str) -> tuple[str, str, str]:
+def _tokenize(raw: str) -> tuple[str, str]:
     """
-    Stage 1: Split raw step text into (keyword, raw_args, syntax_format).
+    Stage 1: Split raw step text into (keyword, raw_args).
 
-    Detects colon syntax (new) vs space-separated (old).
+    Syntax: `keyword: "arg1" | "arg2"` or bare `keyword` for no-arg actions.
     """
     raw = raw.strip()
 
-    # Try new colon syntax first: `click: "Login"`
+    # Colon syntax: `click: "Login"` or `fill: "Username" | "admin"`
     m = _COLON_RE.match(raw)
     if m:
-        return m.group(1).lower(), m.group(2).strip(), "new"
+        return m.group(1).lower(), m.group(2).strip()
 
-    # Old space-separated syntax: `click "Login"`
+    # Bare keyword with no colon (e.g. `wait_for_load`, `reload`, `back`)
     parts = raw.split(None, 1)
     keyword = parts[0].lower()
     rest = parts[1].strip() if len(parts) > 1 else ""
-    return keyword, rest, "old"
+    return keyword, rest
 
 
 def _normalize(
-    keyword: str, raw_args: str, syntax: str
-) -> tuple[ActionType, list[str], bool]:
+    keyword: str, raw_args: str
+) -> tuple[ActionType, list[str]]:
     """
-    Stage 2: Resolve keyword to ActionType and parse arguments.
+    Stage 2: Resolve keyword to ActionType and parse pipe-separated arguments.
 
-    Returns (action_type, args_list, negated).
+    Returns (action_type, args_list).
     """
-    negated = keyword in _NEGATED_ALIASES
-
-    # Resolve action type: try enum value, then aliases, then old value map
-    action_type: ActionType | None = None
+    # Resolve action type from enum value
     try:
         action_type = ActionType(keyword)
     except ValueError:
-        action_type = ACTION_ALIASES.get(keyword) or _OLD_VALUE_MAP.get(keyword)
-
-    if action_type is None:
         raise FlowParseError(f"Unknown action keyword: '{keyword}'")
 
-    # Parse arguments based on syntax format
-    if syntax == "new":
-        # New syntax: split on pipe, strip quotes from each part
-        if raw_args:
-            parts = [p.strip() for p in raw_args.split("|")]
-            args = []
-            for part in parts:
-                # Strip surrounding quotes if present
-                qm = _QUOTED_RE.search(part)
-                if qm:
-                    args.append(qm.group(1))
-                elif part:
-                    args.append(part)
-        else:
-            args = []
+    # Parse arguments: split on pipe, strip quotes from each part
+    if raw_args:
+        parts = [p.strip() for p in raw_args.split("|")]
+        args = []
+        for part in parts:
+            qm = _QUOTED_RE.search(part)
+            if qm:
+                args.append(qm.group(1))
+            elif part:
+                args.append(part)
     else:
-        # Old syntax: strip "with" separator, extract quoted args
-        rest_clean = re.sub(r"\bwith\b", "", raw_args, count=1).strip()
-        args = _QUOTED_RE.findall(rest_clean)
-        # For bare unquoted single args: wait 2000, scroll down
-        if not args and rest_clean:
-            args = [rest_clean.strip()]
+        args = []
 
-    return action_type, args, negated
+    return action_type, args
 
 
 def _validate(
@@ -216,7 +193,6 @@ def _validate(
 def _build(
     action_type: ActionType,
     args: list[str],
-    negated: bool,
     raw: str,
     step_num: int,
 ) -> FlowAction:
@@ -226,7 +202,6 @@ def _build(
         args=args,
         raw=raw,
         step_num=step_num,
-        negated=negated,
     )
 
 
@@ -242,10 +217,10 @@ def _parse_action(raw: str, step_num: int) -> FlowAction | None:
         return None
 
     try:
-        keyword, raw_args, syntax = _tokenize(raw)
-        action_type, args, negated = _normalize(keyword, raw_args, syntax)
+        keyword, raw_args = _tokenize(raw)
+        action_type, args = _normalize(keyword, raw_args)
         _validate(action_type, args, step_num, raw)
-        return _build(action_type, args, negated, raw, step_num)
+        return _build(action_type, args, raw, step_num)
     except FlowParseError:
         # Unknown keyword — keep as a raw WAIT(0) placeholder so the AI planner
         # can still consume flow.steps[] while the deterministic runner skips it.
@@ -283,15 +258,6 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
             elif key == "description":
                 flow.description = val
 
-    # ── Target Application (legacy format) ──────────────────────
-    for line in _section_lines(text, "Target Application"):
-        m_url  = re.match(r"[-*]\s+\*\*URL\*\*:\s*(.+)", line)
-        m_desc = re.match(r"[-*]\s+\*\*Description\*\*:\s*(.+)", line)
-        if m_url:
-            flow.url = m_url.group(1).strip()
-        if m_desc:
-            flow.description = m_desc.group(1).strip()
-
     # ── Credentials ──────────────────────────────────────────────
     for line in _section_lines(text, "Credentials"):
         # Bold format:  - **Username**: student
@@ -326,7 +292,7 @@ def parse_flow_file(filepath: Path) -> FlowDefinition:
     )
 
 
-def load_all_flows(flows_dir: Path | str = "src/flows") -> dict[str, FlowDefinition]:
+def load_all_flows(flows_dir: Path | str = "flows") -> dict[str, FlowDefinition]:
     """Load all .md flow files from the given directory."""
     flows_path = Path(flows_dir)
     if not flows_path.exists():

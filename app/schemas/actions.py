@@ -75,42 +75,6 @@ class ActionType(str, Enum):
     PRESS                 = "press"
 
 
-# Keyword aliases accepted in .md files (old → new canonical)
-ACTION_ALIASES: dict[str, ActionType] = {
-    # ── Old canonical names (backward compat) ────────────────────
-    "open":                    ActionType.GOTO,
-    "click_link":              ActionType.CLICK_LINK_TEXT,
-    "press_key":               ActionType.PRESS,
-    "scroll_to":               ActionType.SCROLL,
-    "assert_element_visible":  ActionType.ASSERT_VISIBLE,
-    "assert_element_hidden":   ActionType.ASSERT_HIDDEN,
-    "assert_button_enabled":   ActionType.ASSERT_ENABLED,
-    "assert_button_disabled":  ActionType.ASSERT_DISABLED,
-    "assert_title":            ActionType.ASSERT_TEXT,
-    "assert_link":             ActionType.ASSERT_VISIBLE,
-    "wait_load":               ActionType.WAIT_LOAD,
-
-    # ── Convenience aliases ──────────────────────────────────────
-    "go_to":           ActionType.GOTO,
-    "navigate":        ActionType.GOTO,
-    "enter":           ActionType.FILL,
-    "verify_text":     ActionType.ASSERT_TEXT,
-    "check_text":      ActionType.ASSERT_TEXT,
-    "assert":          ActionType.ASSERT_TEXT,
-    "verify_url":      ActionType.ASSERT_URL,
-    "assert_visible":  ActionType.ASSERT_VISIBLE,
-    "assert_hidden":   ActionType.ASSERT_HIDDEN,
-    "dblclick":        ActionType.DOUBLE_CLICK,
-    "key":             ActionType.PRESS,
-    "keypress":        ActionType.PRESS,
-}
-
-# Old enum values that map to new ones — used by the parser to resolve
-# keywords written as old enum .value strings (e.g. "wait_for_load")
-_OLD_VALUE_MAP: dict[str, ActionType] = {
-    "wait_for_load":  ActionType.WAIT_FOR_LOAD,
-}
-
 
 # Argument count spec: (min_args, max_args)
 ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
@@ -178,20 +142,12 @@ AI_ONLY_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.AI_SUMMARIZE,
 })
 
-# Old aliases that imply a negated assertion (backward compat)
-_NEGATED_ALIASES: frozenset[str] = frozenset({
-    "assert_button_disabled",
-    "assert_element_hidden",
-})
-
-
 @dataclass
 class FlowAction:
     type:     ActionType
     args:     list[str]
     raw:      str = ""   # original step text, for error messages
     step_num: int = 0
-    negated:  bool = False
 
 
 @dataclass
