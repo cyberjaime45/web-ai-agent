@@ -18,20 +18,24 @@ import logging
 import os
 import urllib.parse
 
-from playwright.sync_api import Browser, Playwright
+from playwright.sync_api import Browser, BrowserContext, Playwright
 
 logger = logging.getLogger(__name__)
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
-def create_browser(pw: Playwright, test_name: str = "web-agent") -> Browser:
-    """Return an open Playwright Browser based on the RUNNING_MODE env var.
+def create_browser(pw: Playwright, test_name: str = "web-agent") -> tuple[Browser, dict]:
+    """Return an open Playwright Browser and context options based on RUNNING_MODE.
 
     Args:
         pw:        Active Playwright instance (from ``sync_playwright()``).
         test_name: Human-readable label for the test session.
                    Used as the session name on remote providers (e.g. LambdaTest dashboard).
+
+    Returns:
+        (browser, context_kwargs): The browser instance and a dict of keyword
+        arguments to pass to ``browser.new_context()``.
 
     Raises:
         ValueError:        Unknown RUNNING_MODE value.
@@ -53,8 +57,8 @@ def create_browser(pw: Playwright, test_name: str = "web-agent") -> Browser:
 # ── Local ──────────────────────────────────────────────────────────────────────
 
 
-def _local_browser(pw: Playwright) -> Browser:
-    """Launch a local browser using env-controlled options.
+def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
+    """Launch a local browser maximized using env-controlled options.
 
     Env vars (all optional, with defaults):
       BROWSER   chromium | firefox | webkit  (default: chromium)
@@ -75,7 +79,13 @@ def _local_browser(pw: Playwright) -> Browser:
         "[provider:local] browser=%s headless=%s slow_mo=%d",
         browser_name, headless, slow_mo,
     )
-    return browser_type.launch(headless=headless, slow_mo=slow_mo)
+    browser = browser_type.launch(
+        headless=headless,
+        slow_mo=slow_mo,
+        args=["--start-maximized"] if browser_name == "chromium" else [],
+    )
+    # no_viewport=True lets the page fill the entire OS window
+    return browser, {"no_viewport": True}
 
 
 # ── LambdaTest ─────────────────────────────────────────────────────────────────
@@ -85,7 +95,7 @@ def _local_browser(pw: Playwright) -> Browser:
 # connects via CDP at the address below.
 _LT_CDP_ENDPOINT = "wss://cdp.lambdatest.com/playwright"
 
-def _lambdatest_browser(pw: Playwright, test_name: str) -> Browser:
+def _lambdatest_browser(pw: Playwright, test_name: str) -> tuple[Browser, dict]:
     """Connect to LambdaTest's Playwright cloud grid via CDP.
 
     Required env vars:
@@ -117,7 +127,7 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> Browser:
         "LT:Options": {
             "username":   username,
             "accessKey":  access_key,
-            "build":      f"QA Web Agent -> {os.getenv("ENVIRONMENT", "staging")}",
+            "build":      f"QA Web Agent -> {os.getenv('ENVIRONMENT', 'staging')}",
             "name":       test_name,
             "platform":   "Windows 11",
             "resolution": "1920x1080",
@@ -134,4 +144,6 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> Browser:
 
     logger.debug("[provider:lambda] connecting to LambdaTest (user=%r build=%r name=%r)",
                  username, capabilities["LT:Options"]["build"], test_name)
-    return pw.chromium.connect(endpoint)
+    browser = pw.chromium.connect(endpoint)
+    # Match the LambdaTest VM resolution
+    return browser, {"viewport": {"width": 1920, "height": 1080}}

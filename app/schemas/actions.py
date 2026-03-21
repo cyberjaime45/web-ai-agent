@@ -158,6 +158,7 @@ class StepResult:
     layer_used:      int = 1          # 1=deterministic, 2=fallback, 3=AI
     screenshot_path: Optional[str] = None
     error:           Optional[str] = None
+    duration:        float = 0.0      # seconds
 
 
 @dataclass

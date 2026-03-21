@@ -11,5 +11,3 @@
 - assert_text: "Delta benefits"
 - assert_text: "Private Aviation designed for the way you move"
 - click_button: "Request Info"
-<!-- - wait: 5000
-- assert_text: "Ready to even more about Wheels Up?" -->

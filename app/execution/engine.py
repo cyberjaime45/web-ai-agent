@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 
 from playwright.sync_api import Page
@@ -42,7 +43,9 @@ class FlowRunner:
             return result
 
         for action in flow.actions:
+            t0 = time.monotonic()
             step_result = self._run_step(action, page, runner)
+            step_result.duration = round(time.monotonic() - t0, 3)
             result.steps.append(step_result)
 
             if step_result.screenshot_path:

@@ -62,10 +62,27 @@ class ProfessionalReportPlugin:
     def __init__(self) -> None:
         self.results: list[dict] = []
         self.failure_screenshots: dict[str, str] = {}
+        self.flow_steps: dict[str, list[dict]] = {}
         self.session_start = time.time()
 
     def record_screenshot(self, nodeid: str, path: str) -> None:
         self.failure_screenshots[nodeid] = path
+
+    def record_steps(self, nodeid: str, steps: list) -> None:
+        """Serialize FlowResult.steps for the report (both pass and fail)."""
+        self.flow_steps[nodeid] = [
+            {
+                "label": (
+                    f"Step {s.action.step_num:>2} "
+                    f"[L{s.layer_used}{'' if s.success else ' FAIL'}]  "
+                    f"{s.action.raw}"
+                ),
+                "passed": s.success,
+                "msg": "" if s.success else s.message,
+                "duration": s.duration,
+            }
+            for s in steps
+        ]
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when == "call" or (report.when == "setup" and report.failed):
@@ -86,6 +103,9 @@ class ProfessionalReportPlugin:
             path = self.failure_screenshots.get(r["nodeid"])
             if path:
                 r["screenshot"] = path
+            steps = self.flow_steps.get(r["nodeid"])
+            if steps is not None:
+                r["flow_steps"] = steps
 
         generate_report(
             results=self.results,
@@ -275,6 +295,23 @@ def pytest_collection_modifyitems(
 # test_*.py file is needed — just drop a .md file in src/flows/.
 
 
+def _set_lambdatest_status(page, success: bool, error: str = "") -> None:
+    """Report test pass/fail to LambdaTest dashboard (no-op for local runs)."""
+    if os.getenv("RUNNING_MODE", "local").lower().strip() != "lambda":
+        return
+    try:
+        import json as _json
+        status = "passed" if success else "failed"
+        remark = "" if success else (error or "Test failed")[:255]
+        action_payload = _json.dumps({
+            "action": "setTestStatus",
+            "arguments": {"status": status, "remark": remark},
+        })
+        page.evaluate("_ => {}", f"lambdatest_action: {action_payload}")
+    except Exception:
+        pass  # best-effort; don't block test reporting
+
+
 class _FlowFailure(Exception):
     """Raised by FlowItem.runtest() to carry the FlowResult for reporting."""
 
@@ -294,17 +331,20 @@ class FlowItem(pytest.Item):
 
     def runtest(self) -> None:
         with sync_playwright() as pw:
-            browser = create_browser(pw, test_name=self.flow.name)
-            ctx = browser.new_context(viewport={"width": 1280, "height": 720})
+            browser, ctx_opts = create_browser(pw, test_name=self.flow.name)
+            ctx = browser.new_context(**ctx_opts)
             page = ctx.new_page()
             page.set_default_timeout(self.flow.timeout)
 
             runner = FlowRunner(artifacts_dir=str(self._artifacts))
             result: FlowResult = runner.run(self.flow, page)
 
+            # Record steps for the report (both pass and fail)
+            plugin = self.config.pluginmanager.get_plugin("professional_report")
+            if plugin and result.steps:
+                plugin.record_steps(self.nodeid, result.steps)
+
             # Take a fresh failure screenshot while the browser is still open.
-            # This captures the exact page state at the moment of failure and
-            # is more reliable than relying on the last explicit `screenshot` step.
             if not result.success:
                 try:
                     shot_path = str(self._artifacts / f"{uuid.uuid4()}.png")
@@ -314,10 +354,11 @@ class FlowItem(pytest.Item):
                 except Exception:
                     pass  # best-effort; don't block test reporting
 
-                if result.last_screenshot:
-                    plugin = self.config.pluginmanager.get_plugin("professional_report")
-                    if plugin:
-                        plugin.record_screenshot(self.nodeid, result.last_screenshot)
+                if result.last_screenshot and plugin:
+                    plugin.record_screenshot(self.nodeid, result.last_screenshot)
+
+            # Report pass/fail status to LambdaTest
+            _set_lambdatest_status(page, result.success, result.error)
 
             ctx.close()
             browser.close()
@@ -338,7 +379,8 @@ class FlowItem(pytest.Item):
             for s in r.steps:
                 icon = "✓" if s.success else "✗"
                 layer = f"[L{s.layer_used}]" if s.success else f"[L{s.layer_used} FAIL]"
-                lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {s.action.raw}")
+                dur = f"{s.duration * 1000:.0f}ms" if s.duration < 1 else f"{s.duration:.2f}s"
+                lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {s.action.raw}  ({dur})")
                 if not s.success:
                     lines.append(f"       {s.message}")
             return "\n".join(lines)

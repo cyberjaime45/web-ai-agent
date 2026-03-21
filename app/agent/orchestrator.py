@@ -46,8 +46,8 @@ class Orchestrator:
         """Execute a parsed FlowDefinition and return the result."""
         logger.info("[orchestrator] Starting flow: %s (%d actions)", flow.name, len(flow.actions))
         with sync_playwright() as pw:
-            browser = create_browser(pw, test_name=flow.name)
-            ctx = browser.new_context(viewport={"width": 1280, "height": 720})
+            browser, ctx_opts = create_browser(pw, test_name=flow.name)
+            ctx = browser.new_context(**ctx_opts)
             page = ctx.new_page()
             page.set_default_timeout(flow.timeout)
 

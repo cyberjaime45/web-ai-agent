@@ -20,7 +20,7 @@
 - click: "NY"
 - fill: "Zip Code" | "10001"
 - fill: "Country" | "United States"
-- click: "YES"
+- click: "div[role='checkbox']"
 - fill: "Preferred Airports" | "KACK"
 - click: "Please select one"
 - click: "Event"

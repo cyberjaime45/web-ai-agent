@@ -61,8 +61,12 @@ def _screenshot_rel_path(path: str | None, report_dir: Path) -> str:
 
 def _duration_str(seconds: float) -> str:
     if seconds < 1:
-        return f"{seconds * 1000:.0f} ms"
-    return f"{seconds:.2f} s"
+        return f"{round(seconds * 1000)} ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    m = int(seconds // 60)
+    s = round(seconds % 60)
+    return f"{m}m {s}s" if s else f"{m}m"
 
 
 _LOCATOR_RE = re.compile(
@@ -71,7 +75,7 @@ _LOCATOR_RE = re.compile(
     r"fill\(|click\(|goto\()"
 )
 
-_STEP_RE = re.compile(r"^\s+([✓✗])\s+(Step\s+\d+\s+\[L\d+[^\]]*\]\s+.+)$")
+_STEP_RE = re.compile(r"^\s+([✓✗])\s+(Step\s+\d+\s+\[L\d+[^\]]*\]\s+.+?)(?:\s+\((\d+(?:\.\d+)?(?:ms|s))\))?\s*$")
 
 
 def _parse_failure_details(longrepr: str) -> dict:
@@ -88,13 +92,21 @@ def _parse_failure_details(longrepr: str) -> dict:
             passed = m.group(1) == "✓"
             label = m.group(2).strip()
             msg = ""
+            dur = 0.0
+            # Parse duration from group 3: "123ms" or "1.23s"
+            dur_str = m.group(3)
+            if dur_str:
+                if dur_str.endswith("ms"):
+                    dur = float(dur_str[:-2]) / 1000
+                elif dur_str.endswith("s"):
+                    dur = float(dur_str[:-1])
             step_line_indices.add(idx)
             if not passed and idx + 1 < len(lines):
                 nxt = lines[idx + 1]
                 if nxt.strip() and not _STEP_RE.match(nxt):
                     msg = nxt.strip()
                     step_line_indices.add(idx + 1)
-            steps.append({"label": label, "passed": passed, "msg": msg})
+            steps.append({"label": label, "passed": passed, "msg": msg, "duration": round(dur, 3)})
 
     # ── Assert message ────────────────────────────────────────────────────────
     # 1) Try E-prefixed lines (standard pytest failures)
@@ -872,15 +884,16 @@ function buildDetailLeft(r) {
     out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">What failed</div><div class="text-danger fw-medium" style="font-size:.78rem;word-break:break-word">' + escHtml(d.assert_msg) + '</div></div>';
   }
 
-  // Steps — show ALL steps (pass and fail)
+  // Steps — show ALL steps (pass and fail) with duration
   var allSteps = d.steps || [];
   if (allSteps.length) {
     out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">Steps</div>';
     allSteps.forEach(function(s) {
+      var durTag = s.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(s.duration) + '</span>' : '';
       if (s.passed) {
-        out += '<div class="det-step"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + '</div>';
+        out += '<div class="det-step"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
       } else {
-        out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + '</div>';
+        out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
         if (s.msg) out += '<div class="det-step-msg text-secondary">' + escHtml(s.msg) + '</div>';
       }
     });
@@ -908,7 +921,7 @@ function buildDetailLeft(r) {
     out += '</div>';
   }
 
-  if (!d.assert_msg && !allSteps.length && !d.short_trace) {
+  if (!allSteps.length && !d.assert_msg && !d.short_trace) {
     out += '<div class="text-success small"><i class="bi bi-check-circle-fill"></i> Test passed with no errors.</div>';
   }
 
@@ -977,10 +990,10 @@ function escHtml(s) {
 }
 
 function formatDur(s) {
-  const totalSec = Math.round(s);
-  if (totalSec < 60) return totalSec + 's';
-  const m = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
+  if (s < 1) return Math.round(s * 1000) + ' ms';
+  if (s < 60) return s.toFixed(1) + 's';
+  var m = Math.floor(s / 60);
+  var sec = Math.round(s % 60);
   return sec ? m + 'm ' + sec + 's' : m + 'm';
 }
 
@@ -1176,8 +1189,7 @@ async function exportPDF() {
       startY: y,
       head:   [['Test', 'Status', 'Duration', 'Failure Details']],
       body:   D.results.map(function(r) {
-        const totalSec = Math.round(r.duration);
-        const dur = totalSec < 60 ? totalSec + 's' : (Math.floor(totalSec/60) + 'm' + (totalSec%60 ? ' ' + (totalSec%60) + 's' : ''));
+        var dur = formatDur(r.duration);
         var details = '';
         if (r.outcome === 'passed') {
           details = 'Passed';
@@ -1504,6 +1516,10 @@ def generate_report(
     for idx, r in enumerate(results):
         name, cls, env = _parse_nodeid(r.get("nodeid", r.get("name", "")))
         details = _parse_failure_details(r.get("longrepr", "") or "")
+        # Prefer direct flow_steps (with accurate duration) over text-parsed steps
+        flow_steps = r.get("flow_steps")
+        if flow_steps is not None:
+            details["steps"] = flow_steps
         enriched.append({
             "_idx":           idx,
             "name":           name or r.get("name", ""),
