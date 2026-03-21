@@ -120,7 +120,7 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> Browser:
             "build":      f"QA Web Agent -> {os.getenv("ENVIRONMENT", "staging")}",
             "name":       test_name,
             "platform":   "Windows 11",
-            "resolution": "1280x720",
+            "resolution": "1920x1080",
             "console":    "true",
             "network":    "true",
             "visual":     "true",

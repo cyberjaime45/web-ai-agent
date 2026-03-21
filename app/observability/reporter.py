@@ -234,7 +234,7 @@ _CSS = """
 
 /* ── Logo badge ── */
 .rpt-logo {
-  width: 38px; height: 38px; border-radius: 8px;
+  width: 50px; height: 38px; border-radius: 8px;
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   display: flex; align-items: center; justify-content: center;
   color: #fff; font-weight: 800; font-size: 1rem; flex-shrink: 0;
@@ -477,13 +477,11 @@ function renderHeader(D) {
     ? '<span class="text-success fw-bold">ALL PASSED</span>'
     : '<span class="text-danger fw-bold">' + s.failed + ' TEST' + (s.failed > 1 ? 'S' : '') + ' FAILED</span>';
   el.innerHTML =
-    '<div class="rpt-logo" aria-hidden="true">QA</div>' +
+    '<div class="rpt-logo" aria-hidden="true">WUP</div>' +
     '<div>' +
       '<div class="fw-bold fs-6">' + escHtml(m.project) + '</div>' +
       '<div class="text-secondary small d-flex align-items-center gap-2 flex-wrap mt-1">' +
         '<span class="badge rounded-pill text-bg-info text-uppercase">' + escHtml(m.environment) + '</span>' +
-        (m.base_url ? '<span>BASE: ' + escHtml(m.base_url) + '</span>' : '') +
-        '<span>LOG: ' + escHtml(m.log_level.toUpperCase()) + '</span>' +
         '<span>\u00b7</span>' +
         overall +
       '</div>' +
@@ -1352,7 +1350,7 @@ _HTML_SHELL = """<!DOCTYPE html>
 </div>
 
 <div id="app">
-  <header class="d-flex align-items-center gap-3 py-3 border-bottom flex-wrap mb-3" id="rpt-header" role="banner"></header>
+  <header class="d-flex align-items-center gap-2 py-3 border-bottom flex-wrap mb-3" id="rpt-header" role="banner"></header>
 
   <!-- Loading state -->
   <div id="loading-state" class="d-flex flex-column align-items-center justify-content-center gap-3 py-5" role="status" aria-live="polite">

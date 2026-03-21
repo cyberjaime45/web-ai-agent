@@ -229,30 +229,35 @@ class DeterministicRunner:
 
     # ── L1 handlers: Input ────────────────────────────────────────
 
+    @staticmethod
+    def _is_css(s: str) -> bool:
+        """True when *s* looks like a CSS selector (starts with . # or [)."""
+        return bool(s) and s[0] in (".", "#", "[")
+
+    def _resolve_input_l1(self, target: str):
+        """Resolve an input/textarea by label, placeholder, or CSS selector."""
+        if self._is_css(target):
+            return self.page.locator(target)
+        loc = self.page.get_by_label(target, exact=True)
+        if loc.count() == 0:
+            loc = self.page.get_by_placeholder(target, exact=True)
+        return loc
+
     def _h_fill(self, action: FlowAction) -> StepResult:
         label = action.args[0]
         value = action.args[1] if len(action.args) > 1 else ""
-        loc = self.page.get_by_label(label, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_placeholder(label, exact=True)
-        loc.first.fill(value)
+        self._resolve_input_l1(label).first.fill(value)
         return self._ok(action, f"Filled '{label}' = '{value}'", 1)
 
     def _h_type(self, action: FlowAction) -> StepResult:
         label = action.args[0]
         value = action.args[1] if len(action.args) > 1 else ""
-        loc = self.page.get_by_label(label, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_placeholder(label, exact=True)
-        loc.first.press_sequentially(value)
+        self._resolve_input_l1(label).first.press_sequentially(value)
         return self._ok(action, f"Typed '{value}' into '{label}'", 1)
 
     def _h_clear(self, action: FlowAction) -> StepResult:
         label = action.args[0]
-        loc = self.page.get_by_label(label, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_placeholder(label, exact=True)
-        loc.first.clear()
+        self._resolve_input_l1(label).first.clear()
         return self._ok(action, f'Cleared "{label}"', 1)
 
     def _h_focus(self, action: FlowAction) -> StepResult:
@@ -272,20 +277,25 @@ class DeterministicRunner:
         loc.first.select_option(option)
         return self._ok(action, f"Selected '{option}' in '{label}'", 1)
 
-    def _h_check(self, action: FlowAction) -> StepResult:
-        target = action.args[0]
+    def _resolve_checkable_l1(self, target: str):
+        """Resolve a checkbox or radio by CSS selector, label, or role."""
+        if self._is_css(target):
+            return self.page.locator(target)
         loc = self.page.get_by_label(target, exact=True)
         if loc.count() == 0:
+            loc = self.page.get_by_role("radio", name=target, exact=True)
+        if loc.count() == 0:
             loc = self.page.get_by_role("checkbox", name=target, exact=True)
-        loc.first.check()
+        return loc
+
+    def _h_check(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        self._resolve_checkable_l1(target).first.check()
         return self._ok(action, f"Checked '{target}'", 1)
 
     def _h_uncheck(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        loc = self.page.get_by_label(target, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_role("checkbox", name=target, exact=True)
-        loc.first.uncheck()
+        self._resolve_checkable_l1(target).first.uncheck()
         return self._ok(action, f"Unchecked '{target}'", 1)
 
     # ── L1 handlers: Advanced ─────────────────────────────────────

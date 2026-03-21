@@ -51,6 +51,9 @@ class FallbackLocator:
         return None
 
     def resolve_input(self, page: Page, target: str) -> Locator | None:
+        # CSS selector shortcut: .class, #id, [attr=val]
+        if target and target[0] in (".", "#", "["):
+            return self._try(lambda: page.locator(target))
         for strategy in (
             lambda: page.get_by_label(target, exact=True),
             lambda: page.get_by_label(target),
