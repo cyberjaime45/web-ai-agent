@@ -73,8 +73,6 @@ class ActionType(str, Enum):
     SCREENSHOT            = "screenshot"
     PRESS                 = "press"
 
-
-
 # Argument count spec: (min_args, max_args)
 ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
     ActionType.GOTO:            (1, 1),

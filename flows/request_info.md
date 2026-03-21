@@ -22,10 +22,10 @@
 - click: "NY"
 - fill: "Zip Code" | "10001"
 - fill: "Country" | "United States"
-- click: "div[class='ng-star-inserted'] span.circle"
+- click_link_text: "YES"
 - fill: "Preferred Airports" | "KACK"
 - click: "Please select one"
 - click: "Event"
 - fill: ".textarea-box" | "I need to part of the wheelsup family"
-- click: "I accept"
+- click_link_text: "I accept"
 - screenshot

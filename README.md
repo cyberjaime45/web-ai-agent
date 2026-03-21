@@ -211,13 +211,15 @@ Switch to a different browser tab by index (0-based).
 ```
 
 #### `scroll`
-Scroll the page. Accepts a direction (`up`, `down`, `top`, `bottom`), a pixel amount, or text to scroll into view.
+Scroll the page. Accepts a direction (`up`, `down`, `top`, `bottom`), a pixel amount, text to scroll into view, or a CSS selector / XPath.
 
 ```markdown
 1. scroll: "down"
 2. scroll: "top"
 3. scroll: "500"
 4. scroll: "Contact Us"
+5. scroll: "#footer"
+6. scroll: "//div[@id='section-3']"
 ```
 
 ---
@@ -245,36 +247,43 @@ Click a link by its exact text.
 ```
 
 #### `click_button`
-Click a button by its name. Identical to `click` but more explicit.
+Click a button by its name or CSS selector / XPath.
 
 ```markdown
 1. click_button: "Submit"
 2. click_button: "Next Step"
+3. click_button: "#submit-btn"
+4. click_button: "//button[@type='submit']"
 ```
 
 #### `double_click`
-Double-click an element by text.
+Double-click an element by text or CSS selector / XPath.
 
 ```markdown
 1. double_click: "Edit Cell"
 2. double_click: "file_report.pdf"
+3. double_click: ".editable-cell"
+4. double_click: "//td[@class='editable']"
 ```
 
 #### `right_click`
-Right-click an element to open a context menu.
+Right-click an element to open a context menu. Accepts text or CSS selector / XPath.
 
 ```markdown
 1. right_click: "Document Title"
 2. right_click: "Row Item"
+3. right_click: "#context-target"
+4. right_click: "//div[@class='file-item']"
 ```
 
 #### `hover`
-Hover over an element to trigger tooltips, dropdowns, or other hover effects.
+Hover over an element to trigger tooltips, dropdowns, or other hover effects. Accepts text or CSS selector / XPath.
 
 ```markdown
 1. hover: "User Profile"
 2. hover: "Products"
-3. hover: "More Options"
+3. hover: ".dropdown-trigger"
+4. hover: "//div[@class='tooltip-target']"
 ```
 
 ---
@@ -282,62 +291,72 @@ Hover over an element to trigger tooltips, dropdowns, or other hover effects.
 ### Input (7)
 
 #### `fill`
-Set an input field's value atomically via Playwright's `.fill()`. Resolves the input by label, placeholder, or CSS selector.
+Set an input field's value atomically via Playwright's `.fill()`. Resolves the input by label, placeholder, CSS selector, or XPath.
 
 ```markdown
 1. fill: "Email" | "user@example.com"
 2. fill: "Search" | "web agent"
 3. fill: ".textarea-box" | "This is a message"
 4. fill: "#phone-input" | "+1 555-0100"
+5. fill: "input[name='email']" | "user@example.com"
+6. fill: "//input[@name='email']" | "user@example.com"
 ```
 
 #### `type`
-Type text character-by-character via `.press_sequentially()`. Use this for autocomplete fields, masked inputs, or when keystroke events matter.
+Type text character-by-character via `.press_sequentially()`. Use this for autocomplete fields, masked inputs, or when keystroke events matter. Accepts label, placeholder, CSS selector, or XPath.
 
 ```markdown
 1. type: "Address" | "123 Main Street"
 2. type: "#search-input" | "New York"
+3. type: "//input[@id='autocomplete']" | "San Francisco"
 ```
 
 #### `clear`
-Clear an input field's value.
+Clear an input field's value. Accepts label, placeholder, CSS selector, or XPath.
 
 ```markdown
 1. clear: "Email"
 2. clear: ".search-field"
+3. clear: "//input[@name='query']"
 ```
 
 #### `focus`
-Move focus to an input field without changing its value.
+Move focus to an input field without changing its value. Accepts label, placeholder, CSS selector, or XPath.
 
 ```markdown
 1. focus: "Username"
 2. focus: "#otp-field"
+3. focus: "//input[@name='code']"
 ```
 
 #### `select`
-Select an option from a `<select>` dropdown by label and option text.
+Select an option from a `<select>` dropdown by label and option text. Accepts label, CSS selector, or XPath for the dropdown.
 
 ```markdown
 1. select: "Country" | "United States"
 2. select: "#billing-state" | "California"
+3. select: "//select[@name='country']" | "Canada"
 ```
 
 #### `check`
-Check a checkbox or radio button. Resolves by label text, `role="radio"`, or `role="checkbox"`.
+Check a checkbox or radio button. Resolves by label text, `role="radio"`, `role="checkbox"`, CSS selector, or XPath.
 
 ```markdown
 1. check: "I agree to the Terms"
 2. check: "YES"
 3. check: "[name='newsletter']"
+4. check: "input[name='haveyoupreviouslypurchased'][value='YES']"
+5. check: "div[class='ng-star-inserted'] span.square"
+6. check: "//input[@type='radio' and @value='YES']"
 ```
 
 #### `uncheck`
-Uncheck a checkbox.
+Uncheck a checkbox. Accepts label, CSS selector, or XPath.
 
 ```markdown
 1. uncheck: "Subscribe to updates"
 2. uncheck: "#marketing-opt-in"
+3. uncheck: "//input[@name='newsletter']"
 ```
 
 ---
@@ -345,19 +364,22 @@ Uncheck a checkbox.
 ### Advanced Interaction (2)
 
 #### `drag_to`
-Drag one element to another by their visible text.
+Drag one element to another. Each argument accepts text, CSS selector, or XPath.
 
 ```markdown
 1. drag_to: "Task Card" | "Done Column"
 2. drag_to: "Item A" | "Drop Zone"
+3. drag_to: "#draggable" | "#drop-zone"
+4. drag_to: "//div[@class='card']" | "//div[@class='column-done']"
 ```
 
 #### `upload`
-Upload a file to a file input. First argument is the CSS selector for the file input, second is the file path.
+Upload a file to a file input. First argument is the CSS selector or XPath for the file input, second is the file path.
 
 ```markdown
 1. upload: "input[type=file]" | "/path/to/document.pdf"
 2. upload: "#avatar-upload" | "./images/profile.jpg"
+3. upload: "//input[@type='file']" | "./report.pdf"
 ```
 
 ---
@@ -426,19 +448,22 @@ Assert that specific text is NOT visible or present on the page.
 ```
 
 #### `assert_visible`
-Assert that an element with the given text or selector is visible on the page.
+Assert that an element with the given text, CSS selector, or XPath is visible on the page.
 
 ```markdown
 1. assert_visible: "Submit Button"
 2. assert_visible: ".success-banner"
+3. assert_visible: "#welcome-message"
+4. assert_visible: "//span[text()='Success']"
 ```
 
 #### `assert_hidden`
-Assert that an element is hidden or does not exist.
+Assert that an element is hidden or does not exist. Accepts text, CSS selector, or XPath.
 
 ```markdown
 1. assert_hidden: "Loading Spinner"
 2. assert_hidden: ".error-modal"
+3. assert_hidden: "//div[@class='loading']"
 ```
 
 #### `assert_url`
@@ -451,27 +476,33 @@ Assert that the current URL contains a specific fragment (case-insensitive).
 ```
 
 #### `assert_enabled`
-Assert that a button or input is enabled (not disabled).
+Assert that a button or input is enabled (not disabled). Accepts text, CSS selector, or XPath.
 
 ```markdown
 1. assert_enabled: "Submit"
 2. assert_enabled: "Next Step"
+3. assert_enabled: "#submit-btn"
+4. assert_enabled: "//button[@type='submit']"
 ```
 
 #### `assert_disabled`
-Assert that a button or input is disabled.
+Assert that a button or input is disabled. Accepts text, CSS selector, or XPath.
 
 ```markdown
 1. assert_disabled: "Submit"
 2. assert_disabled: "Delete Account"
+3. assert_disabled: "#delete-btn"
+4. assert_disabled: "//button[@id='next']"
 ```
 
 #### `assert_checked`
-Assert that a checkbox or radio button is checked.
+Assert that a checkbox or radio button is checked. Accepts label, CSS selector, or XPath.
 
 ```markdown
 1. assert_checked: "I agree to the Terms"
 2. assert_checked: "Remember Me"
+3. assert_checked: "#terms-checkbox"
+4. assert_checked: "//input[@name='agree']"
 ```
 
 ---
@@ -495,11 +526,12 @@ Wait for the page to reach `DOMContentLoaded` state.
 ```
 
 #### `wait_for_element`
-Wait for a specific element (by CSS selector) to become visible. Times out after 10 seconds.
+Wait for a specific element (by CSS selector or XPath) to become visible. Times out after 10 seconds.
 
 ```markdown
 1. wait_for_element: ".results-container"
 2. wait_for_element: "#dashboard-widget"
+3. wait_for_element: "//div[@class='loaded']"
 ```
 
 #### `wait_for_text`
@@ -817,7 +849,7 @@ open reports/staging/report.html
 | Layer | Trigger | Strategy |
 |-------|---------|----------|
 | **L1 — Deterministic** | Always tried first | Dispatch-table driven. Exact Playwright `get_by_role`, `get_by_label`, `get_by_placeholder` locators. |
-| **L2 — Fallback** | L1 fails | 7+ fuzzy strategies per element type (clickable, input, checkbox, ID, table row) + selectolax HTML similarity (≥ 0.6). |
+| **L2 — Fallback** | L1 fails | 7+ fuzzy strategies per element type (clickable, input, checkbox, table row) + selectolax HTML similarity (≥ 0.6). |
 | **L3 — AI** | L1 + L2 fail, or AI-native action | OpenAI call with page context. Handles both element fallback and AI-native actions (`ai_click`, `ai_extract`, `ai_assert`, `ai_summarize`). Skipped if no `OPENAI_API_KEY`. |
 
 Most flows run entirely on L1 with zero API calls. L2 handles case variations, extra whitespace, and partial text matches. L3 is the last resort for complex or dynamic pages, and the exclusive runtime for AI-native actions.

@@ -161,6 +161,9 @@ class DeterministicRunner:
             self.page.keyboard.press("Home")
         elif direction.lstrip("-").isdigit():
             self.page.mouse.wheel(0, int(direction))
+        elif _is_selector(direction):
+            # Scroll to element by CSS/XPath selector
+            self.page.locator(direction).first.scroll_into_view_if_needed()
         else:
             # Scroll to element by text
             loc = self.page.get_by_text(direction, exact=False)
@@ -190,6 +193,9 @@ class DeterministicRunner:
 
     def _h_click_button(self, action: FlowAction) -> StepResult:
         target = action.args[0]
+        if _is_selector(target):
+            self.page.locator(target).first.click()
+            return self._ok(action, f"Clicked button '{target}'", 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
@@ -198,6 +204,9 @@ class DeterministicRunner:
 
     def _h_double_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
+        if _is_selector(target):
+            self.page.locator(target).first.dblclick()
+            return self._ok(action, f'Double-clicked "{target}"', 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
@@ -208,6 +217,9 @@ class DeterministicRunner:
 
     def _h_right_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
+        if _is_selector(target):
+            self.page.locator(target).first.click(button="right")
+            return self._ok(action, f'Right-clicked "{target}"', 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
@@ -218,12 +230,13 @@ class DeterministicRunner:
 
     def _h_hover(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        self.page.get_by_text(target, exact=True).first.hover()
+        if _is_selector(target):
+            self.page.locator(target).first.hover()
+        else:
+            self.page.get_by_text(target, exact=True).first.hover()
         return self._ok(action, f"Hovered '{target}'", 1)
 
     # ── L1 handlers: Input ────────────────────────────────────────
-
-
 
     def _resolve_input_l1(self, target: str):
         """Resolve an input/textarea by label, placeholder, or CSS selector."""
@@ -253,19 +266,25 @@ class DeterministicRunner:
 
     def _h_focus(self, action: FlowAction) -> StepResult:
         label = action.args[0]
-        loc = self.page.get_by_label(label, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_placeholder(label, exact=True)
-        loc.first.focus()
+        if _is_selector(label):
+            self.page.locator(label).first.focus()
+        else:
+            loc = self.page.get_by_label(label, exact=True)
+            if loc.count() == 0:
+                loc = self.page.get_by_placeholder(label, exact=True)
+            loc.first.focus()
         return self._ok(action, f'Focused "{label}"', 1)
 
     def _h_select(self, action: FlowAction) -> StepResult:
         label = action.args[0]
         option = action.args[1] if len(action.args) > 1 else ""
-        loc = self.page.get_by_label(label, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_role("combobox", name=label, exact=True)
-        loc.first.select_option(option)
+        if _is_selector(label):
+            self.page.locator(label).first.select_option(option)
+        else:
+            loc = self.page.get_by_label(label, exact=True)
+            if loc.count() == 0:
+                loc = self.page.get_by_role("combobox", name=label, exact=True)
+            loc.first.select_option(option)
         return self._ok(action, f"Selected '{option}' in '{label}'", 1)
 
     def _resolve_checkable_l1(self, target: str):
@@ -293,9 +312,9 @@ class DeterministicRunner:
 
     def _h_drag_to(self, action: FlowAction) -> StepResult:
         source, target = action.args[0], action.args[1]
-        self.page.get_by_text(source).first.drag_to(
-            self.page.get_by_text(target).first
-        )
+        src_loc = self.page.locator(source).first if _is_selector(source) else self.page.get_by_text(source).first
+        tgt_loc = self.page.locator(target).first if _is_selector(target) else self.page.get_by_text(target).first
+        src_loc.drag_to(tgt_loc)
         return self._ok(action, f'Dragged "{source}" to "{target}"', 1)
 
     def _h_upload(self, action: FlowAction) -> StepResult:
@@ -358,19 +377,25 @@ class DeterministicRunner:
         raise AssertionError(f'Text "{text}" is still visible on the page.')
 
     def _h_assert_visible(self, action: FlowAction) -> StepResult:
-        text = action.args[0]
-        loc = self.page.get_by_text(text, exact=False)
+        target = action.args[0]
+        if _is_selector(target):
+            loc = self.page.locator(target)
+        else:
+            loc = self.page.get_by_text(target, exact=False)
         if loc.count() == 0:
-            raise AssertionError(f'Element with text "{text}" is not visible.')
+            raise AssertionError(f'Element "{target}" is not visible.')
         loc.first.wait_for(state="visible", timeout=5000)
-        return self._ok(action, f'Element "{text}" is visible', 1)
+        return self._ok(action, f'Element "{target}" is visible', 1)
 
     def _h_assert_hidden(self, action: FlowAction) -> StepResult:
-        text = action.args[0]
-        loc = self.page.get_by_text(text, exact=False)
+        target = action.args[0]
+        if _is_selector(target):
+            loc = self.page.locator(target)
+        else:
+            loc = self.page.get_by_text(target, exact=False)
         if loc.count() == 0 or loc.first.is_hidden():
-            return self._ok(action, f'Element "{text}" is not visible', 1)
-        raise AssertionError(f'Element with text "{text}" is still visible.')
+            return self._ok(action, f'Element "{target}" is not visible', 1)
+        raise AssertionError(f'Element "{target}" is still visible.')
 
     def _h_assert_url(self, action: FlowAction) -> StepResult:
         fragment = action.args[0]
@@ -381,9 +406,12 @@ class DeterministicRunner:
 
     def _h_assert_enabled(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        loc = self.page.get_by_role("button", name=target)
-        if loc.count() == 0:
-            loc = self.page.get_by_text(target, exact=True)
+        if _is_selector(target):
+            loc = self.page.locator(target)
+        else:
+            loc = self.page.get_by_role("button", name=target)
+            if loc.count() == 0:
+                loc = self.page.get_by_text(target, exact=True)
         if loc.count() == 0:
             raise AssertionError(f'Element "{target}" not found.')
         if loc.first.is_disabled():
@@ -392,9 +420,12 @@ class DeterministicRunner:
 
     def _h_assert_disabled(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        loc = self.page.get_by_role("button", name=target)
-        if loc.count() == 0:
-            loc = self.page.get_by_text(target, exact=True)
+        if _is_selector(target):
+            loc = self.page.locator(target)
+        else:
+            loc = self.page.get_by_role("button", name=target)
+            if loc.count() == 0:
+                loc = self.page.get_by_text(target, exact=True)
         if loc.count() == 0:
             raise AssertionError(f'Element "{target}" not found.')
         if not loc.first.is_disabled():
@@ -403,9 +434,12 @@ class DeterministicRunner:
 
     def _h_assert_checked(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        loc = self.page.get_by_label(target, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_role("checkbox", name=target, exact=True)
+        if _is_selector(target):
+            loc = self.page.locator(target)
+        else:
+            loc = self.page.get_by_label(target, exact=True)
+            if loc.count() == 0:
+                loc = self.page.get_by_role("checkbox", name=target, exact=True)
         if loc.count() == 0:
             raise AssertionError(f'Checkbox "{target}" not found.')
         if not loc.first.is_checked():
