@@ -36,6 +36,9 @@ class FallbackLocator:
     """Resolves element locators with progressively looser strategies."""
 
     def resolve_clickable(self, page: Page, target: str) -> Locator | None:
+        # CSS selector shortcut: .class, #id, [attr=val]
+        if target and target[0] in (".", "#", "["):
+            return self._try(lambda: page.locator(target))
         for strategy in (
             lambda: page.get_by_role("button", name=target, exact=True),
             lambda: page.get_by_role("link",   name=target, exact=True),
@@ -77,20 +80,6 @@ class FallbackLocator:
             lambda: page.get_by_role("checkbox", name=target),
             lambda: page.get_by_role("radio", name=target, exact=True),
             lambda: page.get_by_role("radio", name=target),
-        ):
-            loc = self._try(strategy)
-            if loc is not None:
-                return loc
-        return None
-
-    def resolve_by_id(self, page: Page, element_id: str) -> Locator | None:
-        """Resolve an element by ID, data-testid, or data-test-id."""
-        # Strip leading # if present
-        clean_id = element_id.lstrip("#")
-        for strategy in (
-            lambda: page.locator(f"#{clean_id}"),
-            lambda: page.locator(f'[data-testid="{clean_id}"]'),
-            lambda: page.locator(f'[data-test-id="{clean_id}"]'),
         ):
             loc = self._try(strategy)
             if loc is not None:

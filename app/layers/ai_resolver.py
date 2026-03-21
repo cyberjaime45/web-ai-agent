@@ -194,7 +194,7 @@ class AIResolver:
         value = action.args[1] if len(action.args) > 1 else ""
         t = action.type.value
 
-        if t in ("click", "click_button", "click_link_text", "click_id"):
+        if t in ("click", "click_button", "click_link_text"):
             loc.click()
         elif t == "double_click":
             loc.dblclick()

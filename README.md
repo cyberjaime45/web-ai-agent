@@ -146,7 +146,7 @@ Any action that targets an element can accept a CSS selector instead of a label 
 
 ```markdown
 1. fill: ".textarea-box" | "Some text"
-2. click_id: "#submit-btn"
+2. click: "#submit-btn"
 3. check: "[name='agree']"
 4. wait_for_element: ".loading-spinner"
 ```
@@ -207,15 +207,18 @@ Scroll the page. Accepts a direction (`up`, `down`, `top`, `bottom`), a pixel am
 
 ---
 
-### Click (7)
+### Click (6)
 
 #### `click`
-Click a button or link by its visible text. Tries `role="button"` first, then `role="link"`.
+Click a button or link by its visible text, or an element by CSS selector. Tries `role="button"` first, then `role="link"`. When the argument starts with `#`, `.`, or `[`, it is treated as a CSS selector.
 
 ```markdown
 1. click: "Sign In"
 2. click: "Accept All Cookies"
 3. click: "Learn More"
+4. click: "#submit-btn"
+5. click: ".close-modal"
+6. click: "[data-testid='cta']"
 ```
 
 #### `click_link_text`
@@ -224,15 +227,6 @@ Click a link by its exact text.
 ```markdown
 1. click_link_text: "Privacy Policy"
 2. click_link_text: "View All Products"
-```
-
-#### `click_id`
-Click an element by its ID or CSS selector. Accepts `#id`, bare `id`, or any CSS selector.
-
-```markdown
-1. click_id: "#submit-btn"
-2. click_id: "main-cta"
-3. click_id: ".close-modal"
 ```
 
 #### `click_button`

@@ -21,7 +21,6 @@ class ActionType(str, Enum):
     # ── Click ────────────────────────────────────────────────────
     CLICK                 = "click"
     CLICK_LINK_TEXT       = "click_link_text"
-    CLICK_ID              = "click_id"
     CLICK_BUTTON          = "click_button"
     DOUBLE_CLICK          = "double_click"
     RIGHT_CLICK           = "right_click"
@@ -87,7 +86,6 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
 
     ActionType.CLICK:           (1, 1),
     ActionType.CLICK_LINK_TEXT: (1, 1),
-    ActionType.CLICK_ID:        (1, 1),
     ActionType.CLICK_BUTTON:    (1, 1),
     ActionType.DOUBLE_CLICK:    (1, 1),
     ActionType.RIGHT_CLICK:     (1, 1),

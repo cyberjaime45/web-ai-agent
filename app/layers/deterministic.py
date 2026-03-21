@@ -43,7 +43,6 @@ class DeterministicRunner:
             # Click
             ActionType.CLICK:           self._h_click,
             ActionType.CLICK_LINK_TEXT: self._h_click_link_text,
-            ActionType.CLICK_ID:        self._h_click_id,
             ActionType.CLICK_BUTTON:    self._h_click_button,
             ActionType.DOUBLE_CLICK:    self._h_double_click,
             ActionType.RIGHT_CLICK:     self._h_right_click,
@@ -90,7 +89,6 @@ class DeterministicRunner:
             ActionType.CLICK:           self._l2_click,
             ActionType.CLICK_BUTTON:    self._l2_click,
             ActionType.CLICK_LINK_TEXT: self._l2_click,
-            ActionType.CLICK_ID:        self._l2_click_id,
             ActionType.DOUBLE_CLICK:    self._l2_double_click,
             ActionType.RIGHT_CLICK:     self._l2_right_click,
             ActionType.HOVER:           self._l2_hover,
@@ -175,6 +173,10 @@ class DeterministicRunner:
 
     def _h_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
+        # CSS selector: use locator directly
+        if self._is_css(target):
+            self.page.locator(target).first.click()
+            return self._ok(action, f"Clicked element '{target}'", 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
@@ -185,14 +187,6 @@ class DeterministicRunner:
         target = action.args[0]
         self.page.get_by_role("link", name=target, exact=True).first.click()
         return self._ok(action, f"Clicked link '{target}'", 1)
-
-    def _h_click_id(self, action: FlowAction) -> StepResult:
-        selector = action.args[0]
-        # Accept both "#id" CSS selectors and bare "id" strings
-        if not selector.startswith(("#", ".", "[")):
-            selector = f"#{selector}"
-        self.page.locator(selector).first.click()
-        return self._ok(action, f"Clicked element '{selector}'", 1)
 
     def _h_click_button(self, action: FlowAction) -> StepResult:
         target = action.args[0]
@@ -483,13 +477,6 @@ class DeterministicRunner:
         if loc:
             loc.click()
             return self._ok(action, f"[L2] Clicked '{action.args[0]}'", 2)
-        return None
-
-    def _l2_click_id(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_by_id(self.page, action.args[0])
-        if loc:
-            loc.click()
-            return self._ok(action, f"[L2] Clicked ID '{action.args[0]}'", 2)
         return None
 
     def _l2_double_click(self, action: FlowAction) -> StepResult | None:
