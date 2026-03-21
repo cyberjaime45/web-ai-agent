@@ -61,7 +61,7 @@ cp .env.example .env
 uv run pytest
 
 # 5. Run a specific flow file
-uv run pytest flows/wheelsup_explore.md -v
+uv run pytest flows/home_page.md -v
 ```
 
 ---
@@ -130,7 +130,7 @@ Flow files are plain Markdown. Place them in `flows/`.
 - Page displays "Welcome back"
 ```
 
-### Step syntax
+### Step Syntax
 
 ```
 keyword: "arg1" | "arg2"
@@ -140,100 +140,534 @@ keyword: "arg1" | "arg2"
 - Actions with no arguments omit the colon: `wait_for_load`, `reload`, `back`.
 - Arguments that are bare values (e.g. milliseconds for `wait`) can omit quotes: `wait: 2000`.
 
+### CSS Selector Support
+
+Any action that targets an element can accept a CSS selector instead of a label or text. A CSS selector is detected when the argument starts with `.`, `#`, or `[`:
+
+```markdown
+1. fill: ".textarea-box" | "Some text"
+2. click_id: "#submit-btn"
+3. check: "[name='agree']"
+4. wait_for_element: ".loading-spinner"
+```
+
 ---
 
-## Supported Actions
+## Supported Actions — Full Reference
 
 ### Navigation (6)
 
-| Action | Syntax |
-|--------|--------|
-| `goto` | `goto: "https://url"` |
-| `reload` | `reload` |
-| `back` | `back` |
-| `wait_load` | `wait_load` or `wait_load: "networkidle"` |
-| `switch_tab` | `switch_tab: "1"` |
-| `scroll` | `scroll: "down"` / `scroll: "up"` / `scroll: "500"` / `scroll: "Footer Text"` |
+#### `goto`
+Navigate to a URL.
+
+```markdown
+1. goto: "https://example.com"
+2. goto: "https://app.example.com/dashboard?tab=overview"
+```
+
+#### `reload`
+Reload the current page.
+
+```markdown
+1. reload
+```
+
+#### `back`
+Go back to the previous page in browser history.
+
+```markdown
+1. back
+```
+
+#### `wait_load`
+Wait for the page to reach a specific load state. Defaults to `domcontentloaded`.
+
+```markdown
+1. wait_load
+2. wait_load: "networkidle"
+```
+
+#### `switch_tab`
+Switch to a different browser tab by index (0-based).
+
+```markdown
+1. switch_tab: "0"
+2. switch_tab: "1"
+```
+
+#### `scroll`
+Scroll the page. Accepts a direction (`up`, `down`, `top`, `bottom`), a pixel amount, or text to scroll into view.
+
+```markdown
+1. scroll: "down"
+2. scroll: "top"
+3. scroll: "500"
+4. scroll: "Contact Us"
+```
+
+---
 
 ### Click (7)
 
-| Action | Syntax |
-|--------|--------|
-| `click` | `click: "Button Text"` |
-| `click_link_text` | `click_link_text: "Link Text"` |
-| `click_id` | `click_id: "#submit-btn"` |
-| `click_button` | `click_button: "Submit"` |
-| `double_click` | `double_click: "Element"` |
-| `right_click` | `right_click: "Menu Item"` |
-| `hover` | `hover: "User Profile"` |
+#### `click`
+Click a button or link by its visible text. Tries `role="button"` first, then `role="link"`.
+
+```markdown
+1. click: "Sign In"
+2. click: "Accept All Cookies"
+3. click: "Learn More"
+```
+
+#### `click_link_text`
+Click a link by its exact text.
+
+```markdown
+1. click_link_text: "Privacy Policy"
+2. click_link_text: "View All Products"
+```
+
+#### `click_id`
+Click an element by its ID or CSS selector. Accepts `#id`, bare `id`, or any CSS selector.
+
+```markdown
+1. click_id: "#submit-btn"
+2. click_id: "main-cta"
+3. click_id: ".close-modal"
+```
+
+#### `click_button`
+Click a button by its name. Identical to `click` but more explicit.
+
+```markdown
+1. click_button: "Submit"
+2. click_button: "Next Step"
+```
+
+#### `double_click`
+Double-click an element by text.
+
+```markdown
+1. double_click: "Edit Cell"
+2. double_click: "file_report.pdf"
+```
+
+#### `right_click`
+Right-click an element to open a context menu.
+
+```markdown
+1. right_click: "Document Title"
+2. right_click: "Row Item"
+```
+
+#### `hover`
+Hover over an element to trigger tooltips, dropdowns, or other hover effects.
+
+```markdown
+1. hover: "User Profile"
+2. hover: "Products"
+3. hover: "More Options"
+```
+
+---
 
 ### Input (7)
 
-| Action | Syntax | Notes |
-|--------|--------|-------|
-| `fill` | `fill: "Label" \| "value"` | Atomic set via `.fill()` |
-| `type` | `type: "Label" \| "value"` | Character-by-character via `.press_sequentially()` — use for autocomplete/masked fields |
-| `clear` | `clear: "Field Label"` | |
-| `focus` | `focus: "Field Label"` | |
-| `select` | `select: "Dropdown" \| "Option"` | |
-| `check` | `check: "Checkbox Label"` | |
-| `uncheck` | `uncheck: "Checkbox Label"` | |
+#### `fill`
+Set an input field's value atomically via Playwright's `.fill()`. Resolves the input by label, placeholder, or CSS selector.
+
+```markdown
+1. fill: "Email" | "user@example.com"
+2. fill: "Search" | "web agent"
+3. fill: ".textarea-box" | "This is a message"
+4. fill: "#phone-input" | "+1 555-0100"
+```
+
+#### `type`
+Type text character-by-character via `.press_sequentially()`. Use this for autocomplete fields, masked inputs, or when keystroke events matter.
+
+```markdown
+1. type: "Address" | "123 Main Street"
+2. type: "#search-input" | "New York"
+```
+
+#### `clear`
+Clear an input field's value.
+
+```markdown
+1. clear: "Email"
+2. clear: ".search-field"
+```
+
+#### `focus`
+Move focus to an input field without changing its value.
+
+```markdown
+1. focus: "Username"
+2. focus: "#otp-field"
+```
+
+#### `select`
+Select an option from a `<select>` dropdown by label and option text.
+
+```markdown
+1. select: "Country" | "United States"
+2. select: "#billing-state" | "California"
+```
+
+#### `check`
+Check a checkbox or radio button. Resolves by label text, `role="radio"`, or `role="checkbox"`.
+
+```markdown
+1. check: "I agree to the Terms"
+2. check: "YES"
+3. check: "[name='newsletter']"
+```
+
+#### `uncheck`
+Uncheck a checkbox.
+
+```markdown
+1. uncheck: "Subscribe to updates"
+2. uncheck: "#marketing-opt-in"
+```
+
+---
 
 ### Advanced Interaction (2)
 
-| Action | Syntax |
-|--------|--------|
-| `drag_to` | `drag_to: "Source Element" \| "Target Element"` |
-| `upload` | `upload: "input[type=file]" \| "/path/to/file.pdf"` |
+#### `drag_to`
+Drag one element to another by their visible text.
 
-### Table & Row Logic (5)
+```markdown
+1. drag_to: "Task Card" | "Done Column"
+2. drag_to: "Item A" | "Drop Zone"
+```
 
-| Action | Syntax | Description |
-|--------|--------|-------------|
-| `read_row` | `read_row: "Row Text"` | Reads all cell contents from the matching row |
-| `table_click` | `table_click: "Row Text" \| "Cell Text"` | Clicks within a matching table row |
-| `find_row` | `find_row: "Row Text"` | Asserts a row with that text exists |
-| `count_elements` | `count_elements: ".css-selector"` | Returns and logs the element count |
-| `get_attribute` | `get_attribute: ".selector" \| "attr-name"` | Returns an element attribute value |
+#### `upload`
+Upload a file to a file input. First argument is the CSS selector for the file input, second is the file path.
+
+```markdown
+1. upload: "input[type=file]" | "/path/to/document.pdf"
+2. upload: "#avatar-upload" | "./images/profile.jpg"
+```
+
+---
+
+### Table & Data (5)
+
+#### `read_row`
+Find a table row containing the given text and read all cell values. The cell contents are logged in the step result.
+
+```markdown
+1. read_row: "John Doe"
+2. read_row: "INV-2024-001"
+```
+
+#### `table_click`
+Click within a table row. With one argument, clicks the row itself. With two arguments, clicks a specific cell or element within the row.
+
+```markdown
+1. table_click: "John Doe"
+2. table_click: "Order #1234" | "View Details"
+```
+
+#### `find_row`
+Assert that a table row containing the given text exists. Fails if no matching row is found.
+
+```markdown
+1. find_row: "Active Subscription"
+2. find_row: "admin@example.com"
+```
+
+#### `count_elements`
+Count the number of elements matching a CSS selector. The count is logged in the step result.
+
+```markdown
+1. count_elements: ".product-card"
+2. count_elements: "tr.data-row"
+```
+
+#### `get_attribute`
+Get an attribute value from the first element matching a CSS selector.
+
+```markdown
+1. get_attribute: "#hero-image" | "src"
+2. get_attribute: ".download-link" | "href"
+```
+
+---
 
 ### Assertions (8)
 
-| Action | Syntax |
-|--------|--------|
-| `assert_text` | `assert_text: "expected text"` |
-| `assert_not_text` | `assert_not_text: "text that must be absent"` |
-| `assert_visible` | `assert_visible: "Element Text or .selector"` |
-| `assert_hidden` | `assert_hidden: "Element Text or .selector"` |
-| `assert_url` | `assert_url: "url-fragment"` |
-| `assert_enabled` | `assert_enabled: "Button or Input Label"` |
-| `assert_disabled` | `assert_disabled: "Button or Input Label"` |
-| `assert_checked` | `assert_checked: "Checkbox Label"` |
+#### `assert_text`
+Assert that specific text is visible on the page. Waits up to 5 seconds.
+
+```markdown
+1. assert_text: "Welcome back, Admin"
+2. assert_text: "Order placed successfully"
+3. assert_text: "Ready to learn even more about Wheels Up?"
+```
+
+#### `assert_not_text`
+Assert that specific text is NOT visible or present on the page.
+
+```markdown
+1. assert_not_text: "Error"
+2. assert_not_text: "Access Denied"
+```
+
+#### `assert_visible`
+Assert that an element with the given text or selector is visible on the page.
+
+```markdown
+1. assert_visible: "Submit Button"
+2. assert_visible: ".success-banner"
+```
+
+#### `assert_hidden`
+Assert that an element is hidden or does not exist.
+
+```markdown
+1. assert_hidden: "Loading Spinner"
+2. assert_hidden: ".error-modal"
+```
+
+#### `assert_url`
+Assert that the current URL contains a specific fragment (case-insensitive).
+
+```markdown
+1. assert_url: "/dashboard"
+2. assert_url: "checkout/confirmation"
+3. assert_url: "tab=settings"
+```
+
+#### `assert_enabled`
+Assert that a button or input is enabled (not disabled).
+
+```markdown
+1. assert_enabled: "Submit"
+2. assert_enabled: "Next Step"
+```
+
+#### `assert_disabled`
+Assert that a button or input is disabled.
+
+```markdown
+1. assert_disabled: "Submit"
+2. assert_disabled: "Delete Account"
+```
+
+#### `assert_checked`
+Assert that a checkbox or radio button is checked.
+
+```markdown
+1. assert_checked: "I agree to the Terms"
+2. assert_checked: "Remember Me"
+```
+
+---
 
 ### Waits (5)
 
-| Action | Syntax |
-|--------|--------|
-| `wait` | `wait: 2000` |
-| `wait_for_load` | `wait_for_load` |
-| `wait_for_element` | `wait_for_element: ".css-selector"` |
-| `wait_for_text` | `wait_for_text: "expected text"` |
-| `wait_for_url` | `wait_for_url: "url-fragment"` |
+#### `wait`
+Pause execution for a given number of milliseconds. Defaults to 1000ms if no argument is provided.
 
-### AI-Native Actions (4) — requires `OPENAI_API_KEY`, runs on L3 only
+```markdown
+1. wait
+2. wait: 2000
+3. wait: 5000
+```
 
-| Action | Syntax | Description |
-|--------|--------|-------------|
-| `ai_click` | `ai_click: "the small red X in the corner"` | LLM resolves the element from natural language and clicks it |
-| `ai_extract` | `ai_extract: "What is the total balance shown?"` | LLM extracts data from page content; result in step message |
-| `ai_assert` | `ai_assert: "the user is currently logged in"` | LLM evaluates a natural-language assertion; failure sets step failed |
-| `ai_summarize` | `ai_summarize` | LLM generates a 2–4 sentence summary of the current page |
+#### `wait_for_load`
+Wait for the page to reach `DOMContentLoaded` state.
+
+```markdown
+1. wait_for_load
+```
+
+#### `wait_for_element`
+Wait for a specific element (by CSS selector) to become visible. Times out after 10 seconds.
+
+```markdown
+1. wait_for_element: ".results-container"
+2. wait_for_element: "#dashboard-widget"
+```
+
+#### `wait_for_text`
+Wait for specific text to appear on the page. Times out after 10 seconds.
+
+```markdown
+1. wait_for_text: "Results loaded"
+2. wait_for_text: "Payment confirmed"
+```
+
+#### `wait_for_url`
+Wait for the URL to contain a specific fragment. Times out after 10 seconds.
+
+```markdown
+1. wait_for_url: "/success"
+2. wait_for_url: "order-complete"
+```
+
+---
+
+### AI-Native Actions (4)
+
+These actions bypass Layer 1 and Layer 2 entirely and go directly to Layer 3 (OpenAI). They require `OPENAI_API_KEY` to be set.
+
+#### `ai_click`
+Describe the element to click in natural language. The LLM analyzes the page and resolves the element.
+
+```markdown
+1. ai_click: "the small red X button in the top right corner"
+2. ai_click: "the third product's Add to Cart button"
+```
+
+#### `ai_extract`
+Ask a question about the page content. The LLM extracts and returns the answer in the step result.
+
+```markdown
+1. ai_extract: "What is the total balance shown?"
+2. ai_extract: "How many items are in the cart?"
+```
+
+#### `ai_assert`
+Make a natural-language assertion about the page state. The LLM evaluates whether it's true or false.
+
+```markdown
+1. ai_assert: "the user is currently logged in"
+2. ai_assert: "the shopping cart contains at least 2 items"
+```
+
+#### `ai_summarize`
+Generate a 2-4 sentence summary of the current page content.
+
+```markdown
+1. ai_summarize
+```
+
+---
 
 ### Utilities (2)
 
-| Action | Syntax |
-|--------|--------|
-| `screenshot` | `screenshot: "step_name"` |
-| `press` | `press: "Enter"` / `press: "Tab"` / `press: "Escape"` |
+#### `screenshot`
+Capture a screenshot of the current page. Optionally provide a name. Saved to `reports/<env>/images/`.
+
+```markdown
+1. screenshot
+2. screenshot: "after_login"
+3. screenshot: "checkout_page"
+```
+
+#### `press`
+Press a keyboard key. Accepts any Playwright key name.
+
+```markdown
+1. press: "Enter"
+2. press: "Tab"
+3. press: "Escape"
+4. press: "ArrowDown"
+```
+
+---
+
+## Complete Flow Examples
+
+### Example 1: E-commerce Checkout
+
+```markdown
+# Checkout Flow
+
+## Config
+- url: https://shop.example.com
+- timeout: 30000
+
+## Steps
+1. goto: "https://shop.example.com"
+2. wait_for_load
+3. click: "Products"
+4. wait_for_text: "All Products"
+5. click: "Add to Cart"
+6. hover: "Cart Icon"
+7. click: "View Cart"
+8. assert_text: "Your Cart"
+9. assert_url: "/cart"
+10. fill: "Promo Code" | "SAVE20"
+11. click: "Apply"
+12. assert_text: "Discount applied"
+13. click: "Checkout"
+14. fill: "Email" | "buyer@example.com"
+15. fill: "Full Name" | "Jane Smith"
+16. select: "Country" | "United States"
+17. check: "I agree to the Terms"
+18. screenshot: "before_payment"
+19. click: "Place Order"
+20. wait_for_url: "/confirmation"
+21. assert_text: "Order placed successfully"
+22. screenshot: "order_confirmed"
+
+## Expected Outcome
+- Order confirmation page is displayed
+- Discount code was applied successfully
+```
+
+### Example 2: Form with Custom Selectors
+
+```markdown
+# Contact Form
+
+## Config
+- url: https://example.com/contact
+- timeout: 15000
+
+## Steps
+1. goto: "https://example.com/contact"
+2. wait_for_load
+3. fill: "First Name" | "John"
+4. fill: "Last Name" | "Doe"
+5. fill: "Email" | "john@example.com"
+6. fill: ".textarea-box" | "I have a question about your services."
+7. select: "Department" | "Sales"
+8. check: "YES"
+9. click: ".dropdown-field"
+10. click: "Personal"
+11. screenshot: "form_filled"
+12. click: "Submit"
+13. wait_for_text: "Thank you"
+14. assert_text: "We will get back to you"
+
+## Expected Outcome
+- Form is submitted successfully
+- Confirmation message is displayed
+```
+
+### Example 3: Table Verification
+
+```markdown
+# User Management
+
+## Config
+- url: https://admin.example.com/users
+- timeout: 20000
+
+## Steps
+1. goto: "https://admin.example.com/users"
+2. wait_for_load
+3. assert_text: "User Management"
+4. find_row: "john@example.com"
+5. read_row: "john@example.com"
+6. table_click: "john@example.com" | "Edit"
+7. wait_for_text: "Edit User"
+8. fill: "Display Name" | "John Updated"
+9. click: "Save Changes"
+10. wait_for_text: "User updated"
+11. count_elements: "tr.user-row"
+12. screenshot: "users_updated"
+
+## Expected Outcome
+- User row exists and can be edited
+- Changes are saved successfully
+```
 
 ---
 
@@ -289,10 +723,9 @@ web-agent/
 │       └── banner.py               # Terminal startup banner (Rich)
 │
 ├── flows/                          # Flow definition files (.md)
-│   ├── login.md
-│   ├── wheelsup_explore.md
-│   ├── wheelsup_homepage.md
-│   └── wheelsup_signin.md
+│   ├── home_page.md
+│   ├── signature_membership.md
+│   └── charter_up.md
 │
 └── reports/
     └── <ENVIRONMENT>/              # e.g. staging/, qa1/, uat/
@@ -336,6 +769,8 @@ ENVIRONMENT=qa1 uv run pytest flows/login.md
 RUNNING_MODE=lambda LT_USERNAME=... LT_ACCESS_KEY=... uv run pytest
 ```
 
+The browser window is automatically maximized for both local and LambdaTest runs. Test pass/fail status is reported to the LambdaTest dashboard automatically.
+
 ---
 
 ## Reports
@@ -344,7 +779,7 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 
 ```
 reports/staging/
-├── report.html     # Interactive UI (charts, table, failure details)
+├── report.html     # Interactive UI (charts, table, failure details, PDF export)
 ├── report.json     # Raw structured data
 ├── assets/
 │   ├── report.css
@@ -353,10 +788,17 @@ reports/staging/
     └── *.png       # Screenshots from the run
 ```
 
+The report includes:
+- Result distribution doughnut chart
+- Pass rate trend across last 8 runs
+- Test duration bars
+- Category breakdown
+- Expandable test details with per-step duration and execution layer
+- Failure screenshots with lightbox zoom
+- PDF export (2-page report with failure details and embedded screenshots)
+
 ```bash
 open reports/staging/report.html
-# or serve it:
-python -m http.server 8080 --directory reports/staging
 ```
 
 ---
