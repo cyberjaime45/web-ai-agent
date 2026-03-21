@@ -6,6 +6,8 @@
 
 ## Steps
 - goto: "https://wheelsup.com/request-info"
+- wait_for_load
+- click_link_text: "Accept All Cookies"
 - assert_text: "Ready to learn even more about Wheels Up?"
 - assert_text: "What will be the primary purpose of your Wheels Up flights?"
 - click: "Please select one"
@@ -20,7 +22,7 @@
 - click: "NY"
 - fill: "Zip Code" | "10001"
 - fill: "Country" | "United States"
-- click: "div[class='listinputselect'] input[value='YES']"
+- click: "div[class='ng-star-inserted'] span.circle"
 - fill: "Preferred Airports" | "KACK"
 - click: "Please select one"
 - click: "Event"

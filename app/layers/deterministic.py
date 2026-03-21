@@ -16,7 +16,7 @@ from typing import Callable
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
 
 from app.schemas.actions import ActionType, FlowAction, StepResult
-from app.layers.locator import FallbackLocator, _is_css
+from app.layers.locator import FallbackLocator, _is_selector
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ class DeterministicRunner:
     def _h_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
         # CSS selector: use locator directly
-        if _is_css(target):
+        if _is_selector(target):
             self.page.locator(target).first.click()
             return self._ok(action, f"Clicked element '{target}'", 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
@@ -227,7 +227,7 @@ class DeterministicRunner:
 
     def _resolve_input_l1(self, target: str):
         """Resolve an input/textarea by label, placeholder, or CSS selector."""
-        if _is_css(target):
+        if _is_selector(target):
             return self.page.locator(target)
         loc = self.page.get_by_label(target, exact=True)
         if loc.count() == 0:
@@ -270,7 +270,7 @@ class DeterministicRunner:
 
     def _resolve_checkable_l1(self, target: str):
         """Resolve a checkbox or radio by CSS selector, label, or role."""
-        if _is_css(target):
+        if _is_selector(target):
             return self.page.locator(target)
         loc = self.page.get_by_label(target, exact=True)
         if loc.count() == 0:

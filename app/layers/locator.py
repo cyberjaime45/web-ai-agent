@@ -32,16 +32,21 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
-def _is_css(s: str) -> bool:
-    """True when *s* looks like a CSS selector.
+def _is_selector(s: str) -> bool:
+    """True when *s* looks like a CSS selector or XPath expression.
 
-    Matches ``#id``, ``.class``, ``[attr]`` and tag-prefixed forms
-    such as ``div[class='x']``, ``input.cls``, ``p#id``.
+    CSS: ``#id``, ``.class``, ``[attr]``, tag-prefixed (``div[class='x']``).
+    XPath: starts with ``//`` or ``/``.
     """
     if not s:
         return False
+    # XPath expressions
+    if s.startswith(("//", "/")):
+        return True
+    # CSS selectors starting with #, ., [
     if s[0] in (".", "#", "["):
         return True
+    # Tag-prefixed CSS: e.g. "div[attr='val']", "input.class", "p#id"
     for ch in s:
         if ch in ("[", ".", "#"):
             return True
@@ -54,8 +59,8 @@ class FallbackLocator:
     """Resolves element locators with progressively looser strategies."""
 
     def resolve_clickable(self, page: Page, target: str) -> Locator | None:
-        # CSS selector shortcut: .class, #id, [attr=val], tag[attr=val]
-        if _is_css(target):
+        # CSS / XPath selector shortcut
+        if _is_selector(target):
             return self._try(lambda: page.locator(target))
         for strategy in (
             lambda: page.get_by_role("button", name=target, exact=True),
@@ -72,8 +77,8 @@ class FallbackLocator:
         return None
 
     def resolve_input(self, page: Page, target: str) -> Locator | None:
-        # CSS selector shortcut: .class, #id, [attr=val], tag[attr=val]
-        if _is_css(target):
+        # CSS / XPath selector shortcut
+        if _is_selector(target):
             return self._try(lambda: page.locator(target))
         for strategy in (
             lambda: page.get_by_label(target, exact=True),

@@ -140,9 +140,11 @@ keyword: "arg1" | "arg2"
 - Actions with no arguments omit the colon: `wait_for_load`, `reload`, `back`.
 - Arguments that are bare values (e.g. milliseconds for `wait`) can omit quotes: `wait: 2000`.
 
-### CSS Selector Support
+### CSS Selector & XPath Support
 
-Any action that targets an element can accept a CSS selector instead of a label or text. A CSS selector is detected when the argument starts with `.`, `#`, `[`, or is a **tag-prefixed selector** (e.g. `div[...]`, `input.class`):
+Any action that targets an element can accept a **CSS selector** or **XPath expression** instead of a label or text.
+
+**CSS selectors** are detected when the argument starts with `.`, `#`, `[`, or is a tag-prefixed selector (e.g. `div[...]`, `input.class`):
 
 ```markdown
 1. fill: ".textarea-box" | "Some text"
@@ -152,6 +154,16 @@ Any action that targets an element can accept a CSS selector instead of a label 
 5. click: "div[class='listinputselect'] input[value='YES']"
 6. fill: "textarea.comment-box" | "Hello world"
 7. check: "input[name='haveyoupreviouslypurchased'][value='YES']"
+```
+
+**XPath expressions** are detected when the argument starts with `//` or `/`:
+
+```markdown
+1. click: "//button[@id='submit']"
+2. click: "//div[@class='listinputselect']//input[@value='YES']"
+3. fill: "//input[@name='email']" | "user@example.com"
+4. check: "//input[@type='radio' and @value='YES']"
+5. assert_visible: "//span[text()='Success']"
 ```
 
 ---
@@ -213,15 +225,15 @@ Scroll the page. Accepts a direction (`up`, `down`, `top`, `bottom`), a pixel am
 ### Click (6)
 
 #### `click`
-Click a button or link by its visible text, or an element by CSS selector. Tries `role="button"` first, then `role="link"`. CSS selectors are auto-detected — including `#id`, `.class`, `[attr]`, and tag-prefixed forms like `div[attr='val']`.
+Click a button or link by its visible text, or an element by CSS selector / XPath. Tries `role="button"` first, then `role="link"`. CSS selectors and XPath expressions are auto-detected.
 
 ```markdown
 1. click: "Sign In"
 2. click: "Accept All Cookies"
 3. click: "#submit-btn"
 4. click: ".close-modal"
-5. click: "[data-testid='cta']"
-6. click: "div[class='listinputselect'] input[value='YES']"
+5. click: "div[class='listinputselect'] input[value='YES']"
+6. click: "//button[@id='submit']"
 ```
 
 #### `click_link_text`
