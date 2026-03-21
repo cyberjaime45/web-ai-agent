@@ -142,13 +142,16 @@ keyword: "arg1" | "arg2"
 
 ### CSS Selector Support
 
-Any action that targets an element can accept a CSS selector instead of a label or text. A CSS selector is detected when the argument starts with `.`, `#`, or `[`:
+Any action that targets an element can accept a CSS selector instead of a label or text. A CSS selector is detected when the argument starts with `.`, `#`, `[`, or is a **tag-prefixed selector** (e.g. `div[...]`, `input.class`):
 
 ```markdown
 1. fill: ".textarea-box" | "Some text"
 2. click: "#submit-btn"
 3. check: "[name='agree']"
 4. wait_for_element: ".loading-spinner"
+5. click: "div[class='listinputselect'] input[value='YES']"
+6. fill: "textarea.comment-box" | "Hello world"
+7. check: "input[name='haveyoupreviouslypurchased'][value='YES']"
 ```
 
 ---
@@ -210,15 +213,15 @@ Scroll the page. Accepts a direction (`up`, `down`, `top`, `bottom`), a pixel am
 ### Click (6)
 
 #### `click`
-Click a button or link by its visible text, or an element by CSS selector. Tries `role="button"` first, then `role="link"`. When the argument starts with `#`, `.`, or `[`, it is treated as a CSS selector.
+Click a button or link by its visible text, or an element by CSS selector. Tries `role="button"` first, then `role="link"`. CSS selectors are auto-detected — including `#id`, `.class`, `[attr]`, and tag-prefixed forms like `div[attr='val']`.
 
 ```markdown
 1. click: "Sign In"
 2. click: "Accept All Cookies"
-3. click: "Learn More"
-4. click: "#submit-btn"
-5. click: ".close-modal"
-6. click: "[data-testid='cta']"
+3. click: "#submit-btn"
+4. click: ".close-modal"
+5. click: "[data-testid='cta']"
+6. click: "div[class='listinputselect'] input[value='YES']"
 ```
 
 #### `click_link_text`
