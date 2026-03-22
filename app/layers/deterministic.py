@@ -24,6 +24,10 @@ _DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "i
 
 
 class DeterministicRunner:
+    # L1 action timeout (ms) — fast-fail so L2/L3 can be tried quickly.
+    # The page's default_timeout (30s) is preserved for explicit waits/assertions.
+    _L1_TIMEOUT = 2000
+
     def __init__(self, page: Page, artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR):
         self.page = page
         self.artifacts_dir = Path(artifacts_dir)
@@ -176,64 +180,63 @@ class DeterministicRunner:
 
     def _h_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        # CSS selector: use locator directly
         if _is_selector(target):
-            self.page.locator(target).first.click()
+            self.page.locator(target).first.click(timeout=self._L1_TIMEOUT)
             return self._ok(action, f"Clicked element '{target}'", 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
-        loc.first.click()
+        loc.first.click(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Clicked '{target}'", 1)
 
     def _h_click_link_text(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        self.page.get_by_role("link", name=target, exact=True).first.click()
+        self.page.get_by_role("link", name=target, exact=True).first.click(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Clicked link '{target}'", 1)
 
     def _h_click_button(self, action: FlowAction) -> StepResult:
         target = action.args[0]
         if _is_selector(target):
-            self.page.locator(target).first.click()
+            self.page.locator(target).first.click(timeout=self._L1_TIMEOUT)
             return self._ok(action, f"Clicked button '{target}'", 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
-        loc.first.click()
+        loc.first.click(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Clicked button '{target}'", 1)
 
     def _h_double_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
         if _is_selector(target):
-            self.page.locator(target).first.dblclick()
+            self.page.locator(target).first.dblclick(timeout=self._L1_TIMEOUT)
             return self._ok(action, f'Double-clicked "{target}"', 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_text(target, exact=True)
-        loc.first.dblclick()
+        loc.first.dblclick(timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Double-clicked "{target}"', 1)
 
     def _h_right_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
         if _is_selector(target):
-            self.page.locator(target).first.click(button="right")
+            self.page.locator(target).first.click(button="right", timeout=self._L1_TIMEOUT)
             return self._ok(action, f'Right-clicked "{target}"', 1)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_text(target, exact=True)
-        loc.first.click(button="right")
+        loc.first.click(button="right", timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Right-clicked "{target}"', 1)
 
     def _h_hover(self, action: FlowAction) -> StepResult:
         target = action.args[0]
         if _is_selector(target):
-            self.page.locator(target).first.hover()
+            self.page.locator(target).first.hover(timeout=self._L1_TIMEOUT)
         else:
-            self.page.get_by_text(target, exact=True).first.hover()
+            self.page.get_by_text(target, exact=True).first.hover(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Hovered '{target}'", 1)
 
     # ── L1 handlers: Input ────────────────────────────────────────
@@ -250,41 +253,41 @@ class DeterministicRunner:
     def _h_fill(self, action: FlowAction) -> StepResult:
         label = action.args[0]
         value = action.args[1] if len(action.args) > 1 else ""
-        self._resolve_input_l1(label).first.fill(value)
+        self._resolve_input_l1(label).first.fill(value, timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Filled '{label}' = '{value}'", 1)
 
     def _h_type(self, action: FlowAction) -> StepResult:
         label = action.args[0]
         value = action.args[1] if len(action.args) > 1 else ""
-        self._resolve_input_l1(label).first.press_sequentially(value)
+        self._resolve_input_l1(label).first.press_sequentially(value, timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Typed '{value}' into '{label}'", 1)
 
     def _h_clear(self, action: FlowAction) -> StepResult:
         label = action.args[0]
-        self._resolve_input_l1(label).first.clear()
+        self._resolve_input_l1(label).first.clear(timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Cleared "{label}"', 1)
 
     def _h_focus(self, action: FlowAction) -> StepResult:
         label = action.args[0]
         if _is_selector(label):
-            self.page.locator(label).first.focus()
+            self.page.locator(label).first.focus(timeout=self._L1_TIMEOUT)
         else:
             loc = self.page.get_by_label(label, exact=True)
             if loc.count() == 0:
                 loc = self.page.get_by_placeholder(label, exact=True)
-            loc.first.focus()
+            loc.first.focus(timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Focused "{label}"', 1)
 
     def _h_select(self, action: FlowAction) -> StepResult:
         label = action.args[0]
         option = action.args[1] if len(action.args) > 1 else ""
         if _is_selector(label):
-            self.page.locator(label).first.select_option(option)
+            self.page.locator(label).first.select_option(option, timeout=self._L1_TIMEOUT)
         else:
             loc = self.page.get_by_label(label, exact=True)
             if loc.count() == 0:
                 loc = self.page.get_by_role("combobox", name=label, exact=True)
-            loc.first.select_option(option)
+            loc.first.select_option(option, timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Selected '{option}' in '{label}'", 1)
 
     def _resolve_checkable_l1(self, target: str):
@@ -300,12 +303,12 @@ class DeterministicRunner:
 
     def _h_check(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        self._resolve_checkable_l1(target).first.check()
+        self._resolve_checkable_l1(target).first.check(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Checked '{target}'", 1)
 
     def _h_uncheck(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        self._resolve_checkable_l1(target).first.uncheck()
+        self._resolve_checkable_l1(target).first.uncheck(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Unchecked '{target}'", 1)
 
     # ── L1 handlers: Advanced ─────────────────────────────────────
@@ -314,7 +317,7 @@ class DeterministicRunner:
         source, target = action.args[0], action.args[1]
         src_loc = self.page.locator(source).first if _is_selector(source) else self.page.get_by_text(source).first
         tgt_loc = self.page.locator(target).first if _is_selector(target) else self.page.get_by_text(target).first
-        src_loc.drag_to(tgt_loc)
+        src_loc.drag_to(tgt_loc, timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Dragged "{source}" to "{target}"', 1)
 
     def _h_upload(self, action: FlowAction) -> StepResult:

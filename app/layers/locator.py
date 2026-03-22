@@ -2,20 +2,24 @@
 Fallback Locator (Layer 2) — tries progressively less strict strategies
 to find an element when the deterministic Layer 1 exact match fails.
 
+L1 already exhausts exact-match locators, so L2 starts with fuzzy
+(case-insensitive / partial) variants to avoid redundant browser queries.
+
 Resolution order for clickable elements:
-  1. Exact role+name  (button / link)
-  2. Case-insensitive role+name
-  3. get_by_text exact
-  4. get_by_text partial
-  5. selectolax fuzzy HTML search (similarity >= 0.6)
+  1. Fuzzy role+name  (button / link)
+  2. get_by_text exact / partial
+  3. selectolax fuzzy HTML search (similarity >= 0.6)
 
 Resolution order for inputs:
-  1. get_by_label exact
-  2. get_by_label partial
-  3. get_by_placeholder exact
-  4. get_by_placeholder partial
-  5. get_by_role "textbox" exact / partial
-  6. selectolax label->for->input lookup
+  1. get_by_label partial
+  2. get_by_placeholder partial
+  3. get_by_role "textbox" exact / partial
+  4. selectolax label->for->input lookup
+
+Resolution order for checkboxes / radios:
+  1. get_by_label partial
+  2. get_by_role "checkbox" partial
+  3. get_by_role "radio" partial
 """
 
 from __future__ import annotations
@@ -63,8 +67,6 @@ class FallbackLocator:
         if _is_selector(target):
             return self._try(lambda: page.locator(target))
         for strategy in (
-            lambda: page.get_by_role("button", name=target, exact=True),
-            lambda: page.get_by_role("link",   name=target, exact=True),
             lambda: page.get_by_role("button", name=target),
             lambda: page.get_by_role("link",   name=target),
             lambda: page.get_by_text(target, exact=True),
@@ -81,9 +83,7 @@ class FallbackLocator:
         if _is_selector(target):
             return self._try(lambda: page.locator(target))
         for strategy in (
-            lambda: page.get_by_label(target, exact=True),
             lambda: page.get_by_label(target),
-            lambda: page.get_by_placeholder(target, exact=True),
             lambda: page.get_by_placeholder(target),
             lambda: page.get_by_role("textbox", name=target, exact=True),
             lambda: page.get_by_role("textbox", name=target),
@@ -97,11 +97,8 @@ class FallbackLocator:
     def resolve_checkbox(self, page: Page, target: str) -> Locator | None:
         """Resolve a checkbox or radio element by label or role."""
         for strategy in (
-            lambda: page.get_by_label(target, exact=True),
             lambda: page.get_by_label(target),
-            lambda: page.get_by_role("checkbox", name=target, exact=True),
             lambda: page.get_by_role("checkbox", name=target),
-            lambda: page.get_by_role("radio", name=target, exact=True),
             lambda: page.get_by_role("radio", name=target),
         ):
             loc = self._try(strategy)

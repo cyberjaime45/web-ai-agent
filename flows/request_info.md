@@ -22,10 +22,10 @@
 - click: "NY"
 - fill: "Zip Code" | "10001"
 - fill: "Country" | "United States"
-- click_link_text: "YES"
+- click: "div.listinputselect .containerover"
 - fill: "Preferred Airports" | "KACK"
 - click: "Please select one"
 - click: "Event"
 - fill: ".textarea-box" | "I need to part of the wheelsup family"
-- click_link_text: "I accept"
+- click: "#acceptWUPPrivacyPolicy-clone div.listinputselect .containerover"
 - screenshot
