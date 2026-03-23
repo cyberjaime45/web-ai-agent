@@ -6,7 +6,7 @@
 
 ## Steps
 - goto: "https://wheelsup.com/"
-- wait_for_load
+- wait_load
 - click_link_text: "Accept All Cookies"
 - assert_text: "WheelsUp"
 - assert_text: "The Next Wave of Private Aviation Is Here"

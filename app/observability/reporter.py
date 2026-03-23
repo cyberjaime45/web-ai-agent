@@ -71,7 +71,7 @@ def _duration_str(seconds: float) -> str:
 
 _LOCATOR_RE = re.compile(
     r"(get_by_role|get_by_label|get_by_text|get_by_placeholder|"
-    r"locator\(|click_button|fill_input|click_link|open_page|"
+    r"locator\(|fill_input|click_link|open_page|"
     r"fill\(|click\(|goto\()"
 )
 

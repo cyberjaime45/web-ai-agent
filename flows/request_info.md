@@ -6,7 +6,7 @@
 
 ## Steps
 - goto: "https://wheelsup.com/request-info"
-- wait_for_load
+- wait_load
 - click_link_text: "Accept All Cookies"
 - assert_text: "Ready to learn even more about Wheels Up?"
 - assert_text: "What will be the primary purpose of your Wheels Up flights?"
@@ -28,4 +28,3 @@
 - click: "Event"
 - fill: ".textarea-box" | "I need to part of the wheelsup family"
 - click: "#acceptWUPPrivacyPolicy-clone div.listinputselect .containerover"
-- screenshot

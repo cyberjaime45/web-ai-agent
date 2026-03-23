@@ -244,16 +244,6 @@ class ElementMixin:
 
     # ── Element interactions ────────────────────────────────────
 
-    def click_button(self, text: str, timeout: int = 10_000) -> None:
-        """Click a button/link by its visible text (role-based, most robust)."""
-        logger.info("Clicking button: '%s'", text)
-        locator = self.page.get_by_role("button", name=text)
-        if locator.count() == 0:
-            locator = self.page.get_by_role("link", name=text)
-        if locator.count() == 0:
-            locator = self.page.locator(f"text='{text}'")
-        locator.first.click(timeout=timeout)
-
     def fill_input(self, label: str, value: str, timeout: int = 10_000) -> None:
         """Fill a form field located by its label, placeholder, or name."""
         logger.info("Filling input '%s'", label)

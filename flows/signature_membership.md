@@ -2,7 +2,7 @@
 
 ## Steps
 - goto: https://wheelsup.com/signature-membership
-- wait_for_load
+- wait_load
 - assert_text: "The Wheels Up Signature Membership"
 - assert_text: "Designed for the way you move"
 - assert_text: "Flexibility without complexity"

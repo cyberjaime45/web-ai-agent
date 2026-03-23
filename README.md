@@ -117,7 +117,7 @@ Flow files are plain Markdown. Place them in `flows/`.
 
 ## Steps
 1. goto: "https://example.com/login"
-2. wait_for_load
+2. wait_load
 3. fill: "Username" | "admin"
 4. fill: "Password" | "secret123"
 5. click: "Sign In"
@@ -137,7 +137,7 @@ keyword: "arg1" | "arg2"
 ```
 
 - The keyword is followed by `:` and one or more quoted arguments separated by `|`.
-- Actions with no arguments omit the colon: `wait_for_load`, `reload`, `back`.
+- Actions with no arguments omit the colon: `wait_load`, `reload`, `back`.
 - Arguments that are bare values (e.g. milliseconds for `wait`) can omit quotes: `wait: 2000`.
 
 ### CSS Selector & XPath Support
@@ -224,7 +224,7 @@ Scroll the page. Accepts a direction (`up`, `down`, `top`, `bottom`), a pixel am
 
 ---
 
-### Click (6)
+### Click (5)
 
 #### `click`
 Click a button or link by its visible text, or an element by CSS selector / XPath. Tries `role="button"` first, then `role="link"`. CSS selectors and XPath expressions are auto-detected.
@@ -244,16 +244,6 @@ Click a link by its exact text.
 ```markdown
 1. click_link_text: "Privacy Policy"
 2. click_link_text: "View All Products"
-```
-
-#### `click_button`
-Click a button by its name or CSS selector / XPath.
-
-```markdown
-1. click_button: "Submit"
-2. click_button: "Next Step"
-3. click_button: "#submit-btn"
-4. click_button: "//button[@type='submit']"
 ```
 
 #### `double_click`
@@ -507,7 +497,7 @@ Assert that a checkbox or radio button is checked. Accepts label, CSS selector, 
 
 ---
 
-### Waits (5)
+### Waits (4)
 
 #### `wait`
 Pause execution for a given number of milliseconds. Defaults to 1000ms if no argument is provided.
@@ -518,11 +508,13 @@ Pause execution for a given number of milliseconds. Defaults to 1000ms if no arg
 3. wait: 5000
 ```
 
-#### `wait_for_load`
-Wait for the page to reach `DOMContentLoaded` state.
+#### `wait_load`
+Wait for the page to reach a specific load state. Defaults to `domcontentloaded`. Accepts `domcontentloaded`, `load`, or `networkidle`.
 
 ```markdown
-1. wait_for_load
+1. wait_load
+2. wait_load: "networkidle"
+3. wait_load: "load"
 ```
 
 #### `wait_for_element`
@@ -625,7 +617,7 @@ Press a keyboard key. Accepts any Playwright key name.
 
 ## Steps
 1. goto: "https://shop.example.com"
-2. wait_for_load
+2. wait_load
 3. click: "Products"
 4. wait_for_text: "All Products"
 5. click: "Add to Cart"
@@ -663,7 +655,7 @@ Press a keyboard key. Accepts any Playwright key name.
 
 ## Steps
 1. goto: "https://example.com/contact"
-2. wait_for_load
+2. wait_load
 3. fill: "First Name" | "John"
 4. fill: "Last Name" | "Doe"
 5. fill: "Email" | "john@example.com"
@@ -693,7 +685,7 @@ Press a keyboard key. Accepts any Playwright key name.
 
 ## Steps
 1. goto: "https://admin.example.com/users"
-2. wait_for_load
+2. wait_load
 3. assert_text: "User Management"
 4. find_row: "john@example.com"
 5. read_row: "john@example.com"

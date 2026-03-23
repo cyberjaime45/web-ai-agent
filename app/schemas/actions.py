@@ -21,7 +21,6 @@ class ActionType(str, Enum):
     # ── Click ────────────────────────────────────────────────────
     CLICK                 = "click"
     CLICK_LINK_TEXT       = "click_link_text"
-    CLICK_BUTTON          = "click_button"
     DOUBLE_CLICK          = "double_click"
     RIGHT_CLICK           = "right_click"
     HOVER                 = "hover"
@@ -58,7 +57,6 @@ class ActionType(str, Enum):
 
     # ── Waits ────────────────────────────────────────────────────
     WAIT                  = "wait"
-    WAIT_FOR_LOAD         = "wait_for_load"
     WAIT_FOR_ELEMENT      = "wait_for_element"
     WAIT_FOR_TEXT         = "wait_for_text"
     WAIT_FOR_URL          = "wait_for_url"
@@ -84,7 +82,6 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
 
     ActionType.CLICK:           (1, 1),
     ActionType.CLICK_LINK_TEXT: (1, 1),
-    ActionType.CLICK_BUTTON:    (1, 1),
     ActionType.DOUBLE_CLICK:    (1, 1),
     ActionType.RIGHT_CLICK:     (1, 1),
     ActionType.HOVER:           (1, 1),
@@ -116,7 +113,6 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
     ActionType.ASSERT_CHECKED:  (1, 1),
 
     ActionType.WAIT:            (0, 1),
-    ActionType.WAIT_FOR_LOAD:   (0, 0),
     ActionType.WAIT_FOR_ELEMENT:(1, 1),
     ActionType.WAIT_FOR_TEXT:   (1, 1),
     ActionType.WAIT_FOR_URL:    (1, 1),

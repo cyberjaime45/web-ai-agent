@@ -12,9 +12,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Callable
-
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
-
 from app.schemas.actions import ActionType, FlowAction, StepResult
 from app.layers.locator import FallbackLocator, _is_selector
 
@@ -24,9 +22,14 @@ _DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "i
 
 
 class DeterministicRunner:
-    # L1 action timeout (ms) — fast-fail so L2/L3 can be tried quickly.
-    # The page's default_timeout (30s) is preserved for explicit waits/assertions.
-    _L1_TIMEOUT = 2000
+    # L1 action timeout (ms) — caps Playwright's auto-wait for action calls
+    # (click, fill, check, etc.) so L2/L3 can be tried quickly on failure.
+    # Playwright still performs all actionability checks (visible, stable,
+    # enabled, receives events) within this window — it returns as soon as
+    # the element is ready, only hitting the ceiling when the element is
+    # truly missing.  The page's default_timeout (30s) is preserved for
+    # explicit waits and assertions.
+    _L1_TIMEOUT = 5000
 
     def __init__(self, page: Page, artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR):
         self.page = page
@@ -47,7 +50,6 @@ class DeterministicRunner:
             # Click
             ActionType.CLICK:           self._h_click,
             ActionType.CLICK_LINK_TEXT: self._h_click_link_text,
-            ActionType.CLICK_BUTTON:    self._h_click_button,
             ActionType.DOUBLE_CLICK:    self._h_double_click,
             ActionType.RIGHT_CLICK:     self._h_right_click,
             ActionType.HOVER:           self._h_hover,
@@ -79,7 +81,6 @@ class DeterministicRunner:
             ActionType.ASSERT_CHECKED:  self._h_assert_checked,
             # Waits
             ActionType.WAIT:            self._h_wait,
-            ActionType.WAIT_FOR_LOAD:   self._h_wait_for_load,
             ActionType.WAIT_FOR_ELEMENT:self._h_wait_for_element,
             ActionType.WAIT_FOR_TEXT:   self._h_wait_for_text,
             ActionType.WAIT_FOR_URL:    self._h_wait_for_url,
@@ -91,7 +92,6 @@ class DeterministicRunner:
         # ── L2 dispatch table ──────────────────────────────────────
         self._l2_handlers: dict[ActionType, Callable[[FlowAction], StepResult | None]] = {
             ActionType.CLICK:           self._l2_click,
-            ActionType.CLICK_BUTTON:    self._l2_click,
             ActionType.CLICK_LINK_TEXT: self._l2_click,
             ActionType.DOUBLE_CLICK:    self._l2_double_click,
             ActionType.RIGHT_CLICK:     self._l2_right_click,
@@ -193,17 +193,6 @@ class DeterministicRunner:
         target = action.args[0]
         self.page.get_by_role("link", name=target, exact=True).first.click(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Clicked link '{target}'", 1)
-
-    def _h_click_button(self, action: FlowAction) -> StepResult:
-        target = action.args[0]
-        if _is_selector(target):
-            self.page.locator(target).first.click(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"Clicked button '{target}'", 1)
-        loc = self.page.get_by_role("button", name=target, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_role("link", name=target, exact=True)
-        loc.first.click(timeout=self._L1_TIMEOUT)
-        return self._ok(action, f"Clicked button '{target}'", 1)
 
     def _h_double_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
@@ -455,10 +444,6 @@ class DeterministicRunner:
         ms = int(action.args[0]) if action.args and action.args[0].isdigit() else 1000
         self.page.wait_for_timeout(ms)
         return self._ok(action, f"Waited {ms} ms", 1)
-
-    def _h_wait_for_load(self, action: FlowAction) -> StepResult:
-        self.page.wait_for_load_state("domcontentloaded")
-        return self._ok(action, "Page load complete", 1)
 
     def _h_wait_for_element(self, action: FlowAction) -> StepResult:
         selector = action.args[0]

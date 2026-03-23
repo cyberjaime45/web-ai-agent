@@ -58,16 +58,24 @@ def create_browser(pw: Playwright, test_name: str = "web-agent") -> tuple[Browse
 
 
 def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
-    """Launch a local browser maximized using env-controlled options.
+    """Launch a local browser with consistent viewport using env-controlled options.
 
     Env vars (all optional, with defaults):
-      BROWSER   chromium | firefox | webkit  (default: chromium)
-      HEADLESS  true | false                 (default: true)
-      SLOW_MO   milliseconds                 (default: 0)
+      BROWSER    chromium | firefox | webkit  (default: chromium)
+      HEADLESS   true | false                 (default: true)
+      SLOW_MO    milliseconds                 (default: 0)
+      VIEWPORT   WIDTHxHEIGHT                 (default: 1920x1080)
+
+    Headed mode:  ``--start-maximized`` + ``no_viewport=True`` so the page
+                  fills the entire OS window (Chromium only; other browsers
+                  fall back to the VIEWPORT size).
+    Headless mode: Uses VIEWPORT (default 1920×1080) since there is no OS
+                   window to maximize.
     """
     browser_name = os.getenv("BROWSER", "chromium").lower()
     headless = os.getenv("HEADLESS", "true").lower() != "false"
     slow_mo = int(os.getenv("SLOW_MO", "0"))
+    viewport_str = os.getenv("VIEWPORT", "1920x1080")
 
     browser_type = getattr(pw, browser_name, None)
     if browser_type is None:
@@ -75,17 +83,32 @@ def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
             f"Unknown BROWSER {browser_name!r}. Supported: chromium, firefox, webkit"
         )
 
+    # Parse VIEWPORT env var (e.g. "1920x1080")
+    try:
+        w, h = viewport_str.lower().split("x")
+        viewport = {"width": int(w), "height": int(h)}
+    except (ValueError, AttributeError):
+        viewport = {"width": 1920, "height": 1080}
+
+    launch_args = []
+    if browser_name == "chromium" and not headless:
+        launch_args.append("--start-maximized")
+
     logger.debug(
-        "[provider:local] browser=%s headless=%s slow_mo=%d",
-        browser_name, headless, slow_mo,
+        "[provider:local] browser=%s headless=%s slow_mo=%d viewport=%s",
+        browser_name, headless, slow_mo, viewport_str,
     )
     browser = browser_type.launch(
         headless=headless,
         slow_mo=slow_mo,
-        args=["--start-maximized"] if browser_name == "chromium" else [],
+        args=launch_args,
     )
-    # no_viewport=True lets the page fill the entire OS window
-    return browser, {"no_viewport": True}
+
+    # Headed Chromium: no_viewport lets the page fill the maximized OS window.
+    # Everything else: use an explicit viewport for consistent rendering.
+    if browser_name == "chromium" and not headless:
+        return browser, {"no_viewport": True}
+    return browser, {"viewport": viewport}
 
 
 # ── LambdaTest ─────────────────────────────────────────────────────────────────

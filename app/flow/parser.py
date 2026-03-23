@@ -10,7 +10,7 @@ Syntax
 
   click: "Button Text"
   fill: "Username" | "admin"
-  wait_for_load
+  wait_load
   scroll: "down"
 """
 
@@ -128,7 +128,7 @@ def _tokenize(raw: str) -> tuple[str, str]:
     if m:
         return m.group(1).lower(), m.group(2).strip()
 
-    # Bare keyword with no colon (e.g. `wait_for_load`, `reload`, `back`)
+    # Bare keyword with no colon (e.g. `wait_load`, `reload`, `back`)
     parts = raw.split(None, 1)
     keyword = parts[0].lower()
     rest = parts[1].strip() if len(parts) > 1 else ""
