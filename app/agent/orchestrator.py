@@ -29,12 +29,19 @@ logger = logging.getLogger(__name__)
 class Orchestrator:
     """Drives a single flow from definition to FlowResult."""
 
-    def __init__(self, artifacts_dir: str | Path = "reports/local/images") -> None:
+    def __init__(
+        self,
+        artifacts_dir: str | Path = "reports/local/images",
+        flows_dir: str | Path = "flows",
+    ) -> None:
         self.artifacts_dir = Path(artifacts_dir)
+        self.flows_dir = Path(flows_dir)
 
     def run_file(self, path: Path) -> FlowResult:
         """Parse a .md file and execute it."""
         flow = parse_flow_file(path)
+        # Derive flows_dir from the file's parent directory
+        self.flows_dir = path.parent
         return self.run(flow)
 
     def run_markdown(self, markdown: str, name: str = "inline") -> FlowResult:
@@ -51,7 +58,7 @@ class Orchestrator:
             page = ctx.new_page()
             page.set_default_timeout(flow.timeout)
 
-            runner = FlowRunner(artifacts_dir=self.artifacts_dir)
+            runner = FlowRunner(artifacts_dir=self.artifacts_dir, flows_dir=self.flows_dir)
             result = runner.run(flow, page)
 
             ctx.close()

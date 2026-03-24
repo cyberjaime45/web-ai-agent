@@ -72,17 +72,21 @@ class ProfessionalReportPlugin:
         """Serialize FlowResult.steps for the report (both pass and fail)."""
         self.flow_steps[nodeid] = [
             {
-                "label": (
-                    f"Step {s.action.step_num:>2} "
-                    f"[L{s.layer_used}{'' if s.success else ' FAIL'}]  "
-                    f"{s.action.raw}"
-                ),
+                "label": self._step_label(s),
                 "passed": s.success,
                 "msg": "" if s.success else s.message,
                 "duration": s.duration,
+                "sub_flow": s.sub_flow,
             }
             for s in steps
         ]
+
+    @staticmethod
+    def _step_label(s) -> str:
+        """Build a display label for a step, with sub-flow prefix when nested."""
+        layer = f"[L{s.layer_used}{'' if s.success else ' FAIL'}]"
+        prefix = f"\u21b3 [{s.sub_flow}]  " if s.sub_flow else ""
+        return f"Step {s.action.step_num:>2} {layer}  {prefix}{s.action.raw}"
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when == "call" or (report.when == "setup" and report.failed):
@@ -336,7 +340,8 @@ class FlowItem(pytest.Item):
             page = ctx.new_page()
             page.set_default_timeout(self.flow.timeout)
 
-            runner = FlowRunner(artifacts_dir=str(self._artifacts))
+            flows_dir = Path(str(self.fspath)).parent if self.fspath else Path("flows")
+            runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=flows_dir)
             result: FlowResult = runner.run(self.flow, page)
 
             # Record steps for the report (both pass and fail)
@@ -380,7 +385,8 @@ class FlowItem(pytest.Item):
                 icon = "✓" if s.success else "✗"
                 layer = f"[L{s.layer_used}]" if s.success else f"[L{s.layer_used} FAIL]"
                 dur = f"{s.duration * 1000:.0f}ms" if s.duration < 1 else f"{s.duration:.2f}s"
-                lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {s.action.raw}  ({dur})")
+                prefix = f"↳ [{s.sub_flow}]  " if s.sub_flow else ""
+                lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {prefix}{s.action.raw}  ({dur})")
                 if not s.success:
                     lines.append(f"       {s.message}")
             return "\n".join(lines)

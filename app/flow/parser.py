@@ -229,6 +229,33 @@ def _parse_action(raw: str, step_num: int) -> FlowAction | None:
         )
 
 
+# ── Flow path resolution ──────────────────────────────────────────────────────
+
+
+def resolve_flow_path(reference: str, base_dir: Path) -> Path:
+    """Resolve a flow reference to an absolute .md file path.
+
+    Accepted forms:
+      "sso_login"        → base_dir/sso_login.md
+      "common/login"     → base_dir/common/login.md
+      "common/login.md"  → base_dir/common/login.md
+    """
+    ref = reference.strip()
+    # Try with .md extension added
+    if not ref.endswith(".md"):
+        candidate = base_dir / f"{ref}.md"
+        if candidate.is_file():
+            return candidate
+    # Try as-is
+    candidate = base_dir / ref
+    if candidate.is_file():
+        return candidate
+    raise FlowParseError(
+        f"Flow file not found: '{reference}' "
+        f"(looked in {base_dir})"
+    )
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 

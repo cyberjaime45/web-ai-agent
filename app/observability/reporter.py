@@ -76,6 +76,7 @@ _LOCATOR_RE = re.compile(
 )
 
 _STEP_RE = re.compile(r"^\s+([✓✗])\s+(Step\s+\d+\s+\[L\d+[^\]]*\]\s+.+?)(?:\s+\((\d+(?:\.\d+)?(?:ms|s))\))?\s*$")
+_SUB_FLOW_RE = re.compile(r"↳\s*\[([^\]]+)\]")
 
 
 def _parse_failure_details(longrepr: str) -> dict:
@@ -106,7 +107,9 @@ def _parse_failure_details(longrepr: str) -> dict:
                 if nxt.strip() and not _STEP_RE.match(nxt):
                     msg = nxt.strip()
                     step_line_indices.add(idx + 1)
-            steps.append({"label": label, "passed": passed, "msg": msg, "duration": round(dur, 3)})
+            sub_flow_m = _SUB_FLOW_RE.search(label)
+            sub_flow = sub_flow_m.group(1) if sub_flow_m else ""
+            steps.append({"label": label, "passed": passed, "msg": msg, "duration": round(dur, 3), "sub_flow": sub_flow})
 
     # ── Assert message ────────────────────────────────────────────────────────
     # 1) Try E-prefixed lines (standard pytest failures)
@@ -222,6 +225,7 @@ _CSS = """
   --qa-fail-bg:  #fee2e2;
   --qa-skip:     #b45309;
   --qa-skip-bg:  #fef3c7;
+  --qa-accent:   #4f46e5;
   --chart-grid:  var(--bs-border-color);
   --chart-text:  var(--bs-secondary-color);
   --chart-bg:    var(--bs-body-bg);
@@ -233,6 +237,7 @@ _CSS = """
   --qa-fail-bg:  rgba(248,113,113,.12);
   --qa-skip:     #fb923c;
   --qa-skip-bg:  rgba(251,146,60,.12);
+  --qa-accent:   #818cf8;
   --chart-grid:  var(--bs-border-color);
   --chart-text:  var(--bs-secondary-color);
   --chart-bg:    var(--bs-body-bg);
@@ -297,6 +302,29 @@ _CSS = """
   font-size: 0.82rem; padding: 2px 0 4px 22px;
   border-left: 2px solid var(--qa-fail); margin-left: 8px;
 }
+
+/* ── Sub-flow (nested steps) ── */
+.det-subflow-group {
+  margin: 6px 0 6px 18px; padding: 8px 12px;
+  border-left: 3px solid var(--qa-accent, #6366f1);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--qa-accent, #6366f1) 6%, transparent);
+}
+.det-subflow-header {
+  font-size: 0.78rem; font-weight: 600; letter-spacing: .04em;
+  color: var(--qa-accent, #6366f1); margin-bottom: 4px;
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  user-select: none;
+}
+.det-subflow-header .bi { font-size: 0.7rem; transition: transform .15s; }
+.det-subflow-header.collapsed .bi-chevron-down { transform: rotate(-90deg); }
+.det-subflow-header:hover { opacity: .8; }
+.det-subflow-body { padding-left: 4px; }
+.det-subflow-body.hide { display: none; }
+.det-step-trigger {
+  font-weight: 600; color: var(--qa-accent, #6366f1);
+}
+.det-step-trigger i.bi { color: var(--qa-accent, #6366f1) !important; }
 .det-stacktrace-section {
   margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--bs-border-color);
@@ -884,19 +912,64 @@ function buildDetailLeft(r) {
     out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">What failed</div><div class="text-danger fw-medium" style="font-size:.78rem;word-break:break-word">' + escHtml(d.assert_msg) + '</div></div>';
   }
 
-  // Steps — show ALL steps (pass and fail) with duration
+  // Steps — show ALL steps (pass and fail) with duration, grouped by sub-flow
   var allSteps = d.steps || [];
   if (allSteps.length) {
     out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">Steps</div>';
-    allSteps.forEach(function(s) {
-      var durTag = s.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(s.duration) + '</span>' : '';
-      if (s.passed) {
-        out += '<div class="det-step"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
+
+    // Group consecutive sub-flow steps together
+    var i = 0;
+    while (i < allSteps.length) {
+      var s = allSteps[i];
+      var sf = s.sub_flow || '';
+
+      if (sf) {
+        // Collect all consecutive steps belonging to this sub-flow
+        var groupName = sf;
+        var groupSteps = [];
+        while (i < allSteps.length && (allSteps[i].sub_flow || '') === groupName) {
+          groupSteps.push(allSteps[i]);
+          i++;
+        }
+        var groupPassed = groupSteps.every(function(gs) { return gs.passed; });
+        var groupDur = groupSteps.reduce(function(sum, gs) { return sum + (gs.duration || 0); }, 0);
+        var groupDurTag = groupDur ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(groupDur) + '</span>' : '';
+        var groupIcon = groupPassed
+          ? '<i class="bi bi-check-circle-fill text-success me-1"></i>'
+          : '<i class="bi bi-x-circle-fill text-danger me-1"></i>';
+        var sfId = 'sf-' + Math.random().toString(36).slice(2, 8);
+
+        out += '<div class="det-subflow-group">';
+        out += '<div class="det-subflow-header" onclick="var b=this.nextElementSibling;b.classList.toggle(\'hide\');this.classList.toggle(\'collapsed\')">';
+        out += groupIcon + ' <i class="bi bi-chevron-down"></i> <span>run_flow: ' + escHtml(groupName) + '</span>' + groupDurTag;
+        out += '</div>';
+        out += '<div class="det-subflow-body">';
+        groupSteps.forEach(function(gs) {
+          var gsDur = gs.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(gs.duration) + '</span>' : '';
+          if (gs.passed) {
+            out += '<div class="det-step"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(gs.label) + gsDur + '</div>';
+          } else {
+            out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(gs.label) + gsDur + '</div>';
+            if (gs.msg) out += '<div class="det-step-msg text-secondary">' + escHtml(gs.msg) + '</div>';
+          }
+        });
+        out += '</div></div>';
       } else {
-        out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
-        if (s.msg) out += '<div class="det-step-msg text-secondary">' + escHtml(s.msg) + '</div>';
+        // Regular top-level step
+        var durTag = s.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(s.duration) + '</span>' : '';
+        // Style the run_flow trigger step differently
+        var isTrigger = s.label && s.label.indexOf('run_flow') !== -1;
+        if (s.passed) {
+          var cls = isTrigger ? 'det-step det-step-trigger' : 'det-step';
+          out += '<div class="' + cls + '"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
+        } else {
+          out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
+          if (s.msg) out += '<div class="det-step-msg text-secondary">' + escHtml(s.msg) + '</div>';
+        }
+        i++;
       }
-    });
+    }
+
     out += '</div>';
   }
 

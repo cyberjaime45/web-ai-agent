@@ -67,6 +67,9 @@ class ActionType(str, Enum):
     AI_ASSERT             = "ai_assert"
     AI_SUMMARIZE          = "ai_summarize"
 
+    # ── Flow Composition ────────────────────────────────────────
+    RUN_FLOW              = "run_flow"
+
     # ── Utilities ────────────────────────────────────────────────
     SCREENSHOT            = "screenshot"
     PRESS                 = "press"
@@ -122,6 +125,8 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
     ActionType.AI_ASSERT:       (1, 1),
     ActionType.AI_SUMMARIZE:    (0, 0),
 
+    ActionType.RUN_FLOW:        (1, 1),
+
     ActionType.SCREENSHOT:      (0, 1),
     ActionType.PRESS:           (1, 1),
 }
@@ -148,6 +153,7 @@ class StepResult:
     success:         bool
     message:         str
     layer_used:      int = 1          # 1=deterministic, 2=fallback, 3=AI
+    sub_flow:        str = ""         # non-empty when step belongs to a nested flow
     screenshot_path: Optional[str] = None
     error:           Optional[str] = None
     duration:        float = 0.0      # seconds
