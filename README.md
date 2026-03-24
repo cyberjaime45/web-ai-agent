@@ -604,6 +604,69 @@ Press a keyboard key. Accepts any Playwright key name.
 
 ---
 
+### Flow Composition (1)
+
+#### `run_flow`
+Execute another flow file inline. Enables reuse of common sequences (e.g., login) across multiple test flows. The sub-flow runs on the **same browser session** — no new page or context is created.
+
+```markdown
+1. run_flow: "sso_login"
+2. run_flow: "common/login"
+```
+
+**Path resolution** — references are resolved relative to the `flows/` directory:
+
+| Reference | Resolves to |
+|-----------|-------------|
+| `"sso_login"` | `flows/sso_login.md` |
+| `"common/login"` | `flows/common/login.md` |
+| `"common/login.md"` | `flows/common/login.md` |
+
+**Example — reusable login flow** (`flows/sso_login.md`):
+
+```markdown
+# SSO Login Page
+
+## Steps
+- goto: "https://one-staging.wheelsup.com/"
+- wait_for_text: "Sign in"
+- click: "Sign in with SSO"
+- fill: "Email" | "user@example.com"
+- click: "Next"
+- fill: "Password" | "secret"
+- click: "Sign in"
+- assert_text: "My Tasks"
+```
+
+**Example — parent flow calling the login** (`flows/dashboard.md`):
+
+```markdown
+# Dashboard Page
+
+## Steps
+- run_flow: "sso_login"
+- assert_text: "This is my Dashboard"
+- click: "Settings"
+```
+
+**Report display** — nested steps are prefixed with `↳ [flow_name]` for clarity:
+
+```
+✓ Step  1 [L0]  run_flow: "sso_login"
+✓ Step  1 [L1]  ↳ [SSO Login Page]  goto: "https://one-staging..."     (1.2s)
+✓ Step  2 [L1]  ↳ [SSO Login Page]  wait_for_text: "Sign in"           (0.3s)
+✓ Step  3 [L1]  ↳ [SSO Login Page]  click: "Sign in with SSO"          (0.1s)
+...
+✓ Step  2 [L1]  assert_text: "This is my Dashboard"                    (0.2s)
+```
+
+**Limitations:**
+- Max nesting depth: 10 levels
+- Circular references are detected and reported as errors
+- Sub-flows can call other sub-flows (nested `run_flow` supported)
+
+---
+
 ## Complete Flow Examples
 
 ### Example 1: E-commerce Checkout
