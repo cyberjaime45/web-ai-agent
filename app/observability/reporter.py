@@ -2,9 +2,8 @@
 Professional HTML Report Generator — v4.
 
 Design:
-  ┌ Result Distribution ┐  ┌ Test Durations ┐  ┌ Pass Rate Trend (8 runs) ┐
-  ├ By Category (1.5fr) ┤  ├ Failure Heatmap (2fr) ┤  ├ Code Coverage pie (1.1fr) ┤
-  └ Test Results table (TEST | STATUS | ENV | DURATION | FLAKINESS | DETAILS)
+  ┌ Result Distribution ┐  ┌ Code Coverage ┐  ┌ Pass Rate Trend (8 runs) ┐
+  └ Test Results table (TEST | STATUS | DURATION | FLAKINESS | DETAILS)
 
 Output files:
   reports/{env}/report.json       — pure data
@@ -21,26 +20,6 @@ import json
 import re
 import time
 from pathlib import Path
-
-
-# ── Category detection ────────────────────────────────────────────────────────
-
-_CAT_PATTERNS: list[tuple[str, str]] = [
-    (r"multipagenav|navigationagent",     "Navigation"),
-    (r"loginagent|formvalid",             "Login / Auth"),
-    (r"errorstate|autonomous",            "Error State"),
-    (r"agentjourney|fullagent",           "Agent Flow"),
-    (r"browsersmoke",                     "Smoke"),
-    (r"flowparser",                       "Validation"),
-]
-
-
-def _get_category(class_str: str) -> str:
-    key = class_str.lower().replace("::", "").replace("_", "")
-    for pattern, name in _CAT_PATTERNS:
-        if re.search(pattern, key):
-            return name
-    return "General"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -174,19 +153,6 @@ def _flakiness_bars(outcome: str) -> list[list]:
     return [[30, "#fb923c"]] * 5
 
 
-def _compute_categories(results: list[dict]) -> list[dict]:
-    cats: dict[str, dict] = {}
-    for r in results:
-        cat = _get_category(r.get("class", "") or r.get("cls", ""))
-        if cat not in cats:
-            cats[cat] = {"name": cat, "passed": 0, "failed": 0}
-        if r.get("outcome") == "passed":
-            cats[cat]["passed"] += 1
-        elif r.get("outcome") in ("failed", "error"):
-            cats[cat]["failed"] += 1
-    return sorted(cats.values(), key=lambda x: -x["failed"])
-
-
 def _load_and_update_history(history_path: Path, current: dict) -> list[dict]:
     history: list[dict] = []
     if history_path.exists():
@@ -202,16 +168,6 @@ def _load_and_update_history(history_path: Path, current: dict) -> list[dict]:
     except Exception:
         pass
     return history
-
-
-# Static placeholder heatmap (Mon–Sun × Wk1–Wk4).
-# Replace with real per-day failure tracking if needed.
-_DUMMY_HEATMAP = [
-    [0, 0, 0, 2, 1, 0, 0],
-    [1, 0, 3, 0, 4, 0, 0],
-    [0, 2, 1, 0, 0, 2, 0],
-    [4, 1, 0, 2, 4, 0, 0],
-]
 
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -269,21 +225,6 @@ _CSS = """
 .dist-donut-wrap { position: relative; height: 160px; }
 .trend-wrap      { position: relative; height: 160px; }
 .cov-pie-wrap    { position: relative; height: 130px; }
-
-/* ── Duration bar override ── */
-.dur-bar-custom { height: 4px; }
-
-/* ── Heatmap grid ── */
-.heat-grid {
-  display: grid;
-  grid-template-columns: 36px repeat(7, 28px);
-  gap: 3px; font-size: 0.68rem; min-width: 240px;
-}
-.heat-cell {
-  width: 28px; height: 22px; border-radius: 3px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 0.65rem; font-weight: 600; color: rgba(0,0,0,.5);
-}
 
 /* ── Flakiness SVG wrapper ── */
 .flik-wrap { display: inline-block; vertical-align: middle; }
@@ -477,10 +418,7 @@ document.addEventListener('DOMContentLoaded', function() {
     D.meta        = D.meta        || {};
     D.summary     = D.summary     || { total: 0, passed: 0, failed: 0, skipped: 0, pass_rate: 0 };
     D.results     = D.results     || [];
-    D.categories  = D.categories  || [];
     D.trend       = D.trend       || [];
-    D.heatmap     = D.heatmap     || [];
-    D.dur_list    = D.dur_list    || [];
     D.meta.project          = D.meta.project          || 'QA Web Agent';
     D.meta.environment      = D.meta.environment      || '';
     D.meta.base_url         = D.meta.base_url         || '';
@@ -494,11 +432,8 @@ document.addEventListener('DOMContentLoaded', function() {
     renderHeader(D);
     renderSummary(D);
     buildDonut(D);
-    renderDurationList(D);
-    buildTrend(D);
-    renderCategories(D);
-    renderHeatmap(D);
     buildCoveragePie(D);
+    buildTrend(D);
     renderTable(D);
     renderFooter(D);
   } catch(e) {
@@ -608,43 +543,7 @@ function buildDonut(D) {
       }
     });
 
-    // Build legend
-    const legEl = document.getElementById('dist-legend');
-    if (legEl) {
-      const items = [
-        { color: '#4ade80', label: 'Passed',  val: D.summary.passed,  cls: 'text-success' },
-        { color: '#f87171', label: 'Failed',  val: D.summary.failed,  cls: 'text-danger'  },
-        { color: '#fb923c', label: 'Skipped', val: D.summary.skipped, cls: 'text-warning' },
-      ];
-      legEl.innerHTML = items.map(function(it) {
-        return '<div class="d-flex align-items-center gap-2 py-1 border-top">' +
-          '<span class="rounded-circle flex-shrink-0" style="width:10px;height:10px;background:' + it.color + '"></span>' +
-          '<span class="flex-grow-1 text-secondary">' + it.label + '</span>' +
-          '<span class="fw-bold ' + it.cls + '" style="font-variant-numeric:tabular-nums">' + it.val + '</span>' +
-        '</div>';
-      }).join('');
-    }
   } catch(e) { console.error('buildDonut error:', e); }
-}
-
-// ── Duration list ─────────────────────────────────────────────────────────────
-function renderDurationList(D) {
-  const el = document.getElementById('dur-list');
-  if (!el) return;
-  try {
-    const list = D.dur_list || [];
-    const maxDur = list.reduce(function(m, r) { return Math.max(m, r.duration); }, 0.001) || 0.001;
-    el.innerHTML = list.map(function(r) {
-      const pct = Math.round(r.duration / maxDur * 100);
-      const barColor = r.outcome !== 'passed' ? 'bg-danger' : 'bg-success';
-      const name = r.name.length > 30 ? r.name.substring(0, 30) + '\u2026' : r.name;
-      return '<div class="d-flex align-items-center gap-2 small">' +
-        '<span class="text-secondary text-truncate" style="flex:1" title="' + escHtml(r.name) + '">' + escHtml(name) + '</span>' +
-        '<div class="progress dur-bar-custom" style="width:80px"><div class="progress-bar ' + barColor + '" style="width:' + pct + '%;min-width:2px"></div></div>' +
-        '<span class="fw-semibold" style="font-variant-numeric:tabular-nums;white-space:nowrap">' + formatDur(r.duration) + '</span>' +
-      '</div>';
-    }).join('');
-  } catch(e) { console.error('renderDurationList error:', e); }
 }
 
 // ── Pass rate trend bar chart ─────────────────────────────────────────────────
@@ -677,74 +576,7 @@ function buildTrend(D) {
   } catch(e) { console.error('buildTrend error:', e); }
 }
 
-// ── By Category horizontal bars ───────────────────────────────────────────────
-function renderCategories(D) {
-  const el = document.getElementById('cat-list');
-  if (!el) return;
-  try {
-    el.innerHTML = '';
-    D.categories.forEach(function(cat) {
-      const total = cat.passed + cat.failed;
-      const failPct = total ? Math.round(cat.failed / total * 100) : 0;
-      const passPct = total ? Math.round(cat.passed / total * 100) : 0;
-      const statusTxt = total === 0 ? '0 / 0' :
-        cat.failed > 0
-          ? cat.failed + ' / ' + total + '<br><span class="text-danger">fail</span>'
-          : cat.passed + ' / ' + total + '<br><span class="text-success">pass</span>';
-      el.insertAdjacentHTML('beforeend',
-        '<div class="d-flex align-items-center gap-2 small mb-1">' +
-          '<span class="badge text-bg-info text-center" style="min-width:78px">' + escHtml(cat.name) + '</span>' +
-          '<div class="progress flex-grow-1" style="height:8px">' +
-            '<div class="progress-bar bg-danger" style="width:' + failPct + '%"></div>' +
-            '<div class="progress-bar bg-success" style="width:' + passPct + '%"></div>' +
-          '</div>' +
-          '<div class="text-secondary text-end" style="min-width:52px;font-size:.72rem">' + statusTxt + '</div>' +
-        '</div>');
-    });
-  } catch(e) { console.error('renderCategories error:', e); }
-}
-
-// ── Failure heatmap ───────────────────────────────────────────────────────────
-function heatColor(v) {
-  if (v === 0) return 'var(--bs-border-color)';
-  if (v === 1) return '#bbf7d0';
-  if (v === 2) return '#fde68a';
-  if (v === 3) return '#fb923c';
-  return '#f87171';
-}
-
-function renderHeatmap(D) {
-  const grid = document.getElementById('heat-grid');
-  if (!grid) return;
-  try {
-    grid.innerHTML = '';
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    grid.insertAdjacentHTML('beforeend', '<div class="text-body-tertiary"></div>');
-    days.forEach(function(d) {
-      grid.insertAdjacentHTML('beforeend', '<div class="text-center text-body-tertiary fw-semibold">' + d + '</div>');
-    });
-    D.heatmap.forEach(function(wk, wi) {
-      grid.insertAdjacentHTML('beforeend', '<div class="text-body-tertiary d-flex align-items-center" style="font-size:.66rem">Wk ' + (wi + 1) + '</div>');
-      wk.forEach(function(v) {
-        grid.insertAdjacentHTML('beforeend',
-          '<div class="heat-cell" style="background:' + heatColor(v) + '">' + (v || '') + '</div>');
-      });
-    });
-
-    const legEl = document.getElementById('heat-legend');
-    if (legEl) {
-      const colors = ['var(--bs-border-color)', '#bbf7d0', '#fde68a', '#fb923c', '#f87171'];
-      legEl.innerHTML =
-        '<span class="text-body-tertiary small">fewer</span>' +
-        '<span class="d-flex gap-1">' +
-          colors.map(function(c) { return '<span style="width:14px;height:10px;border-radius:2px;display:inline-block;background:' + c + '"></span>'; }).join('') +
-        '</span>' +
-        '<span class="text-body-tertiary small">more failures</span>';
-    }
-  } catch(e) { console.error('renderHeatmap error:', e); }
-}
-
-// ── Coverage doughnut pie (mid-row col 3) ─────────────────────────────────────
+// ── Coverage doughnut pie ─────────────────────────────────────
 function buildCoveragePie(D) {
   const canvas = document.getElementById('coverageChart');
   if (!canvas) return;
@@ -1200,29 +1032,6 @@ async function exportPDF() {
     });
     y += 27;
 
-    // By Category
-    sectionLabel('By Category', y);
-    y += 5;
-    D.categories.forEach(function(cat) {
-      const total   = cat.passed + cat.failed;
-      const failPct = total ? cat.failed / total : 0;
-      const passPct = total ? cat.passed / total : 0;
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(7.5);
-      pdf.setTextColor(...T.text);
-      pdf.text(cat.name, MG, y + 3);
-      const barX = MG + 34; const barW = CW - 34 - 16;
-      pdf.setFillColor(...T.border);
-      pdf.roundedRect(barX, y - 0.5, barW, 5, 1, 1, 'F');
-      if (failPct > 0) { pdf.setFillColor(...T.fail);  pdf.roundedRect(barX, y - 0.5, barW * failPct, 5, 1, 1, 'F'); }
-      if (passPct > 0) { pdf.setFillColor(...T.pass);  pdf.roundedRect(barX + barW * failPct, y - 0.5, barW * passPct, 5, 1, 1, 'F'); }
-      pdf.setFontSize(6.5);
-      pdf.setTextColor(...T.text2);
-      pdf.text(cat.failed + 'F / ' + total, barX + barW + 3, y + 3.5);
-      y += 8;
-    });
-    y += 3;
-
     // Coverage info
     sectionLabel('Code Coverage', y);
     y += 5;
@@ -1460,22 +1269,22 @@ _HTML_SHELL = """<!DOCTYPE html>
     <!-- Summary stat cards (JS fills) -->
     <div class="row row-cols-2 row-cols-md-5 g-2 mb-3" id="stat-cards"></div>
 
-    <!-- Row 1: Distribution \u00b7 Durations \u00b7 Trend -->
+    <!-- Charts: Distribution \u00b7 Coverage \u00b7 Trend -->
     <div class="row g-3 mb-3">
       <div class="col-md-4">
         <div class="card h-100" id="card-distribution">
           <div class="card-body">
             <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Result Distribution</div>
             <div class="dist-donut-wrap"><canvas id="donutChart" aria-label="Result distribution donut chart"></canvas></div>
-            <div id="dist-legend" class="mt-2"></div>
           </div>
         </div>
       </div>
       <div class="col-md-4">
-        <div class="card h-100" id="card-durations">
+        <div class="card h-100" id="card-coverage">
           <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Test Durations</div>
-            <div class="d-flex flex-column gap-1" id="dur-list"></div>
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Code Coverage</div>
+            <div class="cov-pie-wrap"><canvas id="coverageChart" aria-label="Coverage pie chart"></canvas></div>
+            <div id="cov-info"></div>
           </div>
         </div>
       </div>
@@ -1489,39 +1298,7 @@ _HTML_SHELL = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Row 2: Category \u00b7 Heatmap \u00b7 Coverage -->
-    <div class="row g-3 mb-3">
-      <div class="col-md-4">
-        <div class="card h-100" id="card-categories">
-          <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">By Category</div>
-            <div id="cat-list"></div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-5">
-        <div class="card h-100" id="card-heatmap">
-          <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Failure Heatmap \u2014 Last 4 Weeks</div>
-            <div class="overflow-auto">
-              <div class="heat-grid" id="heat-grid"></div>
-            </div>
-            <div class="d-flex align-items-center gap-1 mt-2" id="heat-legend"></div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card h-100" id="card-coverage">
-          <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Code Coverage</div>
-            <div class="cov-pie-wrap"><canvas id="coverageChart" aria-label="Coverage pie chart"></canvas></div>
-            <div id="cov-info"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Row 3: Test Results -->
+    <!-- Test Results -->
     <div class="card mb-3" id="card-results">
       <div class="card-body">
         <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Test Results</div>
@@ -1605,8 +1382,6 @@ def generate_report(
             "flakiness":      _flakiness_bars(r.get("outcome", "")),
         })
 
-    categories = _compute_categories(enriched)
-
     # History / trend
     current_run = {
         "run_id":  f"Run {datetime.datetime.now().strftime('%m-%d %H:%M')}",
@@ -1617,9 +1392,6 @@ def generate_report(
     if history_path is None:
         history_path = output_path.parent.parent / "run_history.json"
     trend = _load_and_update_history(history_path, current_run)
-
-    # Duration list (top 8, sorted longest first)
-    dur_sorted = sorted(enriched, key=lambda r: -r["duration"])[:8]
 
     report_data = {
         "meta": {
@@ -1640,18 +1412,7 @@ def generate_report(
             "pass_rate": pass_rate,
         },
         "results":    enriched,
-        "categories": categories,
         "trend":      trend,
-        "heatmap":    _DUMMY_HEATMAP,
-        "dur_list":   [
-            {
-                "name":     r["name"],
-                "duration": r["duration"],
-                "outcome":  r["outcome"],
-                "_idx":     r["_idx"],
-            }
-            for r in dur_sorted
-        ],
     }
 
     # ── Write files ──────────────────────────────────────────────────────────

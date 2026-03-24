@@ -2,16 +2,10 @@
 
 ## Credentials
 - username: core@wheelsup.com
-- timeout: "Welcome1!"
+- password: "Welcome1!"
 
 ## Steps
-- goto: "https://memberssitestaging.wheelsup.com/"
-- wait_load
-<!-- - click: "Accept All Cookies" -->
-- fill: "[data-testid='email-login-input']" | "core@test.com"
-- fill: "[data-testid='password-login-input']" | "Welcome1!"
-- click: "SIGN IN"
-- wait_load
+- run_flow: "login/ms_login"
 - click: "Book your flight"
 - wait_load
 <!-- Search form page -->
@@ -25,7 +19,7 @@
 <!-- Number of pets -->
 - click: "button[tabindex='0'][type='button'][aria-label='+']"
 - click: "Next"
-- click: "30"
+- click: "31"
 - click: "Next"
 - click: "Search"
 <!-- Flight serach results page -->

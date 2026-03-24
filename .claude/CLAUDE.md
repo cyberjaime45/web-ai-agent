@@ -1,59 +1,103 @@
-## Workflow Orchestration
+# Project
 
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately — don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
+Markdown-driven web automation agent with a 3-layer deterministic + AI runtime.
+Flows are written in Markdown, discovered by pytest, and executed through:
+L1 (DeterministicRunner) → L2 (FallbackLocator) → L3 (AIResolver, optional).
 
+See @README.md for project overview.
 
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
+## Stack
 
+- Language: Python
+- Browser automation: Playwright (Python)
+- Test runner: pytest + custom conftest.py
+- AI layer: OpenAI SDK (Layer 3, optional)
+- Reporting: HTML + JSON under `reports/<ENVIRONMENT>/`
 
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
+## Commands
 
+```bash
+# Run all flows (auto-discovered .md files in flows/)
+pytest
 
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
+# Run a specific flow file
+pytest --flow_file=flows/login/sso_login.md
 
+# Run an inline flow
+pytest --flow='click: "Login"'
 
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes — don't over-engineer
-- Challenge your own work before presenting it
+# Run against a specific environment
+ENVIRONMENT=staging pytest
 
+# Run with visible browser (full screen)
+HEADLESS=false pytest
 
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests — then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
+# Custom viewport
+VIEWPORT=1440x900 pytest
 
+# Slow motion for debugging
+SLOW_MO=500 pytest
 
-## Task Management
+# Show last HTML report
+open reports/<env>/report.html
 
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+# Install Playwright browsers
+playwright install
 
+# Install dependencies
+pip install -r requirements.txt
+```
 
-## Core Principles
+## Architecture — read before touching core files
 
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+| File | Role |
+|------|------|
+| `conftest.py` | pytest plugin — flow discovery, FlowFile, FlowItem, report plugin |
+| `app/execution/engine.py` | FlowRunner — orchestrates L1 → L2 → L3 + `run_flow` sub-flows |
+| `app/layers/deterministic.py` | L1 + L2 — dispatch-table, exact Playwright locators, fallback dispatch |
+| `app/layers/locator.py` | L2 — 5 fuzzy strategies per resolve method, selectolax similarity ≥ 0.6 |
+| `app/layers/ai_resolver.py` | L3 — OpenAI, only when L1+L2 fail, skipped if no API key |
+| `app/flow/parser.py` | Markdown parser — 4-stage pipeline, flow path resolution for `run_flow` |
+| `app/schemas/actions.py` | ActionType enum (42 types), FlowAction, StepResult, FlowResult |
+| `app/browser/session.py` | Browser factory — local (Playwright) or LambdaTest |
+| `app/observability/reporter.py` | HTML/JSON report generation |
+| `reports/` | Output per environment: report.html, report.json, assets/, images/ |
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ENVIRONMENT` | `staging` | Report output directory, environment badge |
+| `HEADLESS` | `true` | Set `false` for visible browser |
+| `BROWSER` | `chromium` | Browser engine: chromium, firefox, webkit |
+| `VIEWPORT` | `1920x1080` | Viewport size (WIDTHxHEIGHT) |
+| `SLOW_MO` | `0` | Delay between actions (ms) |
+| `OPENAI_API_KEY` | — | Enables L3 AI resolver (optional) |
+| `RUNNING_MODE` | `local` | `local` or `lambda` (LambdaTest cloud) |
+
+## Rules
+
+- Never break the L1 → L2 → L3 fallback chain — each layer must signal failure cleanly for the next to activate
+- L1 uses `_L1_TIMEOUT = 5000ms` for action calls — keeps fast failover to L2 while preserving Playwright's auto-wait
+- L3 is optional by design — all flows must be runnable without `OPENAI_API_KEY`
+- Never use `time.sleep()` — use Playwright `wait_for*` methods
+- L1 supports CSS selectors and XPath directly via `_is_selector()` — no need to fall to L2 for selector-based targeting
+- `run_flow` is intercepted at the execution layer (engine.py), not the action dispatch — it's a flow-level directive
+- Minimal impact: only touch code relevant to the task
+- Find root causes — no temporary fixes
+- Verify before marking done: `pytest` passes, report generates, no console errors
+- On corrections: update `tasks/lessons.md`
+
+## Reference Docs
+
+Read only when relevant — do not load all upfront.
+
+| File | When to read |
+|------|-------------|
+| @~/.claude/docs/planning.md | Starting any non-trivial task (3+ steps) |
+| @~/.claude/docs/git.md | Before any git operations |
+| @.claude/docs/architecture.md | Touching FlowRunner, layers, or conftest |
+| @.claude/docs/playwright.md | Writing or debugging Playwright/locator code |
+| @.claude/docs/flows.md | Writing or parsing Markdown flow files |
+| @.claude/docs/bugs.md | Given a bug report or failing flow |
+| @tasks/lessons.md | Session start, and after any correction |

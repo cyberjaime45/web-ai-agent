@@ -9,6 +9,8 @@ Thumbs.db
 
 # Claude
 claude-*.log
+tasks/todo.md
+tasks/lessons.md
 
 # External tool builders
 *.vscode
