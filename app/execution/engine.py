@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -33,6 +34,63 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "images"
 _MAX_NESTING_DEPTH = 10
+
+# ── Environment variable placeholder resolution ─────────────────────────────
+_ENV_PLACEHOLDER_RE = re.compile(r"^<([A-Z_][A-Z0-9_]*)>$")
+_SENSITIVE_KEYWORDS = {"PASSWORD", "SECRET", "KEY", "TOKEN"}
+_MASK = "******"
+
+
+def _is_sensitive(var_name: str) -> bool:
+    """Return True if the env var name contains a sensitive keyword."""
+    upper = var_name.upper()
+    return any(kw in upper for kw in _SENSITIVE_KEYWORDS)
+
+
+def _resolve_env_placeholders(action: FlowAction) -> FlowAction:
+    """Return a copy of *action* with ``<ENV_VAR>`` placeholders resolved.
+
+    - Resolved args contain real values (for execution).
+    - ``action.raw`` is rewritten with sensitive values masked as ``******``.
+    - Non-sensitive placeholders (e.g. ``<FMS_EMAIL>``) show the resolved value.
+    - If the env var is not set, raises ``RuntimeError`` with a helpful message.
+    """
+    has_placeholder = False
+    for arg in action.args:
+        if _ENV_PLACEHOLDER_RE.match(arg):
+            has_placeholder = True
+            break
+
+    if not has_placeholder:
+        return action  # nothing to resolve — return original (no copy needed)
+
+    resolved_args: list[str] = []
+    masked_raw = action.raw
+
+    for arg in action.args:
+        m = _ENV_PLACEHOLDER_RE.match(arg)
+        if not m:
+            resolved_args.append(arg)
+            continue
+
+        var_name = m.group(1)
+        value = os.environ.get(var_name)
+        if value is None:
+            raise RuntimeError(
+                f"Environment variable '{var_name}' is not set "
+                f"(referenced in step {action.step_num}: {action.raw!r})"
+            )
+
+        resolved_args.append(value)
+        display = _MASK if _is_sensitive(var_name) else value
+        masked_raw = masked_raw.replace(f"<{var_name}>", display)
+
+    return FlowAction(
+        type=action.type,
+        args=resolved_args,
+        raw=masked_raw,
+        step_num=action.step_num,
+    )
 
 
 class FlowRunner:
@@ -76,8 +134,20 @@ class FlowRunner:
                         return result
                 continue
 
+            # Resolve env var placeholders before execution
+            try:
+                resolved = _resolve_env_placeholders(action)
+            except RuntimeError as exc:
+                sr = StepResult(
+                    action=action, success=False,
+                    message=str(exc), layer_used=0, error=str(exc),
+                )
+                result.steps.append(sr)
+                result.error = sr.message
+                return result
+
             t0 = time.monotonic()
-            step_result = self._run_step(action, page, runner)
+            step_result = self._run_step(resolved, page, runner)
             step_result.duration = round(time.monotonic() - t0, 3)
             result.steps.append(step_result)
 
@@ -88,7 +158,7 @@ class FlowRunner:
                 result.error = step_result.message
                 logger.error(
                     f"Flow '{flow.name}' failed at step {action.step_num}: "
-                    f"{action.raw!r} — {step_result.message}"
+                    f"{resolved.raw!r} — {step_result.message}"
                 )
                 return result
 
@@ -162,8 +232,20 @@ class FlowRunner:
                         return results
                 continue
 
+            # Resolve env var placeholders
+            try:
+                resolved = _resolve_env_placeholders(sub_action)
+            except RuntimeError as exc:
+                sr = StepResult(
+                    action=sub_action, success=False,
+                    message=str(exc), layer_used=0, error=str(exc),
+                )
+                sr.sub_flow = sub_flow.name
+                results.append(sr)
+                break
+
             t0 = time.monotonic()
-            sr = self._run_step(sub_action, page, runner)
+            sr = self._run_step(resolved, page, runner)
             sr.duration = round(time.monotonic() - t0, 3)
             sr.sub_flow = sub_flow.name
             results.append(sr)
