@@ -31,8 +31,6 @@ from app.utils.banner import show_banner
 load_dotenv()
 
 _ENV          = os.getenv("ENVIRONMENT", "staging")
-_BASE_URL     = os.getenv("BASE_URL", "")
-_LOG_LEVEL    = os.getenv("LOG_LEVEL", "info")
 _COVERAGE     = int(os.getenv("COVERAGE", "0"))
 _COV_TARGET   = int(os.getenv("COVERAGE_TARGET", "80"))
 _THEME_STYLE  = os.getenv("THEME_STYLE", "system")
@@ -40,7 +38,7 @@ _THEME_STYLE  = os.getenv("THEME_STYLE", "system")
 # ── Configure logging ───────────────────────────────────────────
 
 logging.basicConfig(
-    level=getattr(logging, _LOG_LEVEL.upper(), logging.INFO),
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
@@ -77,6 +75,7 @@ class ProfessionalReportPlugin:
                 "msg": "" if s.success else s.message,
                 "duration": s.duration,
                 "sub_flow": s.sub_flow,
+                "screenshot": s.screenshot_path or "",
             }
             for s in steps
         ]
@@ -116,8 +115,6 @@ class ProfessionalReportPlugin:
             session_start=self.session_start,
             output_path=_REPORT_PATH,
             environment=_ENV,
-            base_url=_BASE_URL,
-            log_level=_LOG_LEVEL,
             coverage=_COVERAGE,
             coverage_target=_COV_TARGET,
             history_path=_HISTORY_PATH,

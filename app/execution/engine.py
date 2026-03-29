@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 from playwright.sync_api import Page
@@ -141,6 +142,7 @@ class FlowRunner:
                 sr = StepResult(
                     action=action, success=False,
                     message=str(exc), layer_used=0, error=str(exc),
+                    screenshot_path=self._capture_failure_screenshot(page),
                 )
                 result.steps.append(sr)
                 result.error = sr.message
@@ -164,6 +166,18 @@ class FlowRunner:
 
         result.success = True
         return result
+
+    # ── Failure screenshot ─────────────────────────────────────────
+
+    def _capture_failure_screenshot(self, page: Page) -> str | None:
+        """Take a screenshot on step failure. Returns the file path or None."""
+        try:
+            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+            path = str(self.artifacts_dir / f"fail_{uuid.uuid4().hex[:12]}.png")
+            page.screenshot(path=path, full_page=False)
+            return path
+        except Exception:
+            return None
 
     # ── Sub-flow handling ──────────────────────────────────────────
 
@@ -239,6 +253,7 @@ class FlowRunner:
                 sr = StepResult(
                     action=sub_action, success=False,
                     message=str(exc), layer_used=0, error=str(exc),
+                    screenshot_path=self._capture_failure_screenshot(page),
                 )
                 sr.sub_flow = sub_flow.name
                 results.append(sr)
@@ -266,14 +281,32 @@ class FlowRunner:
     ) -> StepResult:
         # AI-native actions bypass L1/L2 entirely
         if action.type in AI_ONLY_ACTIONS:
+            if not self._ai.available:
+                logger.warning(
+                    f"[L3] Skipped AI action '{action.type.value}' — "
+                    "OPENAI_API_KEY is not set"
+                )
+                return StepResult(
+                    action=action, success=False,
+                    message=(
+                        f"AI action '{action.type.value}' requires OPENAI_API_KEY "
+                        "(L3 skipped: missing API key)"
+                    ),
+                    layer_used=3,
+                    error="OPENAI_API_KEY is not set",
+                    screenshot_path=self._capture_failure_screenshot(page),
+                )
             ai_result = self._ai.resolve_ai_action(action, page)
             if ai_result is not None:
+                if not ai_result.success and not ai_result.screenshot_path:
+                    ai_result.screenshot_path = self._capture_failure_screenshot(page)
                 return ai_result
             return StepResult(
                 action=action, success=False,
                 message=f"AI action failed: {action.type.value}",
                 layer_used=3,
-                error="AI resolver returned None (missing API key or LLM error)",
+                error="AI resolver returned no result",
+                screenshot_path=self._capture_failure_screenshot(page),
             )
 
         try:
@@ -285,15 +318,28 @@ class FlowRunner:
                 f"failed: {error_msg}"
             )
 
-            # Layer 3 — AI
-            ai_result = self._ai.resolve(action, page, error_msg)
-            if ai_result is not None:
-                return ai_result
+            # Layer 3 — AI fallback (only if API key is available)
+            if self._ai.available:
+                ai_result = self._ai.resolve(action, page, error_msg)
+                if ai_result is not None:
+                    if not ai_result.success and not ai_result.screenshot_path:
+                        ai_result.screenshot_path = self._capture_failure_screenshot(page)
+                    return ai_result
+                # L3 was attempted but failed
+                return StepResult(
+                    action=action, success=False,
+                    message=f"All layers failed: {error_msg}",
+                    layer_used=3,
+                    error=error_msg,
+                    screenshot_path=self._capture_failure_screenshot(page),
+                )
 
+            # L3 skipped — report as L2 failure
+            logger.info("[L3] Skipped — OPENAI_API_KEY is not set")
             return StepResult(
-                action=action,
-                success=False,
-                message=f"All layers failed: {error_msg}",
-                layer_used=3,
+                action=action, success=False,
+                message=f"L1+L2 failed (L3 skipped: missing API key): {error_msg}",
+                layer_used=2,
                 error=error_msg,
+                screenshot_path=self._capture_failure_screenshot(page),
             )

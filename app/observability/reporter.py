@@ -2,7 +2,7 @@
 Professional HTML Report Generator — v4.
 
 Design:
-  ┌ Result Distribution ┐  ┌ Code Coverage ┐  ┌ Pass Rate Trend (8 runs) ┐
+  ┌ Result Distribution ┐  ┌ Pass Rate Trend (8 runs) ┐  ┌ Code Coverage ┐
   └ Test Results table (TEST | STATUS | DURATION | FLAKINESS | DETAILS)
 
 Output files:
@@ -60,7 +60,7 @@ _SUB_FLOW_RE = re.compile(r"↳\s*\[([^\]]+)\]")
 
 def _parse_failure_details(longrepr: str) -> dict:
     if not longrepr:
-        return {"assert_msg": "", "locators": [], "short_trace": "", "steps": []}
+        return {"assert_msg": "", "locators": [], "steps": []}
     lines = longrepr.splitlines()
 
     # ── Parse steps first (✓/✗ lines) ────────────────────────────────────────
@@ -120,17 +120,7 @@ def _parse_failure_details(longrepr: str) -> dict:
                 locators.append(c)
     locators = locators[:3]
 
-    # ── Short trace — exclude step lines and their error messages ─────────────
-    trace_lines = [
-        ln for idx, ln in enumerate(lines)
-        if ln.strip()
-        and idx not in step_line_indices
-        and not ln.lstrip().startswith("E ")
-        and not ln.strip().startswith("_ ")
-    ]
-    short_trace = "\n".join(trace_lines[-5:])
-
-    return {"assert_msg": assert_msg, "locators": locators, "short_trace": short_trace, "steps": steps}
+    return {"assert_msg": assert_msg, "locators": locators, "steps": steps}
 
 
 def _parse_nodeid(nodeid: str) -> tuple[str, str, str]:
@@ -240,8 +230,7 @@ _CSS = """
 /* ── Detail steps ── */
 .det-step { font-size: 0.95rem; padding: 2px 0; word-break: break-word; line-height: 1.5; }
 .det-step-msg {
-  font-size: 0.82rem; padding: 2px 0 4px 22px;
-  border-left: 2px solid var(--qa-fail); margin-left: 8px;
+  font-size: 0.82rem; margin-left: 8px; margin-top: 4px;
 }
 
 /* ── Sub-flow (nested steps) ── */
@@ -266,27 +255,57 @@ _CSS = """
   font-weight: 600; color: var(--qa-accent, #6366f1);
 }
 .det-step-trigger i.bi { color: var(--qa-accent, #6366f1) !important; }
-.det-stacktrace-section {
+/* ── Failure screenshot ── */
+.det-screenshot-section {
   margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--bs-border-color);
 }
-
-/* ── Stacktrace code block ── */
-.det-trace {
-  font-size: 0.82rem; white-space: pre-wrap; word-break: break-word;
-  max-height: 220px; overflow-y: auto; line-height: 1.6;
-}
-.det-trace code.hljs { background: transparent; padding: 0; font-size: inherit; }
-.det-trace-shot img {
-  max-width: 220px; max-height: 150px; border-radius: 4px;
-  cursor: zoom-in; display: block; transition: transform .15s;
-}
-.det-trace-shot img:hover { transform: scale(1.03); }
-.det-trace-shot-img {
+.det-screenshot-img {
   max-width: 320px; max-height: 200px; cursor: zoom-in;
-  display: block; transition: transform .15s;
+  display: block; border-radius: 4px; transition: transform .15s;
 }
-.det-trace-shot-img:hover { transform: scale(1.03); }
+.det-screenshot-img:hover { transform: scale(1.03); }
+
+/* ── Failed step message (syntax-highlighted, dark theme) ── */
+.det-step-msg pre {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-size: 0.78rem; line-height: 1.6;
+  background: #1e1e2e; color: #cdd6f4;
+  border-radius: 6px; padding: 10px 14px;
+  border-left: 3px solid var(--qa-fail);
+}
+.det-step-msg code.hljs {
+  background: transparent; padding: 0; font-size: inherit;
+  color: inherit;
+}
+/* Force dark hljs token colors inside failed-step blocks */
+.det-step-msg .hljs-keyword { color: #cba6f7; }
+.det-step-msg .hljs-string  { color: #a6e3a1; }
+.det-step-msg .hljs-number  { color: #fab387; }
+.det-step-msg .hljs-built_in,
+.det-step-msg .hljs-type    { color: #89dceb; }
+.det-step-msg .hljs-title   { color: #89b4fa; }
+.det-step-msg .hljs-comment { color: #6c7086; font-style: italic; }
+.det-step-msg .hljs-literal { color: #fab387; }
+.det-step-msg .hljs-attr,
+.det-step-msg .hljs-attribute { color: #89b4fa; }
+.det-step-msg .hljs-params  { color: #f2cdcd; }
+.det-step-msg .hljs-punctuation { color: #9399b2; }
+
+/* ── Inline step screenshot (failed steps) ── */
+.det-step-fail-row {
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.det-step-fail-content { flex: 1; min-width: 0; }
+.det-step-fail-shot {
+  flex-shrink: 0; margin-top: 2px;
+}
+.det-step-fail-shot img {
+  width: 120px; height: auto; max-height: 80px;
+  object-fit: cover; border-radius: 4px; cursor: zoom-in;
+  transition: transform .15s;
+}
+.det-step-fail-shot img:hover { transform: scale(1.05); }
 
 /* ── Print / PDF ── */
 @media print {
@@ -421,8 +440,6 @@ document.addEventListener('DOMContentLoaded', function() {
     D.trend       = D.trend       || [];
     D.meta.project          = D.meta.project          || 'QA Web Agent';
     D.meta.environment      = D.meta.environment      || '';
-    D.meta.base_url         = D.meta.base_url         || '';
-    D.meta.log_level        = D.meta.log_level        || 'info';
     D.meta.coverage         = D.meta.coverage         != null ? D.meta.coverage         : 0;
     D.meta.coverage_target  = D.meta.coverage_target  != null ? D.meta.coverage_target  : 80;
     D.meta.generated_at     = D.meta.generated_at     || '';
@@ -689,9 +706,13 @@ function renderTable(D) {
       tr.onkeydown = function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetail(i, tr); } };
       tr.innerHTML =
         '<td>' +
-          '<div class="fw-semibold">' + escHtml(r.name) + '</div>' +
-          '<div class="text-secondary" style="font-size:.68rem">' + escHtml((r.cls || '').split('::').pop() || (r.cls || '')) + '</div>' +
-          '<div class="text-body-tertiary" style="font-size:.65rem" id="expand-hint-' + i + '"><i class="bi bi-chevron-right"></i> expand</div>' +
+          '<div class="d-flex align-items-center gap-2">' +
+            '<i class="bi bi-chevron-right text-body-tertiary flex-shrink-0" id="expand-hint-' + i + '" style="font-size:.75rem;transition:transform .15s"></i>' +
+            '<div>' +
+              '<div class="fw-semibold">' + escHtml(r.name) + '</div>' +
+              '<div class="text-secondary" style="font-size:.68rem">' + escHtml((r.cls || '').split('::').pop() || (r.cls || '')) + '</div>' +
+            '</div>' +
+          '</div>' +
         '</td>' +
         '<td>' + badge + '</td>' +
         '<td class="text-secondary" style="font-variant-numeric:tabular-nums">' + formatDur(r.duration) + '</td>' +
@@ -781,8 +802,16 @@ function buildDetailLeft(r) {
           if (gs.passed) {
             out += '<div class="det-step"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(gs.label) + gsDur + '</div>';
           } else {
+            var hasShot = gs.screenshot && gs.screenshot !== '';
+            if (hasShot) out += '<div class="det-step-fail-row">';
+            out += hasShot ? '<div class="det-step-fail-content">' : '';
             out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(gs.label) + gsDur + '</div>';
-            if (gs.msg) out += '<div class="det-step-msg text-secondary">' + escHtml(gs.msg) + '</div>';
+            if (gs.msg) out += '<div class="det-step-msg"><pre><code class="hljs">' + hljsHighlight(gs.msg) + '</code></pre></div>';
+            if (hasShot) {
+              out += '</div>';
+              out += '<div class="det-step-fail-shot"><img class="border" src="' + escHtml(gs.screenshot) + '" alt="Step failure" onclick="openLightbox(this.src)"/></div>';
+              out += '</div>';
+            }
           }
         });
         out += '</div></div>';
@@ -795,8 +824,16 @@ function buildDetailLeft(r) {
           var cls = isTrigger ? 'det-step det-step-trigger' : 'det-step';
           out += '<div class="' + cls + '"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
         } else {
+          var hasShot = s.screenshot && s.screenshot !== '';
+          if (hasShot) out += '<div class="det-step-fail-row">';
+          out += hasShot ? '<div class="det-step-fail-content">' : '';
           out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
-          if (s.msg) out += '<div class="det-step-msg text-secondary">' + escHtml(s.msg) + '</div>';
+          if (s.msg) out += '<div class="det-step-msg"><pre><code class="hljs">' + hljsHighlight(s.msg) + '</code></pre></div>';
+          if (hasShot) {
+            out += '</div>';
+            out += '<div class="det-step-fail-shot"><img class="border" src="' + escHtml(s.screenshot) + '" alt="Step failure" onclick="openLightbox(this.src)"/></div>';
+            out += '</div>';
+          }
         }
         i++;
       }
@@ -805,28 +842,15 @@ function buildDetailLeft(r) {
     out += '</div>';
   }
 
-  // Stacktrace — only show trace context (no duplicate step info)
-  if (d.short_trace) {
-    out += '<div class="det-stacktrace-section"><div class="text-uppercase text-danger fw-bold mb-1" style="font-size:.82rem;letter-spacing:.04em">Stacktrace</div>';
-    out += '<div class="d-flex gap-3 align-items-start">';
-
-    out += '<pre class="det-trace font-monospace bg-body border rounded p-2 flex-grow-1"><code class="hljs">' + hljsHighlight(d.short_trace) + '</code></pre>';
-
-    if (r.screenshot_path) {
-      out += '<div class="det-trace-shot flex-shrink-0">' +
-        '<img class="border rounded" src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/>' +
-      '</div>';
-    }
-
-    out += '</div></div>';
-  } else if (r.screenshot_path) {
-    // No trace but there is a screenshot — show it standalone
-    out += '<div class="det-stacktrace-section"><div class="text-uppercase text-danger fw-bold mb-1" style="font-size:.82rem;letter-spacing:.04em">Screenshot</div>';
-    out += '<div><img class="border rounded det-trace-shot-img" src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/></div>';
+  // Screenshot — show test-level failure screenshot only when no step has its own
+  var hasStepShots = allSteps.some(function(st) { return st.screenshot && st.screenshot !== ''; });
+  if (r.screenshot_path && !hasStepShots) {
+    out += '<div class="det-screenshot-section"><div class="text-uppercase text-danger fw-bold mb-1" style="font-size:.82rem;letter-spacing:.04em">Screenshot</div>';
+    out += '<div><img class="border rounded det-screenshot-img" src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/></div>';
     out += '</div>';
   }
 
-  if (!allSteps.length && !d.assert_msg && !d.short_trace) {
+  if (!allSteps.length && !d.assert_msg) {
     out += '<div class="text-success small"><i class="bi bi-check-circle-fill"></i> Test passed with no errors.</div>';
   }
 
@@ -842,11 +866,11 @@ function toggleDetail(i, trEl) {
   var isOpen = collapseEl.classList.contains('show');
   if (isOpen) {
     bsCollapse.hide();
-    if (hint) hint.innerHTML = '<i class="bi bi-chevron-right"></i> expand';
+    if (hint) { hint.classList.remove('bi-chevron-down'); hint.classList.add('bi-chevron-right'); }
     if (trEl) trEl.setAttribute('aria-expanded', 'false');
   } else {
     bsCollapse.show();
-    if (hint) hint.innerHTML = '<i class="bi bi-chevron-down"></i> collapse';
+    if (hint) { hint.classList.remove('bi-chevron-right'); hint.classList.add('bi-chevron-down'); }
     if (trEl) trEl.setAttribute('aria-expanded', 'true');
   }
 }
@@ -1269,7 +1293,7 @@ _HTML_SHELL = """<!DOCTYPE html>
     <!-- Summary stat cards (JS fills) -->
     <div class="row row-cols-2 row-cols-md-5 g-2 mb-3" id="stat-cards"></div>
 
-    <!-- Charts: Distribution \u00b7 Coverage \u00b7 Trend -->
+    <!-- Charts: Distribution \u00b7 Trend \u00b7 Coverage -->
     <div class="row g-3 mb-3">
       <div class="col-md-4">
         <div class="card h-100" id="card-distribution">
@@ -1280,19 +1304,19 @@ _HTML_SHELL = """<!DOCTYPE html>
         </div>
       </div>
       <div class="col-md-4">
+        <div class="card h-100" id="card-trend">
+          <div class="card-body">
+            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Pass Rate Trend \u2014 Last 8 Runs</div>
+            <div class="trend-wrap"><canvas id="trendChart" aria-label="Pass rate trend bar chart"></canvas></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
         <div class="card h-100" id="card-coverage">
           <div class="card-body">
             <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Code Coverage</div>
             <div class="cov-pie-wrap"><canvas id="coverageChart" aria-label="Coverage pie chart"></canvas></div>
             <div id="cov-info"></div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-4">
-        <div class="card h-100" id="card-trend">
-          <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Pass Rate Trend \u2014 Last 8 Runs</div>
-            <div class="trend-wrap"><canvas id="trendChart" aria-label="Pass rate trend bar chart"></canvas></div>
           </div>
         </div>
       </div>
@@ -1344,8 +1368,6 @@ def generate_report(
     output_path: Path,          # e.g. reports/staging/report.html
     project_name: str = "QA Web Agent",
     environment: str = "staging",
-    base_url: str = "",
-    log_level: str = "info",
     coverage: int = 0,
     coverage_target: int = 80,
     history_path: Path | None = None,
@@ -1369,6 +1391,10 @@ def generate_report(
         # Prefer direct flow_steps (with accurate duration) over text-parsed steps
         flow_steps = r.get("flow_steps")
         if flow_steps is not None:
+            for fs in flow_steps:
+                fs["screenshot"] = _screenshot_rel_path(
+                    fs.get("screenshot"), output_path.parent
+                )
             details["steps"] = flow_steps
         enriched.append({
             "_idx":           idx,
@@ -1397,8 +1423,6 @@ def generate_report(
         "meta": {
             "project":         project_name,
             "environment":     environment,
-            "base_url":        base_url,
-            "log_level":       log_level,
             "coverage":        coverage,
             "coverage_target": coverage_target,
             "generated_at":    gen_at,

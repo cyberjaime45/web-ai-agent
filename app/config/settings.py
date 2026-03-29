@@ -32,8 +32,6 @@ def _int(key: str, default: int) -> int:
 class Settings:
     # ── Environment ───────────────────────────────────────────────
     environment:       str  = field(default_factory=lambda: os.getenv("ENVIRONMENT", "staging"))
-    base_url:          str  = field(default_factory=lambda: os.getenv("BASE_URL", ""))
-    log_level:         str  = field(default_factory=lambda: os.getenv("LOG_LEVEL", "info"))
 
     # ── Execution mode ────────────────────────────────────────────
     running_mode:      str  = field(default_factory=lambda: os.getenv("RUNNING_MODE", "local"))

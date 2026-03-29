@@ -840,14 +840,12 @@ Copy `.env.example` to `.env`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENVIRONMENT` | `staging` | Report output directory (`reports/<ENVIRONMENT>/`) |
-| `BASE_URL` | — | Optional base URL override |
 | `RUNNING_MODE` | `local` | `local` or `lambda` (LambdaTest cloud) |
 | `BROWSER` | `chromium` | `chromium`, `firefox`, or `webkit` |
 | `HEADLESS` | `true` | `true` or `false` |
 | `SLOW_MO` | `0` | Milliseconds between actions |
 | `OPENAI_API_KEY` | — | Enables Layer 3 AI resolver and AI-native actions |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Model used for L3 and AI-native actions |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warning`, or `error` |
 | `COVERAGE` | `0` | `1` to enable coverage tracking in report |
 | `COVERAGE_TARGET` | `80` | Coverage % target shown in report |
 | `THEME_STYLE` | `system` | Report theme: `light`, `dark`, or `system` |

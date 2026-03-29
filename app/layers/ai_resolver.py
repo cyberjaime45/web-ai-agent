@@ -43,10 +43,15 @@ def _get_page_text(page: Page) -> str:
 class AIResolver:
     """Layer 3: LLM-based element resolution as a last resort."""
 
+    @property
+    def available(self) -> bool:
+        """Return True only when a non-empty OPENAI_API_KEY is configured."""
+        key = os.getenv("OPENAI_API_KEY", "").strip()
+        return bool(key)
+
     def resolve(self, action: FlowAction, page: Page, error: str) -> StepResult | None:
         """Ask the LLM for an alternative locator. Returns StepResult or None."""
-        if not os.getenv("OPENAI_API_KEY"):
-            logger.warning("[L3] Skipped — no OPENAI_API_KEY")
+        if not self.available:
             return None
 
         try:
@@ -97,8 +102,7 @@ class AIResolver:
         self, action: FlowAction, page: Page
     ) -> StepResult | None:
         """Handle AI-native actions (ai_click, ai_extract, ai_assert, ai_summarize)."""
-        if not os.getenv("OPENAI_API_KEY"):
-            logger.warning("[L3] Skipped AI action — no OPENAI_API_KEY")
+        if not self.available:
             return None
 
         action_key = action.type.value  # e.g. "ai_click"
