@@ -25,6 +25,7 @@ from app.schemas.actions import (
     ActionType,
     FlowAction,
     FlowResult,
+    RunContext,
     StepResult,
 )
 from app.flow.parser import parse_flow_file, resolve_flow_path
@@ -112,7 +113,8 @@ class FlowRunner:
         Stops on the first failed step.
         """
         result = FlowResult(flow_name=flow.name)
-        runner = DeterministicRunner(page, artifacts_dir=self.artifacts_dir)
+        ctx = RunContext()
+        runner = DeterministicRunner(page, artifacts_dir=self.artifacts_dir, ctx=ctx)
 
         if not flow.actions:
             result.error = "No parsed actions — check flow file format"
@@ -121,7 +123,7 @@ class FlowRunner:
         for action in flow.actions:
             # ── Sub-flow execution ──
             if action.type == ActionType.RUN_FLOW:
-                sub_results = self._run_sub_flow(action, page, runner)
+                sub_results = self._run_sub_flow(action, page, runner, ctx)
                 for sr in sub_results:
                     result.steps.append(sr)
                     if sr.screenshot_path:
@@ -149,9 +151,12 @@ class FlowRunner:
                 return result
 
             t0 = time.monotonic()
-            step_result = self._run_step(resolved, page, runner)
+            step_result = self._run_step(resolved, page, runner, ctx)
             step_result.duration = round(time.monotonic() - t0, 3)
             result.steps.append(step_result)
+
+            # Record step in short-term memory
+            ctx.record(action, step_result, page.url, page.title())
 
             if step_result.screenshot_path:
                 result.last_screenshot = step_result.screenshot_path
@@ -173,10 +178,14 @@ class FlowRunner:
         """Take a screenshot on step failure. Returns the file path or None."""
         try:
             self.artifacts_dir.mkdir(parents=True, exist_ok=True)
-            path = str(self.artifacts_dir / f"fail_{uuid.uuid4().hex[:12]}.png")
+            path = str(
+                self.artifacts_dir.resolve() / f"fail_{uuid.uuid4().hex[:12]}.png"
+            )
             page.screenshot(path=path, full_page=False)
+            logger.debug(f"[Screenshot] Captured failure screenshot: {path}")
             return path
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"[Screenshot] Failed to capture screenshot: {exc}")
             return None
 
     # ── Sub-flow handling ──────────────────────────────────────────
@@ -186,6 +195,7 @@ class FlowRunner:
         action: FlowAction,
         page: Page,
         runner: DeterministicRunner,
+        ctx: RunContext,
     ) -> list[StepResult]:
         """Resolve and execute a referenced sub-flow, returning its StepResults."""
         ref = action.args[0]
@@ -196,6 +206,7 @@ class FlowRunner:
                 action=action, success=False,
                 message=f"Max nesting depth ({_MAX_NESTING_DEPTH}) exceeded for '{ref}'",
                 layer_used=0,
+                screenshot_path=self._capture_failure_screenshot(page),
             )]
 
         # Circular dependency check
@@ -204,6 +215,7 @@ class FlowRunner:
                 action=action, success=False,
                 message=f"Circular flow reference detected: '{ref}'",
                 layer_used=0,
+                screenshot_path=self._capture_failure_screenshot(page),
             )]
 
         # Resolve and parse
@@ -215,6 +227,7 @@ class FlowRunner:
                 action=action, success=False,
                 message=f"Failed to load sub-flow '{ref}': {exc}",
                 layer_used=0, error=str(exc),
+                screenshot_path=self._capture_failure_screenshot(page),
             )]
 
         logger.info(
@@ -236,7 +249,7 @@ class FlowRunner:
         for sub_action in sub_flow.actions:
             # Support nested run_flow
             if sub_action.type == ActionType.RUN_FLOW:
-                nested = self._run_sub_flow(sub_action, page, runner)
+                nested = self._run_sub_flow(sub_action, page, runner, ctx)
                 for sr in nested:
                     sr.sub_flow = sr.sub_flow or sub_flow.name
                     results.append(sr)
@@ -260,10 +273,14 @@ class FlowRunner:
                 break
 
             t0 = time.monotonic()
-            sr = self._run_step(resolved, page, runner)
+            sr = self._run_step(resolved, page, runner, ctx)
             sr.duration = round(time.monotonic() - t0, 3)
             sr.sub_flow = sub_flow.name
             results.append(sr)
+
+            # Record sub-flow step in short-term memory
+            ctx.record(sub_action, sr, page.url, page.title())
+
             if not sr.success:
                 break
 
@@ -278,6 +295,7 @@ class FlowRunner:
         action: FlowAction,
         page: Page,
         runner: DeterministicRunner,
+        ctx: RunContext,
     ) -> StepResult:
         # AI-native actions bypass L1/L2 entirely
         if action.type in AI_ONLY_ACTIONS:
@@ -296,7 +314,7 @@ class FlowRunner:
                     error="OPENAI_API_KEY is not set",
                     screenshot_path=self._capture_failure_screenshot(page),
                 )
-            ai_result = self._ai.resolve_ai_action(action, page)
+            ai_result = self._ai.resolve_ai_action(action, page, ctx)
             if ai_result is not None:
                 if not ai_result.success and not ai_result.screenshot_path:
                     ai_result.screenshot_path = self._capture_failure_screenshot(page)
@@ -320,12 +338,26 @@ class FlowRunner:
 
             # Layer 3 — AI fallback (only if API key is available)
             if self._ai.available:
-                ai_result = self._ai.resolve(action, page, error_msg)
+                ai_result = self._ai.resolve(action, page, error_msg, ctx)
                 if ai_result is not None:
                     if not ai_result.success and not ai_result.screenshot_path:
                         ai_result.screenshot_path = self._capture_failure_screenshot(page)
                     return ai_result
-                # L3 was attempted but failed
+
+                # Single re-prompt with enriched context
+                enriched = (
+                    f"{error_msg}\n"
+                    f"L3 first attempt returned no match. "
+                    f"Page URL: {page.url}, Title: {page.title()}"
+                )
+                logger.debug("[L3] Re-prompting with enriched context")
+                ai_retry = self._ai.resolve(action, page, enriched, ctx)
+                if ai_retry is not None:
+                    if not ai_retry.success and not ai_retry.screenshot_path:
+                        ai_retry.screenshot_path = self._capture_failure_screenshot(page)
+                    return ai_retry
+
+                # Both L3 attempts failed
                 return StepResult(
                     action=action, success=False,
                     message=f"All layers failed: {error_msg}",

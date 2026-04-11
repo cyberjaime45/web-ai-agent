@@ -13,12 +13,13 @@ import os
 from pathlib import Path
 from typing import Callable
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
-from app.schemas.actions import ActionType, FlowAction, StepResult
+from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
 from app.layers.locator import FallbackLocator, _is_selector
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "images"
+_DISMISS_BLOCKERS = os.getenv("DISMISS_BLOCKERS", "false").strip().lower() == "true"
 
 
 class DeterministicRunner:
@@ -30,13 +31,45 @@ class DeterministicRunner:
     # truly missing.  The page's default_timeout (30s) is preserved for
     # explicit waits and assertions.
     _L1_TIMEOUT = 5000
+    _MAX_L1_RETRIES = 2
+    _RETRY_PAUSE_MS = 500
 
-    def __init__(self, page: Page, artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR):
+    # Common selectors for blocking UI elements (modals, banners, overlays)
+    _BLOCKER_SELECTORS = [
+        '[class*="cookie" i]',
+        '[id*="cookie" i]',
+        '[class*="consent" i]',
+        '[id*="consent" i]',
+        '.modal.show',
+        '[role="dialog"][aria-modal="true"]',
+        '[class*="overlay" i]:not([style*="display: none"])',
+        '[class*="popup" i]',
+        '[class*="banner" i][class*="accept" i]',
+    ]
+
+    # Dismiss button selectors tried inside a detected blocker
+    _DISMISS_SELECTORS = [
+        'button:has-text("Accept")',
+        'button:has-text("OK")',
+        'button:has-text("Close")',
+        'button:has-text("Got it")',
+        'button:has-text("Dismiss")',
+        '[aria-label="Close"]',
+        'button:has-text("×")',
+    ]
+
+    def __init__(
+        self,
+        page: Page,
+        artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR,
+        ctx: RunContext | None = None,
+    ):
         self.page = page
         self.artifacts_dir = Path(artifacts_dir)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._locator = FallbackLocator()
         self._shot_counter = 0
+        self._ctx = ctx
 
         # ── L1 dispatch table ──────────────────────────────────────
         self._l1_handlers: dict[ActionType, Callable[[FlowAction], StepResult]] = {
@@ -112,15 +145,61 @@ class DeterministicRunner:
             ActionType.SCROLL:          self._l2_scroll,
         }
 
+    # ── Blocker dismissal ────────────────────────────────────────
+
+    def _dismiss_blockers(self) -> None:
+        """Detect and dismiss common blocking UI elements (modals, banners)."""
+        for selector in self._BLOCKER_SELECTORS:
+            try:
+                blocker = self.page.locator(selector).first
+                if blocker.count() == 0 or not blocker.is_visible():
+                    continue
+            except Exception:
+                continue
+
+            # Try dismiss buttons inside the blocker
+            for dismiss in self._DISMISS_SELECTORS:
+                try:
+                    btn = blocker.locator(dismiss).first
+                    if btn.count() > 0 and btn.is_visible():
+                        btn.click(timeout=2000)
+                        logger.info(f"[L1] Dismissed blocker: {selector} via {dismiss}")
+                        self.page.wait_for_timeout(300)
+                        return
+                except Exception:
+                    continue
+
+            # No dismiss button found — try Escape key
+            try:
+                self.page.keyboard.press("Escape")
+                logger.info(f"[L1] Dismissed blocker: {selector} via Escape")
+                self.page.wait_for_timeout(300)
+                return
+            except Exception:
+                continue
+
     # ── Public entry point ────────────────────────────────────────
 
     def execute(self, action: FlowAction) -> StepResult:
-        """Execute action with Layer 1; auto-fallback to Layer 2 on failure."""
-        try:
-            return self._layer1(action)
-        except (PlaywrightTimeout, AssertionError, Exception) as exc:
-            logger.debug(f"[L1] Step {action.step_num} failed: {exc}")
-            return self._layer2(action, original_error=str(exc))
+        """Execute action with Layer 1 (bounded retry); auto-fallback to Layer 2."""
+        last_exc: Exception | None = None
+
+        for attempt in range(1, self._MAX_L1_RETRIES + 1):
+            try:
+                if _DISMISS_BLOCKERS:
+                    self._dismiss_blockers()
+                return self._layer1(action)
+            except (PlaywrightTimeout, AssertionError, Exception) as exc:
+                last_exc = exc
+                if attempt < self._MAX_L1_RETRIES:
+                    logger.debug(
+                        f"[L1] Step {action.step_num} attempt {attempt} failed, "
+                        f"retrying in {self._RETRY_PAUSE_MS}ms: {exc}"
+                    )
+                    self.page.wait_for_timeout(self._RETRY_PAUSE_MS)
+
+        logger.debug(f"[L1] Step {action.step_num} failed after {self._MAX_L1_RETRIES} attempts: {last_exc}")
+        return self._layer2(action, original_error=str(last_exc))
 
     # ── Layer 1 — dispatch ────────────────────────────────────────
 
@@ -321,6 +400,9 @@ class DeterministicRunner:
         row = self.page.locator(f'tr:has-text("{text}")').first
         row.wait_for(state="visible", timeout=5000)
         cells = row.locator("td, th").all_text_contents()
+        cell_str = " | ".join(cells)
+        if self._ctx is not None:
+            self._ctx.store(f"row_{text}", cell_str)
         return self._ok(action, f"Row [{text}]: {cells}", 1)
 
     def _h_table_click(self, action: FlowAction) -> StepResult:
@@ -347,11 +429,15 @@ class DeterministicRunner:
     def _h_count_elements(self, action: FlowAction) -> StepResult:
         selector = action.args[0]
         count = self.page.locator(selector).count()
+        if self._ctx is not None:
+            self._ctx.store(f"count_{selector}", str(count))
         return self._ok(action, f'Count("{selector}") = {count}', 1)
 
     def _h_get_attribute(self, action: FlowAction) -> StepResult:
         selector, attr_name = action.args[0], action.args[1]
         value = self.page.locator(selector).first.get_attribute(attr_name)
+        if self._ctx is not None and value is not None:
+            self._ctx.store(f"attr_{attr_name}", value)
         return self._ok(action, f'{selector}[{attr_name}] = "{value}"', 1)
 
     # ── L1 handlers: Assertions ───────────────────────────────────
@@ -494,42 +580,42 @@ class DeterministicRunner:
     def _l2_click(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_clickable(self.page, action.args[0])
         if loc:
-            loc.click()
+            loc.click(timeout=self._L1_TIMEOUT)
             return self._ok(action, f"[L2] Clicked '{action.args[0]}'", 2)
         return None
 
     def _l2_double_click(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_clickable(self.page, action.args[0])
         if loc:
-            loc.dblclick()
+            loc.dblclick(timeout=self._L1_TIMEOUT)
             return self._ok(action, f'[L2] Double-clicked "{action.args[0]}"', 2)
         return None
 
     def _l2_right_click(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_clickable(self.page, action.args[0])
         if loc:
-            loc.click(button="right")
+            loc.click(button="right", timeout=self._L1_TIMEOUT)
             return self._ok(action, f'[L2] Right-clicked "{action.args[0]}"', 2)
         return None
 
     def _l2_hover(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_clickable(self.page, action.args[0])
         if loc:
-            loc.hover()
+            loc.hover(timeout=self._L1_TIMEOUT)
             return self._ok(action, f'[L2] Hovered "{action.args[0]}"', 2)
         return None
 
     def _l2_fill(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_input(self.page, action.args[0])
         if loc:
-            loc.fill(action.args[1] if len(action.args) > 1 else "")
+            loc.fill(action.args[1] if len(action.args) > 1 else "", timeout=self._L1_TIMEOUT)
             return self._ok(action, f"[L2] Filled '{action.args[0]}'", 2)
         return None
 
     def _l2_type(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_input(self.page, action.args[0])
         if loc:
-            loc.press_sequentially(action.args[1] if len(action.args) > 1 else "")
+            loc.press_sequentially(action.args[1] if len(action.args) > 1 else "", timeout=self._L1_TIMEOUT)
             return self._ok(action, f"[L2] Typed into '{action.args[0]}'", 2)
         return None
 
@@ -537,31 +623,31 @@ class DeterministicRunner:
         loc = self._locator.resolve_input(self.page, action.args[0])
         if loc:
             if action.type == ActionType.CLEAR:
-                loc.fill("")
+                loc.fill("", timeout=self._L1_TIMEOUT)
                 return self._ok(action, f'[L2] Cleared "{action.args[0]}"', 2)
             else:
-                loc.focus()
+                loc.focus(timeout=self._L1_TIMEOUT)
                 return self._ok(action, f'[L2] Focused "{action.args[0]}"', 2)
         return None
 
     def _l2_select(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_input(self.page, action.args[0])
         if loc:
-            loc.select_option(action.args[1] if len(action.args) > 1 else "")
+            loc.select_option(action.args[1] if len(action.args) > 1 else "", timeout=self._L1_TIMEOUT)
             return self._ok(action, f"[L2] Selected in '{action.args[0]}'", 2)
         return None
 
     def _l2_check(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_checkbox(self.page, action.args[0])
         if loc:
-            loc.check()
+            loc.check(timeout=self._L1_TIMEOUT)
             return self._ok(action, f"[L2] Checked '{action.args[0]}'", 2)
         return None
 
     def _l2_uncheck(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_checkbox(self.page, action.args[0])
         if loc:
-            loc.uncheck()
+            loc.uncheck(timeout=self._L1_TIMEOUT)
             return self._ok(action, f"[L2] Unchecked '{action.args[0]}'", 2)
         return None
 
@@ -569,7 +655,7 @@ class DeterministicRunner:
         src = self._locator.resolve_clickable(self.page, action.args[0])
         dst = self._locator.resolve_clickable(self.page, action.args[1])
         if src and dst:
-            src.drag_to(dst)
+            src.drag_to(dst, timeout=self._L1_TIMEOUT)
             return self._ok(action, f'[L2] Dragged "{action.args[0]}" to "{action.args[1]}"', 2)
         return None
 

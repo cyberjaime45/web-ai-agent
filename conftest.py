@@ -343,8 +343,6 @@ class FlowItem(pytest.Item):
 
             # Record steps for the report (both pass and fail)
             plugin = self.config.pluginmanager.get_plugin("professional_report")
-            if plugin and result.steps:
-                plugin.record_steps(self.nodeid, result.steps)
 
             # Take a fresh failure screenshot while the browser is still open.
             if not result.success:
@@ -356,8 +354,19 @@ class FlowItem(pytest.Item):
                 except Exception:
                     pass  # best-effort; don't block test reporting
 
+                # Backfill: ensure the last failing step always has a screenshot.
+                # The engine may have failed to capture one (page navigating, etc.).
+                if result.last_screenshot:
+                    for s in reversed(result.steps):
+                        if not s.success and not s.screenshot_path:
+                            s.screenshot_path = result.last_screenshot
+                            break
+
                 if result.last_screenshot and plugin:
                     plugin.record_screenshot(self.nodeid, result.last_screenshot)
+
+            if plugin and result.steps:
+                plugin.record_steps(self.nodeid, result.steps)
 
             # Report pass/fail status to LambdaTest
             _set_lambdatest_status(page, result.success, result.error)

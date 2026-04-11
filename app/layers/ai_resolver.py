@@ -19,7 +19,7 @@ import os
 
 from playwright.sync_api import Page
 
-from app.schemas.actions import ActionType, FlowAction, StepResult
+from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
 from app.agent.prompts.resolver import (
     SYSTEM as _SYSTEM,
     USER_TEMPLATE as _USER_TMPL,
@@ -49,7 +49,13 @@ class AIResolver:
         key = os.getenv("OPENAI_API_KEY", "").strip()
         return bool(key)
 
-    def resolve(self, action: FlowAction, page: Page, error: str) -> StepResult | None:
+    def resolve(
+        self,
+        action: FlowAction,
+        page: Page,
+        error: str,
+        ctx: RunContext | None = None,
+    ) -> StepResult | None:
         """Ask the LLM for an alternative locator. Returns StepResult or None."""
         if not self.available:
             return None
@@ -65,6 +71,18 @@ class AIResolver:
                 args=action.args,
                 error=error,
             )
+
+            # Enrich prompt with recent execution history
+            if ctx and ctx.history:
+                recent = ctx.recent_history(5)
+                history_lines = [
+                    f"  - {h['action']}({h['target']}) → {h['result']} [L{h['layer']}]"
+                    for h in recent
+                ]
+                user_msg += (
+                    "\n\nRecent execution history (last steps):\n"
+                    + "\n".join(history_lines)
+                )
 
             resp = client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -99,7 +117,10 @@ class AIResolver:
             return None
 
     def resolve_ai_action(
-        self, action: FlowAction, page: Page
+        self,
+        action: FlowAction,
+        page: Page,
+        ctx: RunContext | None = None,
     ) -> StepResult | None:
         """Handle AI-native actions (ai_click, ai_extract, ai_assert, ai_summarize)."""
         if not self.available:
@@ -125,6 +146,18 @@ class AIResolver:
                 target=target,
             )
 
+            # Enrich prompt with recent execution history
+            if ctx and ctx.history:
+                recent = ctx.recent_history(5)
+                history_lines = [
+                    f"  - {h['action']}({h['target']}) → {h['result']} [L{h['layer']}]"
+                    for h in recent
+                ]
+                user_msg += (
+                    "\n\nRecent execution history (last steps):\n"
+                    + "\n".join(history_lines)
+                )
+
             resp = client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=[
@@ -140,6 +173,11 @@ class AIResolver:
             if action.type == ActionType.AI_CLICK:
                 return self._handle_ai_click(action, page, raw_response)
             elif action.type == ActionType.AI_EXTRACT:
+                # Store extracted data in short-term memory
+                if ctx is not None:
+                    ctx.store("last_extract", raw_response)
+                    if target:
+                        ctx.store(f"extract_{target}", raw_response)
                 return StepResult(
                     action=action, success=True,
                     message=f"[L3] Extracted: {raw_response}", layer_used=3,

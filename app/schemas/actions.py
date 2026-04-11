@@ -148,6 +148,47 @@ class FlowAction:
 
 
 @dataclass
+class RunContext:
+    """Per-run short-term memory — tracks execution state across steps.
+
+    Scoped to a single FlowRunner.run() call. Reset between executions.
+    No cross-test leakage: each run creates a fresh instance.
+    """
+    history: list[dict[str, str]] = field(default_factory=list)
+    data:    dict[str, str] = field(default_factory=dict)
+    current_url:   str = ""
+    current_title: str = ""
+    step_index:    int = 0
+
+    def record(
+        self,
+        action: "FlowAction",
+        result: "StepResult",
+        url: str,
+        title: str,
+    ) -> None:
+        """Append a step to history and update page state."""
+        self.history.append({
+            "action": action.type.value,
+            "target": action.args[0] if action.args else "",
+            "result": "pass" if result.success else "fail",
+            "layer":  str(result.layer_used),
+            "url":    url,
+        })
+        self.current_url = url
+        self.current_title = title
+        self.step_index += 1
+
+    def store(self, key: str, value: str) -> None:
+        """Store extracted data for use by subsequent steps."""
+        self.data[key] = value
+
+    def recent_history(self, n: int = 5) -> list[dict[str, str]]:
+        """Return the last *n* steps for context summaries."""
+        return self.history[-n:]
+
+
+@dataclass
 class StepResult:
     action:          FlowAction
     success:         bool

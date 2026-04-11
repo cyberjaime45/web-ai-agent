@@ -25,7 +25,9 @@ Resolution order for checkboxes / radios:
 from __future__ import annotations
 
 import logging
+import time
 from difflib import SequenceMatcher
+from typing import Callable
 
 from playwright.sync_api import Locator, Page
 
@@ -62,62 +64,70 @@ def _is_selector(s: str) -> bool:
 class FallbackLocator:
     """Resolves element locators with progressively looser strategies."""
 
+    _RESOLVE_TIMEOUT_S = 5.0    # max seconds to poll for element appearance
+    _POLL_INTERVAL_MS  = 200    # ms between poll cycles
+
     def resolve_clickable(self, page: Page, target: str) -> Locator | None:
-        # CSS / XPath selector shortcut
         if _is_selector(target):
             return self._try(lambda: page.locator(target))
-        for strategy in (
+        return self._resolve_with_poll(page, [
             lambda: page.get_by_role("button", name=target),
             lambda: page.get_by_role("link",   name=target),
             lambda: page.get_by_text(target, exact=True),
             lambda: page.get_by_text(target),
             lambda: self._fuzzy_clickable(page, target),
-        ):
-            loc = self._try(strategy)
-            if loc is not None:
-                return loc
-        return None
+        ])
 
     def resolve_input(self, page: Page, target: str) -> Locator | None:
-        # CSS / XPath selector shortcut
         if _is_selector(target):
             return self._try(lambda: page.locator(target))
-        for strategy in (
+        return self._resolve_with_poll(page, [
             lambda: page.get_by_label(target),
             lambda: page.get_by_placeholder(target),
             lambda: page.get_by_role("textbox", name=target, exact=True),
             lambda: page.get_by_role("textbox", name=target),
             lambda: self._fuzzy_input(page, target),
-        ):
-            loc = self._try(strategy)
-            if loc is not None:
-                return loc
-        return None
+        ])
 
     def resolve_checkbox(self, page: Page, target: str) -> Locator | None:
-        """Resolve a checkbox or radio element by label or role."""
-        for strategy in (
+        return self._resolve_with_poll(page, [
             lambda: page.get_by_label(target),
             lambda: page.get_by_role("checkbox", name=target),
             lambda: page.get_by_role("radio", name=target),
-        ):
-            loc = self._try(strategy)
-            if loc is not None:
-                return loc
-        return None
+        ])
 
     def resolve_table_row(self, page: Page, text: str) -> Locator | None:
-        """Resolve a table row containing the given text."""
-        for strategy in (
+        return self._resolve_with_poll(page, [
             lambda: page.locator(f'tr:has-text("{text}")'),
             lambda: page.locator(f'[role="row"]:has-text("{text}")'),
-        ):
-            loc = self._try(strategy)
-            if loc is not None:
-                return loc
-        return None
+        ])
 
     # ── helpers ───────────────────────────────────────────────────────────
+
+    def _resolve_with_poll(
+        self,
+        page: Page,
+        strategies: list[Callable],
+    ) -> Locator | None:
+        """Cycle through strategies with bounded polling.
+
+        First pass is instant (no wait). If nothing is found, polls at
+        short intervals until the element appears or the timeout expires.
+        This catches elements rendered after AJAX or animations without
+        adding delay when the element already exists.
+        """
+        deadline = time.monotonic() + self._RESOLVE_TIMEOUT_S
+
+        while True:
+            for strategy in strategies:
+                loc = self._try(strategy)
+                if loc is not None:
+                    return loc
+
+            if time.monotonic() >= deadline:
+                return None
+
+            page.wait_for_timeout(self._POLL_INTERVAL_MS)
 
     @staticmethod
     def _try(strategy) -> Locator | None:
