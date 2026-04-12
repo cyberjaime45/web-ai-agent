@@ -145,6 +145,7 @@ class FlowAction:
     args:     list[str]
     raw:      str = ""   # original step text, for error messages
     step_num: int = 0
+    section:  str = ""   # ## heading this action belongs to (empty for legacy "Steps")
 
 
 @dataclass

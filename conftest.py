@@ -68,24 +68,31 @@ class ProfessionalReportPlugin:
 
     def record_steps(self, nodeid: str, steps: list) -> None:
         """Serialize FlowResult.steps for the report (both pass and fail)."""
-        self.flow_steps[nodeid] = [
-            {
-                "label": self._step_label(s),
+        # Compute section-local step numbers (reset per section)
+        section_counters: dict[str, int] = {}
+        serialized: list[dict] = []
+        for s in steps:
+            sec = s.action.section or ""
+            section_counters[sec] = section_counters.get(sec, 0) + 1
+            local_num = section_counters[sec]
+            serialized.append({
+                "label": self._step_label(s, local_num),
                 "passed": s.success,
                 "msg": "" if s.success else s.message,
                 "duration": s.duration,
                 "sub_flow": s.sub_flow,
+                "section": sec,
                 "screenshot": s.screenshot_path or "",
-            }
-            for s in steps
-        ]
+            })
+        self.flow_steps[nodeid] = serialized
 
     @staticmethod
-    def _step_label(s) -> str:
+    def _step_label(s, local_num: int = 0) -> str:
         """Build a display label for a step, with sub-flow prefix when nested."""
+        num = local_num or s.action.step_num
         layer = f"[L{s.layer_used}{'' if s.success else ' FAIL'}]"
         prefix = f"\u21b3 [{s.sub_flow}]  " if s.sub_flow else ""
-        return f"Step {s.action.step_num:>2} {layer}  {prefix}{s.action.raw}"
+        return f"Step {num:>2} {layer}  {prefix}{s.action.raw}"
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when == "call" or (report.when == "setup" and report.failed):

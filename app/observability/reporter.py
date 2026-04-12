@@ -233,6 +233,16 @@ _CSS = """
   font-size: 0.82rem; margin-left: 8px; margin-top: 4px;
 }
 
+/* ── Section groups ── */
+.det-section-group { margin: 8px 0 4px 0; }
+.det-section-header {
+  font-size: 0.78rem; font-weight: 700; letter-spacing: .04em;
+  color: var(--bs-body-color); margin-bottom: 4px; padding: 4px 0;
+  border-bottom: 1px solid var(--bs-border-color);
+  display: flex; align-items: center; gap: 6px;
+}
+.det-section-header .bi-window-stack { font-size: 0.75rem; color: var(--qa-accent, #6366f1); }
+.det-section-body { padding-left: 4px; }
 /* ── Sub-flow (nested steps) ── */
 .det-subflow-group {
   margin: 6px 0 6px 18px; padding: 8px 12px;
@@ -768,76 +778,101 @@ function buildDetailLeft(r) {
   // Steps — show ALL steps (pass and fail) with duration, grouped by sub-flow
   var allSteps = d.steps || [];
   if (allSteps.length) {
-    out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">Steps</div>';
+    out += '<div>';
 
-    // Group consecutive sub-flow steps together
-    var i = 0;
-    while (i < allSteps.length) {
-      var s = allSteps[i];
-      var sf = s.sub_flow || '';
-
-      if (sf) {
-        // Collect all consecutive steps belonging to this sub-flow
-        var groupName = sf;
-        var groupSteps = [];
-        while (i < allSteps.length && (allSteps[i].sub_flow || '') === groupName) {
-          groupSteps.push(allSteps[i]);
-          i++;
-        }
-        var groupPassed = groupSteps.every(function(gs) { return gs.passed; });
-        var groupDur = groupSteps.reduce(function(sum, gs) { return sum + (gs.duration || 0); }, 0);
-        var groupDurTag = groupDur ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(groupDur) + '</span>' : '';
-        var groupIcon = groupPassed
-          ? '<i class="bi bi-check-circle-fill text-success me-1"></i>'
-          : '<i class="bi bi-x-circle-fill text-danger me-1"></i>';
-        var sfId = 'sf-' + Math.random().toString(36).slice(2, 8);
-
-        out += '<div class="det-subflow-group">';
-        out += '<div class="det-subflow-header" onclick="var b=this.nextElementSibling;b.classList.toggle(\'hide\');this.classList.toggle(\'collapsed\')">';
-        out += groupIcon + ' <i class="bi bi-chevron-down"></i> <span>run_flow: ' + escHtml(groupName) + '</span>' + groupDurTag;
-        out += '</div>';
-        out += '<div class="det-subflow-body">';
-        groupSteps.forEach(function(gs) {
-          var gsDur = gs.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(gs.duration) + '</span>' : '';
-          if (gs.passed) {
-            out += '<div class="det-step"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(gs.label) + gsDur + '</div>';
-          } else {
-            var hasShot = gs.screenshot && gs.screenshot !== '';
-            if (hasShot) out += '<div class="det-step-fail-row">';
-            out += hasShot ? '<div class="det-step-fail-content">' : '';
-            out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(gs.label) + gsDur + '</div>';
-            if (gs.msg) out += '<div class="det-step-msg"><pre><code class="hljs">' + hljsHighlight(gs.msg) + '</code></pre></div>';
-            if (hasShot) {
-              out += '</div>';
-              out += '<div class="det-step-fail-shot"><img class="border" src="' + escHtml(gs.screenshot) + '" alt="Step failure" onclick="openLightbox(this.src)"/></div>';
-              out += '</div>';
-            }
-          }
-        });
-        out += '</div></div>';
+    // ── Helper: render a single step (pass or fail) ──
+    function renderStep(s) {
+      var html = '';
+      var durTag = s.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(s.duration) + '</span>' : '';
+      var isTrigger = s.label && s.label.indexOf('run_flow') !== -1;
+      if (s.passed) {
+        var cls = isTrigger ? 'det-step det-step-trigger' : 'det-step';
+        html += '<div class="' + cls + '"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
       } else {
-        // Regular top-level step
-        var durTag = s.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(s.duration) + '</span>' : '';
-        // Style the run_flow trigger step differently
-        var isTrigger = s.label && s.label.indexOf('run_flow') !== -1;
-        if (s.passed) {
-          var cls = isTrigger ? 'det-step det-step-trigger' : 'det-step';
-          out += '<div class="' + cls + '"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
-        } else {
-          var hasShot = s.screenshot && s.screenshot !== '';
-          if (hasShot) out += '<div class="det-step-fail-row">';
-          out += hasShot ? '<div class="det-step-fail-content">' : '';
-          out += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
-          if (s.msg) out += '<div class="det-step-msg"><pre><code class="hljs">' + hljsHighlight(s.msg) + '</code></pre></div>';
-          if (hasShot) {
-            out += '</div>';
-            out += '<div class="det-step-fail-shot"><img class="border" src="' + escHtml(s.screenshot) + '" alt="Step failure" onclick="openLightbox(this.src)"/></div>';
-            out += '</div>';
-          }
+        var hasShot = s.screenshot && s.screenshot !== '';
+        if (hasShot) html += '<div class="det-step-fail-row">';
+        html += hasShot ? '<div class="det-step-fail-content">' : '';
+        html += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
+        if (s.msg) html += '<div class="det-step-msg"><pre><code class="hljs">' + hljsHighlight(s.msg) + '</code></pre></div>';
+        if (hasShot) {
+          html += '</div>';
+          html += '<div class="det-step-fail-shot"><img class="border" src="' + escHtml(s.screenshot) + '" alt="Step failure" onclick="openLightbox(this.src)"/></div>';
+          html += '</div>';
         }
-        i++;
       }
+      return html;
     }
+
+    // ── Helper: render a sub-flow group ──
+    function renderSubFlowGroup(steps) {
+      var html = '';
+      var groupPassed = steps.every(function(gs) { return gs.passed; });
+      var groupDur = steps.reduce(function(sum, gs) { return sum + (gs.duration || 0); }, 0);
+      var groupDurTag = groupDur ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(groupDur) + '</span>' : '';
+      var groupIcon = groupPassed
+        ? '<i class="bi bi-check-circle-fill text-success me-1"></i>'
+        : '<i class="bi bi-x-circle-fill text-danger me-1"></i>';
+      html += '<div class="det-subflow-group">';
+      html += '<div class="det-subflow-header" onclick="var b=this.nextElementSibling;b.classList.toggle(\'hide\');this.classList.toggle(\'collapsed\')">';
+      html += groupIcon + ' <i class="bi bi-chevron-down"></i> <span>run_flow: ' + escHtml(steps[0].sub_flow) + '</span>' + groupDurTag;
+      html += '</div>';
+      html += '<div class="det-subflow-body">';
+      steps.forEach(function(gs) { html += renderStep(gs); });
+      html += '</div></div>';
+      return html;
+    }
+
+    // ── Build section groups — sub-flow steps stay in the parent section ──
+    var sectionGroups = [];
+    var curSection = null;
+    allSteps.forEach(function(s) {
+      // Sub-flow steps inherit the current section — their own section
+      // comes from the sub-flow's markdown and would cause false breaks.
+      var sec = s.sub_flow ? curSection : (s.section || '');
+      if (sec !== curSection) {
+        sectionGroups.push({ name: sec, steps: [] });
+        curSection = sec;
+      }
+      sectionGroups[sectionGroups.length - 1].steps.push(s);
+    });
+
+    // Show section headers when there are multiple distinct sections,
+    // or when the single section isn't the default "Steps" name.
+    var distinctSections = {};
+    sectionGroups.forEach(function(g) { if (g.name) distinctSections[g.name] = true; });
+    var showSections = Object.keys(distinctSections).length > 1
+      || (Object.keys(distinctSections).length === 1 && !distinctSections['Steps']);
+
+    sectionGroups.forEach(function(group) {
+      if (showSections && group.name) {
+        var secDur = group.steps.reduce(function(sum, s) { return sum + (s.duration || 0); }, 0);
+        var secDurTag = secDur ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(secDur) + '</span>' : '';
+        out += '<div class="det-section-group">';
+        out += '<div class="det-section-header"><i class="bi bi-window-stack"></i> ' + escHtml(group.name) + secDurTag + '</div>';
+        out += '<div class="det-section-body">';
+      }
+
+      var j = 0;
+      while (j < group.steps.length) {
+        var s = group.steps[j];
+        if (s.sub_flow) {
+          var subSteps = [];
+          var subName = s.sub_flow;
+          while (j < group.steps.length && group.steps[j].sub_flow === subName) {
+            subSteps.push(group.steps[j]);
+            j++;
+          }
+          out += renderSubFlowGroup(subSteps);
+        } else {
+          out += renderStep(s);
+          j++;
+        }
+      }
+
+      if (showSections && group.name) {
+        out += '</div></div>';
+      }
+    });
 
     out += '</div>';
   }
@@ -1169,26 +1204,48 @@ async function exportPDF() {
         pdf.text(r.name.substring(0, 65), MG + 6, y + 3);
         y += 7;
 
-        // 2. Failure details — failed step from parsed steps
-        var failStep = (r.details && r.details.steps)
-          ? r.details.steps.filter(function(s) { return !s.passed; })[0]
-          : null;
+        // 2. Failure details — steps grouped by section
+        var pdfSteps = (r.details && r.details.steps) ? r.details.steps : [];
+        if (pdfSteps.length > 0) {
+          var curPdfSec = null;
+          // Detect distinct top-level sections (ignore sub-flow sections)
+          var pdfSecs = {};
+          pdfSteps.forEach(function(ps) {
+            if (!ps.sub_flow && ps.section) pdfSecs[ps.section] = true;
+          });
+          var showPdfSec = Object.keys(pdfSecs).length > 1
+            || (Object.keys(pdfSecs).length === 1 && !pdfSecs['Steps']);
 
-        if (failStep) {
-          var stepLine = pdf.splitTextToSize('\u2717 ' + failStep.label, CW);
-          pdf.setFont('courier', 'bold');
-          pdf.setFontSize(7);
-          pdf.setTextColor(...T.fail);
-          pdf.text(stepLine.slice(0, 2), MG, y);
-          y += stepLine.slice(0, 2).length * 3.8;
-          if (failStep.msg) {
-            var msgLine = pdf.splitTextToSize('  ' + failStep.msg, CW - 4);
-            pdf.setFont('courier', 'normal');
+          pdfSteps.forEach(function(ps) {
+            // Sub-flow steps stay in the current section
+            var sec = ps.sub_flow ? curPdfSec : (ps.section || '');
+            if (showPdfSec && sec && sec !== curPdfSec) {
+              curPdfSec = sec;
+              if (y + 6 > 275) { newPage(); y = 14; }
+              pdf.setFont('helvetica', 'bold');
+              pdf.setFontSize(7);
+              pdf.setTextColor(...T.accent);
+              pdf.text('\u25b8 ' + curPdfSec, MG, y);
+              y += 4;
+            }
+            if (y + 5 > 275) { newPage(); y = 14; }
+            var icon = ps.passed ? '\u2713' : '\u2717';
+            var indent = ps.sub_flow ? 6 : 2;
+            var stepLine = pdf.splitTextToSize(icon + ' ' + ps.label, CW - indent - 2);
+            pdf.setFont('courier', ps.passed ? 'normal' : 'bold');
             pdf.setFontSize(6.5);
-            pdf.setTextColor(...T.text2);
-            pdf.text(msgLine.slice(0, 3), MG + 2, y);
-            y += msgLine.slice(0, 3).length * 3.5;
-          }
+            pdf.setTextColor(ps.passed ? T.text2 : T.fail);
+            pdf.text(stepLine.slice(0, 2), MG + indent, y);
+            y += stepLine.slice(0, 2).length * 3.2;
+            if (!ps.passed && ps.msg) {
+              var msgLine = pdf.splitTextToSize('  ' + ps.msg, CW - indent - 4);
+              pdf.setFont('courier', 'normal');
+              pdf.setFontSize(6);
+              pdf.setTextColor(...T.text2);
+              pdf.text(msgLine.slice(0, 3), MG + indent + 2, y);
+              y += msgLine.slice(0, 3).length * 3;
+            }
+          });
           y += 2;
         } else if (r.details && r.details.assert_msg) {
           var msgLines = pdf.splitTextToSize('\u2717 ' + r.details.assert_msg, CW);

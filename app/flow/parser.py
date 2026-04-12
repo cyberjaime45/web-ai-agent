@@ -60,6 +60,13 @@ class FlowDefinition:
 
 # ── Section extraction ────────────────────────────────────────────────────────
 
+# Sections reserved for metadata — NOT treated as action sections.
+_METADATA_SECTIONS = frozenset({
+    "config", "credentials", "expected outcome", "error scenarios", "notes",
+})
+
+_H2_RE = re.compile(r"(?:^|\n)##\s+(.+?)\s*(?=\n)", re.MULTILINE)
+
 
 def _section_items(text: str, header: str) -> list[str]:
     """
@@ -76,6 +83,11 @@ def _section_items(text: str, header: str) -> list[str]:
         return []
 
     section_text = m.group(1)
+    return _items_from_section(section_text)
+
+
+def _items_from_section(section_text: str) -> list[str]:
+    """Extract list-item texts from already-isolated section content."""
     tokens = _md.parse(section_text)
 
     items: list[str] = []
@@ -87,6 +99,31 @@ def _section_items(text: str, header: str) -> list[str]:
             in_item = False
         elif token.type == "inline" and in_item and token.content.strip():
             items.append(token.content.strip())
+
+    return items
+
+
+def _all_action_sections(text: str) -> list[tuple[str, str]]:
+    """Return ``(section_name, item_text)`` pairs from all non-metadata sections.
+
+    Any ``## <heading>`` that is not in ``_METADATA_SECTIONS`` is treated as
+    an action section.  This allows flow authors to use descriptive section
+    names like ``## Login``, ``## FMS MCV Page``, or ``## Steps``.
+    """
+    headers = [(m.start(), m.group(1).strip()) for m in _H2_RE.finditer(text)]
+    if not headers:
+        return []
+
+    items: list[tuple[str, str]] = []
+    for idx, (start, heading) in enumerate(headers):
+        if heading.lower() in _METADATA_SECTIONS:
+            continue
+        # Extract content between this heading and the next (or EOF)
+        content_start = text.index("\n", start) + 1
+        content_end = headers[idx + 1][0] if idx + 1 < len(headers) else len(text)
+        section_text = text[content_start:content_end]
+        for item in _items_from_section(section_text):
+            items.append((heading, item))
 
     return items
 
@@ -296,11 +333,12 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
         elif m_plain:
             flow.credentials[m_plain.group(1).lower()] = m_plain.group(2).strip()
 
-    # ── Steps ────────────────────────────────────────────────────
-    for raw in _section_items(text, "Steps"):
+    # ── Steps — extract from all non-metadata ## sections ──────
+    for section_name, raw in _all_action_sections(text):
         flow.steps.append(raw)
         action = _parse_action(raw, step_num=len(flow.steps))
         if action:
+            action.section = section_name
             flow.actions.append(action)
 
     # ── Expected Outcome / Error Scenarios / Notes ────────────────

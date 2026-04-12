@@ -92,6 +92,7 @@ def _resolve_env_placeholders(action: FlowAction) -> FlowAction:
         args=resolved_args,
         raw=masked_raw,
         step_num=action.step_num,
+        section=action.section,
     )
 
 

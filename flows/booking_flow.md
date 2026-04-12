@@ -12,7 +12,7 @@
 - click: "One way"
 - type: "Enter airport, city or ZIP" | "KBOS"
 - click_link_text: "Boston Logan International"
-- type: "Enter airport, city or ZIP" | "KACK"
+- type: "Enter airport, city or ZIP" | "KMMU"
 - click: "Morristown Municipal"
 <!-- Number of passengers -->
 - click: "button[tabindex='0'][type='button'][aria-label='+']"
