@@ -715,6 +715,6 @@ class DeterministicRunner:
     def _screenshot(self, name: str) -> str:
         self._shot_counter += 1
         safe = name.replace("/", "_").replace(" ", "_")
-        path = self.artifacts_dir / f"{self._shot_counter:03d}_{safe}.png"
+        path = self.artifacts_dir.resolve() / f"{self._shot_counter:03d}_{safe}.png"
         self.page.screenshot(path=str(path), full_page=False)
         return str(path)

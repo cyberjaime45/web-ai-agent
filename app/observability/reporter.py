@@ -189,6 +189,25 @@ _CSS = """
   --chart-bg:    var(--bs-body-bg);
 }
 
+/* ── Typography scale (centralized, rem-based) ── */
+:root {
+  --fs-xs:   0.75rem;   /* 12px — micro labels, uppercase caps, metadata */
+  --fs-sm:   0.85rem;  /* 14px — body, step rows, messages */
+  --fs-md:   1rem;      /* 16px — default body, section headers */
+  --fs-lg:   1.25rem;   /* 20px — stat card values, emphasized numbers */
+  --fs-xl:   1.5rem;    /* 24px — page/section titles */
+  --fs-2xl:  2rem;      /* 32px — hero icons */
+  --lh-tight: 1.3;
+  --lh-base:  1.5;
+  --lh-loose: 1.6;
+}
+.qa-fs-xs  { font-size: var(--fs-xs)  !important; }
+.qa-fs-sm  { font-size: var(--fs-sm)  !important; }
+.qa-fs-md  { font-size: var(--fs-md)  !important; }
+.qa-fs-lg  { font-size: var(--fs-lg)  !important; }
+.qa-fs-xl  { font-size: var(--fs-xl)  !important; }
+.qa-fs-2xl { font-size: var(--fs-2xl) !important; }
+
 /* ── Ensure [hidden] always wins ── */
 [hidden] { display: none !important; }
 
@@ -200,11 +219,11 @@ _CSS = """
   width: 50px; height: 38px; border-radius: 8px;
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 800; font-size: 1rem; flex-shrink: 0;
+  color: #fff; font-weight: 800; font-size: var(--fs-md); flex-shrink: 0;
 }
 
 /* ── Stat card value colours ── */
-.stat-value { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+.stat-value { font-size: var(--fs-lg); font-weight: 800; line-height: 1; }
 .stat-value.blue   { color: #6366f1; }
 .stat-value.green  { color: var(--qa-pass); }
 .stat-value.red    { color: var(--qa-fail); }
@@ -228,20 +247,20 @@ _CSS = """
 .row-thumb:hover { opacity: .85; transform: scale(1.04); }
 
 /* ── Detail steps ── */
-.det-step { font-size: 0.95rem; padding: 2px 0; word-break: break-word; line-height: 1.5; }
+.det-step { font-size: var(--fs-sm); padding: 2px 0; word-break: break-word; line-height: var(--lh-base); }
 .det-step-msg {
-  font-size: 0.82rem; margin-left: 8px; margin-top: 4px;
+  font-size: var(--fs-sm); margin-left: 8px; margin-top: 4px;
 }
 
 /* ── Section groups ── */
 .det-section-group { margin: 8px 0 4px 0; }
 .det-section-header {
-  font-size: 0.78rem; font-weight: 700; letter-spacing: .04em;
+  font-size: var(--fs-sm); font-weight: 700; letter-spacing: .04em;
   color: var(--bs-body-color); margin-bottom: 4px; padding: 4px 0;
   border-bottom: 1px solid var(--bs-border-color);
   display: flex; align-items: center; gap: 6px;
 }
-.det-section-header .bi-window-stack { font-size: 0.75rem; color: var(--qa-accent, #6366f1); }
+.det-section-header .bi-window-stack { font-size: var(--fs-xs); color: var(--qa-accent, #6366f1); }
 .det-section-body { padding-left: 4px; }
 /* ── Sub-flow (nested steps) ── */
 .det-subflow-group {
@@ -251,12 +270,12 @@ _CSS = """
   background: color-mix(in srgb, var(--qa-accent, #6366f1) 6%, transparent);
 }
 .det-subflow-header {
-  font-size: 0.78rem; font-weight: 600; letter-spacing: .04em;
+  font-size: var(--fs-sm); font-weight: 600; letter-spacing: .04em;
   color: var(--qa-accent, #6366f1); margin-bottom: 4px;
   display: flex; align-items: center; gap: 6px; cursor: pointer;
   user-select: none;
 }
-.det-subflow-header .bi { font-size: 0.7rem; transition: transform .15s; }
+.det-subflow-header .bi { font-size: var(--fs-xs); transition: transform .15s; }
 .det-subflow-header.collapsed .bi-chevron-down { transform: rotate(-90deg); }
 .det-subflow-header:hover { opacity: .8; }
 .det-subflow-body { padding-left: 4px; }
@@ -279,7 +298,7 @@ _CSS = """
 /* ── Failed step message (syntax-highlighted, dark theme) ── */
 .det-step-msg pre {
   margin: 0; white-space: pre-wrap; word-break: break-word;
-  font-size: 0.78rem; line-height: 1.6;
+  font-size: var(--fs-sm); line-height: var(--lh-loose);
   background: #1e1e2e; color: #cdd6f4;
   border-radius: 6px; padding: 10px 14px;
   border-left: 3px solid var(--qa-fail);
@@ -302,20 +321,20 @@ _CSS = """
 .det-step-msg .hljs-params  { color: #f2cdcd; }
 .det-step-msg .hljs-punctuation { color: #9399b2; }
 
-/* ── Inline step screenshot (failed steps) ── */
-.det-step-fail-row {
+/* ── Inline step screenshots ── */
+.det-step-fail-row, .det-step-shot-row {
   display: flex; align-items: flex-start; gap: 12px;
 }
 .det-step-fail-content { flex: 1; min-width: 0; }
-.det-step-fail-shot {
+.det-step-fail-shot, .det-step-shot {
   flex-shrink: 0; margin-top: 2px;
 }
-.det-step-fail-shot img {
+.det-step-fail-shot img, .det-step-shot img {
   width: 120px; height: auto; max-height: 80px;
   object-fit: cover; border-radius: 4px; cursor: zoom-in;
   transition: transform .15s;
 }
-.det-step-fail-shot img:hover { transform: scale(1.05); }
+.det-step-fail-shot img:hover, .det-step-shot img:hover { transform: scale(1.05); }
 
 /* ── Print / PDF ── */
 @media print {
@@ -490,7 +509,7 @@ function renderHeader(D) {
     '</div>' +
     '<div class="flex-grow-1"></div>' +
     '<div class="d-flex gap-2 align-items-center">' +
-      '<span class="text-body-tertiary" style="font-size:.72rem">' + escHtml(m.generated_at) + '</span>' +
+      '<span class="qa-fs-xs text-body-tertiary">' + escHtml(m.generated_at) + '</span>' +
       '<button class="btn btn-outline-secondary btn-sm" id="theme-btn" onclick="cycleTheme()" aria-label="Toggle color theme"><i class="bi bi-circle-half"></i> System</button>' +
       '<button class="btn btn-primary btn-sm" id="pdf-btn" onclick="exportPDF()" aria-label="Export report as PDF"><i class="bi bi-file-earmark-pdf"></i> Export PDF</button>' +
     '</div>';
@@ -512,7 +531,7 @@ function renderSummary(D) {
   ];
   el.innerHTML = cards.map(function(c) {
     return '<div class="col"><div class="card h-100"><div class="card-body p-2">' +
-      '<div class="text-uppercase text-body-tertiary fw-bold" style="font-size:.65rem;letter-spacing:.08em">' + escHtml(c.label) + '</div>' +
+      '<div class="qa-fs-xs text-uppercase text-body-tertiary fw-bold" style="letter-spacing:.08em">' + escHtml(c.label) + '</div>' +
       '<div class="stat-value ' + c.color + '">' + escHtml(String(c.value)) + '</div>' +
     '</div></div></div>';
   }).join('');
@@ -700,9 +719,9 @@ function renderTable(D) {
           'alt="Failure screenshot — click to expand" ' +
           'title="Click row to expand failure details" />';
       } else if (oc !== 'passed') {
-        detailCell = '<span class="d-inline-flex align-items-center justify-content-center border border-dashed rounded bg-body-secondary text-body-tertiary" style="width:60px;height:36px;font-size:.65rem;line-height:1.2">no<br>shot</span>';
+        detailCell = '<span class="qa-fs-xs d-inline-flex align-items-center justify-content-center border border-dashed rounded bg-body-secondary text-body-tertiary" style="width:60px;height:36px;line-height:1.2">no<br>shot</span>';
       } else {
-        detailCell = '<span class="text-success small"><i class="bi bi-check-circle-fill"></i> All assertions passed</span>';
+        detailCell = '<span class="text-success small"><i class="bi bi-check-circle-fill"></i></span>';
       }
 
       // Main row
@@ -717,10 +736,10 @@ function renderTable(D) {
       tr.innerHTML =
         '<td>' +
           '<div class="d-flex align-items-center gap-2">' +
-            '<i class="bi bi-chevron-right text-body-tertiary flex-shrink-0" id="expand-hint-' + i + '" style="font-size:.75rem;transition:transform .15s"></i>' +
+            '<i class="bi bi-chevron-right qa-fs-xs text-body-tertiary flex-shrink-0" id="expand-hint-' + i + '" style="transition:transform .15s"></i>' +
             '<div>' +
-              '<div class="fw-semibold">' + escHtml(r.name) + '</div>' +
-              '<div class="text-secondary" style="font-size:.68rem">' + escHtml((r.cls || '').split('::').pop() || (r.cls || '')) + '</div>' +
+              '<div class="qa-fs-sm">' + escHtml(r.name) + '</div>' +
+              '<div class="qa-fs-xs text-secondary">' + escHtml((r.cls || '').split('::').pop() || (r.cls || '')) + '</div>' +
             '</div>' +
           '</div>' +
         '</td>' +
@@ -772,7 +791,7 @@ function buildDetailLeft(r) {
 
   // "What failed" — error message banner
   if (d.assert_msg) {
-    out += '<div><div class="text-uppercase text-body-tertiary fw-bold mb-1" style="font-size:.65rem;letter-spacing:.08em">What failed</div><div class="text-danger fw-medium" style="font-size:.78rem;word-break:break-word">' + escHtml(d.assert_msg) + '</div></div>';
+    out += '<div><div class="qa-fs-xs text-uppercase text-body-tertiary fw-bold mb-1" style="letter-spacing:.08em">What failed</div><div class="qa-fs-sm text-danger fw-medium" style="word-break:break-word">' + escHtml(d.assert_msg) + '</div></div>';
   }
 
   // Steps — show ALL steps (pass and fail) with duration, grouped by sub-flow
@@ -783,13 +802,18 @@ function buildDetailLeft(r) {
     // ── Helper: render a single step (pass or fail) ──
     function renderStep(s) {
       var html = '';
-      var durTag = s.duration ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(s.duration) + '</span>' : '';
+      var hasShot = s.screenshot && s.screenshot !== '';
+      var durTag = s.duration ? ' <span class="qa-fs-xs text-body-tertiary fw-normal">' + formatDur(s.duration) + '</span>' : '';
       var isTrigger = s.label && s.label.indexOf('run_flow') !== -1;
       if (s.passed) {
         var cls = isTrigger ? 'det-step det-step-trigger' : 'det-step';
+        if (hasShot) html += '<div class="det-step-shot-row">';
         html += '<div class="' + cls + '"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
+        if (hasShot) {
+          html += '<div class="det-step-shot"><img class="border" src="' + escHtml(s.screenshot) + '" alt="Step screenshot" onclick="openLightbox(this.src)"/></div>';
+          html += '</div>';
+        }
       } else {
-        var hasShot = s.screenshot && s.screenshot !== '';
         if (hasShot) html += '<div class="det-step-fail-row">';
         html += hasShot ? '<div class="det-step-fail-content">' : '';
         html += '<div class="det-step text-danger fw-semibold"><i class="bi bi-x-circle-fill text-danger me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
@@ -808,7 +832,7 @@ function buildDetailLeft(r) {
       var html = '';
       var groupPassed = steps.every(function(gs) { return gs.passed; });
       var groupDur = steps.reduce(function(sum, gs) { return sum + (gs.duration || 0); }, 0);
-      var groupDurTag = groupDur ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(groupDur) + '</span>' : '';
+      var groupDurTag = groupDur ? ' <span class="qa-fs-xs text-body-tertiary fw-normal">' + formatDur(groupDur) + '</span>' : '';
       var groupIcon = groupPassed
         ? '<i class="bi bi-check-circle-fill text-success me-1"></i>'
         : '<i class="bi bi-x-circle-fill text-danger me-1"></i>';
@@ -846,7 +870,7 @@ function buildDetailLeft(r) {
     sectionGroups.forEach(function(group) {
       if (showSections && group.name) {
         var secDur = group.steps.reduce(function(sum, s) { return sum + (s.duration || 0); }, 0);
-        var secDurTag = secDur ? ' <span class="text-body-tertiary fw-normal" style="font-size:.75rem">' + formatDur(secDur) + '</span>' : '';
+        var secDurTag = secDur ? ' <span class="qa-fs-xs text-body-tertiary fw-normal">' + formatDur(secDur) + '</span>' : '';
         out += '<div class="det-section-group">';
         out += '<div class="det-section-header"><i class="bi bi-window-stack"></i> ' + escHtml(group.name) + secDurTag + '</div>';
         out += '<div class="det-section-body">';
@@ -880,7 +904,7 @@ function buildDetailLeft(r) {
   // Screenshot — show test-level failure screenshot only when no step has its own
   var hasStepShots = allSteps.some(function(st) { return st.screenshot && st.screenshot !== ''; });
   if (r.screenshot_path && !hasStepShots) {
-    out += '<div class="det-screenshot-section"><div class="text-uppercase text-danger fw-bold mb-1" style="font-size:.82rem;letter-spacing:.04em">Screenshot</div>';
+    out += '<div class="det-screenshot-section"><div class="qa-fs-sm text-uppercase text-danger fw-bold mb-1" style="letter-spacing:.04em">Screenshot</div>';
     out += '<div><img class="border rounded det-screenshot-img" src="' + escHtml(r.screenshot_path) + '" alt="Failure screenshot" onclick="openLightbox(this.src)"/></div>';
     out += '</div>';
   }
@@ -1335,7 +1359,7 @@ _HTML_SHELL = """<!DOCTYPE html>
 
   <!-- Error state -->
   <div id="error-state" hidden class="d-flex flex-column align-items-center justify-content-center gap-3 py-5 text-center" aria-live="assertive">
-    <div style="font-size:2.5rem"><i class="bi bi-exclamation-triangle text-warning"></i></div>
+    <div class="qa-fs-2xl"><i class="bi bi-exclamation-triangle text-warning"></i></div>
     <h2 class="fs-5 text-danger">Report data unavailable</h2>
     <p class="text-secondary" id="error-detail" style="max-width:480px"></p>
     <div class="alert alert-warning small" style="max-width:480px">
@@ -1355,7 +1379,7 @@ _HTML_SHELL = """<!DOCTYPE html>
       <div class="col-md-4">
         <div class="card h-100" id="card-distribution">
           <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Result Distribution</div>
+            <div class="qa-fs-xs text-uppercase text-body-tertiary fw-bold mb-2" style="letter-spacing:.1em">Result Distribution</div>
             <div class="dist-donut-wrap"><canvas id="donutChart" aria-label="Result distribution donut chart"></canvas></div>
           </div>
         </div>
@@ -1363,7 +1387,7 @@ _HTML_SHELL = """<!DOCTYPE html>
       <div class="col-md-4">
         <div class="card h-100" id="card-trend">
           <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Pass Rate Trend \u2014 Last 8 Runs</div>
+            <div class="qa-fs-xs text-uppercase text-body-tertiary fw-bold mb-2" style="letter-spacing:.1em">Pass Rate Trend \u2014 Last 8 Runs</div>
             <div class="trend-wrap"><canvas id="trendChart" aria-label="Pass rate trend bar chart"></canvas></div>
           </div>
         </div>
@@ -1371,7 +1395,7 @@ _HTML_SHELL = """<!DOCTYPE html>
       <div class="col-md-4">
         <div class="card h-100" id="card-coverage">
           <div class="card-body">
-            <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Code Coverage</div>
+            <div class="qa-fs-xs text-uppercase text-body-tertiary fw-bold mb-2" style="letter-spacing:.1em">Code Coverage</div>
             <div class="cov-pie-wrap"><canvas id="coverageChart" aria-label="Coverage pie chart"></canvas></div>
             <div id="cov-info"></div>
           </div>
@@ -1382,12 +1406,12 @@ _HTML_SHELL = """<!DOCTYPE html>
     <!-- Test Results -->
     <div class="card mb-3" id="card-results">
       <div class="card-body">
-        <div class="text-uppercase text-body-tertiary fw-bold mb-2" style="font-size:.68rem;letter-spacing:.1em">Test Results</div>
+        <div class="qa-fs-xs text-uppercase text-body-tertiary fw-bold mb-2" style="letter-spacing:.1em">Test Results</div>
         <div class="table-responsive">
           <table class="table table-hover align-middle mb-0" role="table">
             <thead>
-              <tr class="text-uppercase text-body-tertiary" style="font-size:.66rem;letter-spacing:.08em">
-                <th scope="col" style="width:28%">Test</th>
+              <tr class="qa-fs-xs text-uppercase text-body-tertiary" style="letter-spacing:.08em">
+                <th scope="col" style="width:55%">Test</th>
                 <th scope="col" style="width:11%">Status</th>
                 <th scope="col" style="width:9%">Duration</th>
                 <th scope="col" style="width:8%">Flakiness</th>
