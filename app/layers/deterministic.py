@@ -460,8 +460,6 @@ class DeterministicRunner:
             loc = self.page.locator(target)
         else:
             loc = self.page.get_by_text(target, exact=False)
-        if loc.count() == 0:
-            raise AssertionError(f'Element "{target}" is not visible.')
         loc.first.wait_for(state="visible", timeout=5000)
         return self._ok(action, f'Element "{target}" is visible', 1)
 
@@ -490,8 +488,7 @@ class DeterministicRunner:
             loc = self.page.get_by_role("button", name=target)
             if loc.count() == 0:
                 loc = self.page.get_by_text(target, exact=True)
-        if loc.count() == 0:
-            raise AssertionError(f'Element "{target}" not found.')
+        loc.first.wait_for(state="visible", timeout=5000)
         if loc.first.is_disabled():
             raise AssertionError(f'Element "{target}" is disabled.')
         return self._ok(action, f'Element "{target}" is enabled', 1)
@@ -504,8 +501,7 @@ class DeterministicRunner:
             loc = self.page.get_by_role("button", name=target)
             if loc.count() == 0:
                 loc = self.page.get_by_text(target, exact=True)
-        if loc.count() == 0:
-            raise AssertionError(f'Element "{target}" not found.')
+        loc.first.wait_for(state="visible", timeout=5000)
         if not loc.first.is_disabled():
             raise AssertionError(f'Element "{target}" is enabled (expected disabled).')
         return self._ok(action, f'Element "{target}" is disabled', 1)
@@ -518,8 +514,7 @@ class DeterministicRunner:
             loc = self.page.get_by_label(target, exact=True)
             if loc.count() == 0:
                 loc = self.page.get_by_role("checkbox", name=target, exact=True)
-        if loc.count() == 0:
-            raise AssertionError(f'Checkbox "{target}" not found.')
+        loc.first.wait_for(state="visible", timeout=5000)
         if not loc.first.is_checked():
             raise AssertionError(f'Checkbox "{target}" is not checked.')
         return self._ok(action, f'Checkbox "{target}" is checked', 1)

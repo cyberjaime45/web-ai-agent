@@ -199,6 +199,7 @@ class StepResult:
     screenshot_path: Optional[str] = None
     error:           Optional[str] = None
     duration:        float = 0.0      # seconds
+    skipped:         bool = False     # True when step was skipped due to a prior section failure
 
 
 @dataclass
@@ -215,4 +216,8 @@ class FlowResult:
 
     @property
     def failed(self) -> int:
-        return sum(1 for s in self.steps if not s.success)
+        return sum(1 for s in self.steps if not s.success and not s.skipped)
+
+    @property
+    def skipped(self) -> int:
+        return sum(1 for s in self.steps if s.skipped)

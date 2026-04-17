@@ -96,6 +96,10 @@ def _resolve_env_placeholders(action: FlowAction) -> FlowAction:
     )
 
 
+def _append_error(result, msg: str) -> None:
+    result.error = f"{result.error}\n{msg}" if result.error else msg
+
+
 class FlowRunner:
     def __init__(
         self,
@@ -111,7 +115,8 @@ class FlowRunner:
     def run(self, flow, page: Page) -> FlowResult:
         """
         Execute all actions in *flow* against *page*.
-        Stops on the first failed step.
+        Each section (## heading) is independent: a failure stops the remaining
+        steps in that section but execution resumes at the next section boundary.
         """
         result = FlowResult(flow_name=flow.name)
         ctx = RunContext()
@@ -121,7 +126,19 @@ class FlowRunner:
             result.error = "No parsed actions — check flow file format"
             return result
 
+        current_section: str | None = None
+        section_failed = False
+
         for action in flow.actions:
+            # ── Section boundary: reset failure flag for fresh section ──
+            if action.section != current_section:
+                current_section = action.section
+                section_failed = False
+
+            # ── Silently skip remaining steps in a failed section ──
+            if section_failed:
+                continue
+
             # ── Sub-flow execution ──
             if action.type == ActionType.RUN_FLOW:
                 sub_results = self._run_sub_flow(action, page, runner, ctx)
@@ -130,15 +147,15 @@ class FlowRunner:
                     if sr.screenshot_path:
                         result.last_screenshot = sr.screenshot_path
                     if not sr.success:
-                        result.error = sr.message
+                        _append_error(result, sr.message)
                         logger.error(
                             f"Flow '{flow.name}' failed in sub-flow at step "
                             f"{sr.action.step_num}: {sr.action.raw!r} — {sr.message}"
                         )
-                        return result
+                        section_failed = True
                 continue
 
-            # Resolve env var placeholders before execution
+            # ── Resolve env var placeholders before execution ──
             try:
                 resolved = _resolve_env_placeholders(action)
             except RuntimeError as exc:
@@ -148,29 +165,28 @@ class FlowRunner:
                     screenshot_path=self._capture_failure_screenshot(page),
                 )
                 result.steps.append(sr)
-                result.error = sr.message
-                return result
+                _append_error(result, str(exc))
+                section_failed = True
+                continue
 
             t0 = time.monotonic()
             step_result = self._run_step(resolved, page, runner, ctx)
             step_result.duration = round(time.monotonic() - t0, 3)
             result.steps.append(step_result)
-
-            # Record step in short-term memory
             ctx.record(action, step_result, page.url, page.title())
 
             if step_result.screenshot_path:
                 result.last_screenshot = step_result.screenshot_path
 
             if not step_result.success:
-                result.error = step_result.message
+                _append_error(result, step_result.message)
                 logger.error(
                     f"Flow '{flow.name}' failed at step {action.step_num}: "
                     f"{resolved.raw!r} — {step_result.message}"
                 )
-                return result
+                section_failed = True
 
-        result.success = True
+        result.success = result.failed == 0
         return result
 
     # ── Failure screenshot ─────────────────────────────────────────

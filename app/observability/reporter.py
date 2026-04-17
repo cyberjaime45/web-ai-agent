@@ -48,79 +48,42 @@ def _duration_str(seconds: float) -> str:
     return f"{m}m {s}s" if s else f"{m}m"
 
 
-_LOCATOR_RE = re.compile(
-    r"(get_by_role|get_by_label|get_by_text|get_by_placeholder|"
-    r"locator\(|fill_input|click_link|open_page|"
-    r"fill\(|click\(|goto\()"
-)
-
 _STEP_RE = re.compile(r"^\s+([✓✗])\s+(Step\s+\d+\s+\[L\d+[^\]]*\]\s+.+?)(?:\s+\((\d+(?:\.\d+)?(?:ms|s))\))?\s*$")
 _SUB_FLOW_RE = re.compile(r"↳\s*\[([^\]]+)\]")
 
 
 def _parse_failure_details(longrepr: str) -> dict:
     if not longrepr:
-        return {"assert_msg": "", "locators": [], "steps": []}
+        return {"steps": []}
     lines = longrepr.splitlines()
 
-    # ── Parse steps first (✓/✗ lines) ────────────────────────────────────────
     steps: list[dict] = []
-    step_line_indices: set[int] = set()
     for idx, ln in enumerate(lines):
         m = _STEP_RE.match(ln)
-        if m:
-            passed = m.group(1) == "✓"
-            label = m.group(2).strip()
-            msg = ""
-            dur = 0.0
-            # Parse duration from group 3: "123ms" or "1.23s"
-            dur_str = m.group(3)
-            if dur_str:
-                if dur_str.endswith("ms"):
-                    dur = float(dur_str[:-2]) / 1000
-                elif dur_str.endswith("s"):
-                    dur = float(dur_str[:-1])
-            step_line_indices.add(idx)
-            if not passed and idx + 1 < len(lines):
-                nxt = lines[idx + 1]
-                if nxt.strip() and not _STEP_RE.match(nxt):
-                    msg = nxt.strip()
-                    step_line_indices.add(idx + 1)
-            sub_flow_m = _SUB_FLOW_RE.search(label)
-            sub_flow = sub_flow_m.group(1) if sub_flow_m else ""
-            steps.append({"label": label, "passed": passed, "msg": msg, "duration": round(dur, 3), "sub_flow": sub_flow})
+        if not m:
+            continue
+        passed = m.group(1) == "✓"
+        label = m.group(2).strip()
+        msg = ""
+        dur = 0.0
+        dur_str = m.group(3)
+        if dur_str:
+            if dur_str.endswith("ms"):
+                dur = float(dur_str[:-2]) / 1000
+            elif dur_str.endswith("s"):
+                dur = float(dur_str[:-1])
+        if not passed and idx + 1 < len(lines):
+            nxt = lines[idx + 1]
+            if nxt.strip() and not _STEP_RE.match(nxt):
+                msg = nxt.strip()
+        sub_flow_m = _SUB_FLOW_RE.search(label)
+        steps.append({
+            "label": label, "passed": passed, "msg": msg,
+            "duration": round(dur, 3),
+            "sub_flow": sub_flow_m.group(1) if sub_flow_m else "",
+        })
 
-    # ── Assert message ────────────────────────────────────────────────────────
-    # 1) Try E-prefixed lines (standard pytest failures)
-    e_lines = [ln.lstrip("E").strip() for ln in lines if ln.lstrip().startswith("E ")]
-    assert_msg = e_lines[-1] if e_lines else ""
-    # 2) Try "Flow '...' failed" header (custom flow failures)
-    if not assert_msg:
-        for ln in lines:
-            s = ln.strip()
-            if s.startswith("Flow ") and "failed" in s:
-                assert_msg = s
-                break
-    # 3) Fallback to common error prefixes
-    if not assert_msg:
-        for ln in reversed(lines):
-            s = ln.strip()
-            if any(s.startswith(x) for x in ("AssertionError", "TimeoutError", "Error:", "assert ")):
-                assert_msg = s
-                break
-    if len(assert_msg) > 260:
-        assert_msg = assert_msg[:257] + "…"
-
-    # ── Locators ──────────────────────────────────────────────────────────────
-    locators: list[str] = []
-    for ln in lines:
-        if _LOCATOR_RE.search(ln):
-            c = ln.strip()
-            if c and c not in locators:
-                locators.append(c)
-    locators = locators[:3]
-
-    return {"assert_msg": assert_msg, "locators": locators, "steps": steps}
+    return {"steps": steps}
 
 
 def _parse_nodeid(nodeid: str) -> tuple[str, str, str]:
@@ -260,7 +223,7 @@ _CSS = """
   border-bottom: 1px solid var(--bs-border-color);
   display: flex; align-items: center; gap: 6px;
 }
-.det-section-header .bi-window-stack { font-size: var(--fs-xs); color: var(--qa-accent, #6366f1); }
+.det-section-header .bi-collection { font-size: var(--fs-sm); }
 .det-section-body { padding-left: 4px; }
 /* ── Sub-flow (nested steps) ── */
 .det-subflow-group {
@@ -789,23 +752,20 @@ function buildDetailLeft(r) {
   let out = '<div class="d-flex flex-column gap-2">';
   const d = r.details || {};
 
-  // "What failed" — error message banner
-  if (d.assert_msg) {
-    out += '<div><div class="qa-fs-xs text-uppercase text-body-tertiary fw-bold mb-1" style="letter-spacing:.08em">What failed</div><div class="qa-fs-sm text-danger fw-medium" style="word-break:break-word">' + escHtml(d.assert_msg) + '</div></div>';
-  }
-
   // Steps — show ALL steps (pass and fail) with duration, grouped by sub-flow
   var allSteps = d.steps || [];
   if (allSteps.length) {
     out += '<div>';
 
-    // ── Helper: render a single step (pass or fail) ──
+    // ── Helper: render a single step (pass, fail, or skipped) ──
     function renderStep(s) {
       var html = '';
       var hasShot = s.screenshot && s.screenshot !== '';
       var durTag = s.duration ? ' <span class="qa-fs-xs text-body-tertiary fw-normal">' + formatDur(s.duration) + '</span>' : '';
       var isTrigger = s.label && s.label.indexOf('run_flow') !== -1;
-      if (s.passed) {
+      if (s.skipped) {
+        html += '<div class="det-step text-body-tertiary"><i class="bi bi-dash-circle text-secondary me-1"></i> ' + escHtml(s.label) + '</div>';
+      } else if (s.passed) {
         var cls = isTrigger ? 'det-step det-step-trigger' : 'det-step';
         if (hasShot) html += '<div class="det-step-shot-row">';
         html += '<div class="' + cls + '"><i class="bi bi-check-circle-fill text-success me-1"></i> ' + escHtml(s.label) + durTag + '</div>';
@@ -830,7 +790,7 @@ function buildDetailLeft(r) {
     // ── Helper: render a sub-flow group ──
     function renderSubFlowGroup(steps) {
       var html = '';
-      var groupPassed = steps.every(function(gs) { return gs.passed; });
+      var groupPassed = steps.every(function(gs) { return gs.passed || gs.skipped; });
       var groupDur = steps.reduce(function(sum, gs) { return sum + (gs.duration || 0); }, 0);
       var groupDurTag = groupDur ? ' <span class="qa-fs-xs text-body-tertiary fw-normal">' + formatDur(groupDur) + '</span>' : '';
       var groupIcon = groupPassed
@@ -871,8 +831,16 @@ function buildDetailLeft(r) {
       if (showSections && group.name) {
         var secDur = group.steps.reduce(function(sum, s) { return sum + (s.duration || 0); }, 0);
         var secDurTag = secDur ? ' <span class="qa-fs-xs text-body-tertiary fw-normal">' + formatDur(secDur) + '</span>' : '';
+        var secFailed  = group.steps.filter(function(s) { return !s.passed && !s.skipped; }).length;
+        var secSkipped = group.steps.filter(function(s) { return s.skipped; }).length;
+        var secIcon = secFailed > 0
+          ? '<i class="bi bi-collection text-danger me-1"></i>'
+          : '<i class="bi bi-collection text-success me-1"></i>';
+        var secBadges = '';
+        if (secFailed  > 0) secBadges += ' <span class="badge text-bg-danger qa-fs-xs">'   + secFailed  + ' failed</span>';
+        if (secSkipped > 0) secBadges += ' <span class="badge text-bg-secondary qa-fs-xs">' + secSkipped + ' skipped</span>';
         out += '<div class="det-section-group">';
-        out += '<div class="det-section-header"><i class="bi bi-window-stack"></i> ' + escHtml(group.name) + secDurTag + '</div>';
+        out += '<div class="det-section-header">' + secIcon + ' ' + escHtml(group.name) + secDurTag + secBadges + '</div>';
         out += '<div class="det-section-body">';
       }
 
@@ -909,7 +877,7 @@ function buildDetailLeft(r) {
     out += '</div>';
   }
 
-  if (!allSteps.length && !d.assert_msg) {
+  if (!allSteps.length) {
     out += '<div class="text-success small"><i class="bi bi-check-circle-fill"></i> Test passed with no errors.</div>';
   }
 
@@ -1160,11 +1128,7 @@ async function exportPDF() {
           details = 'Passed';
         } else if (r.details && r.details.steps) {
           var fStep = r.details.steps.filter(function(s) { return !s.passed; })[0];
-          if (fStep) details = fStep.label.substring(0, 80);
-          else if (r.details.assert_msg) details = r.details.assert_msg.substring(0, 80);
-          else details = '\u2014';
-        } else if (r.details && r.details.assert_msg) {
-          details = r.details.assert_msg.substring(0, 80);
+          details = fStep ? fStep.label.substring(0, 80) : '\u2014';
         } else {
           details = '\u2014';
         }
@@ -1271,13 +1235,6 @@ async function exportPDF() {
             }
           });
           y += 2;
-        } else if (r.details && r.details.assert_msg) {
-          var msgLines = pdf.splitTextToSize('\u2717 ' + r.details.assert_msg, CW);
-          pdf.setFont('helvetica', 'normal');
-          pdf.setFontSize(7);
-          pdf.setTextColor(...T.fail);
-          pdf.text(msgLines.slice(0, 3), MG, y);
-          y += msgLines.slice(0, 3).length * 3.8 + 2;
         }
 
         // 3. Screenshot

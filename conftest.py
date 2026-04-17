@@ -78,6 +78,7 @@ class ProfessionalReportPlugin:
             serialized.append({
                 "label": self._step_label(s, local_num),
                 "passed": s.success,
+                "skipped": getattr(s, "skipped", False),
                 "msg": "" if s.success else s.message,
                 "duration": s.duration,
                 "sub_flow": s.sub_flow,
@@ -395,12 +396,16 @@ class FlowItem(pytest.Item):
             r = excinfo.value.result
             lines = [f"Flow '{r.flow_name}' failed — {r.error}", ""]
             for s in r.steps:
-                icon = "✓" if s.success else "✗"
-                layer = f"[L{s.layer_used}]" if s.success else f"[L{s.layer_used} FAIL]"
+                if getattr(s, "skipped", False):
+                    icon, layer = "—", "[skipped]"
+                elif s.success:
+                    icon, layer = "✓", f"[L{s.layer_used}]"
+                else:
+                    icon, layer = "✗", f"[L{s.layer_used} FAIL]"
                 dur = f"{s.duration * 1000:.0f}ms" if s.duration < 1 else f"{s.duration:.2f}s"
                 prefix = f"↳ [{s.sub_flow}]  " if s.sub_flow else ""
                 lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {prefix}{s.action.raw}  ({dur})")
-                if not s.success:
+                if not s.success and not getattr(s, "skipped", False):
                     lines.append(f"       {s.message}")
             return "\n".join(lines)
         return str(excinfo.value)
