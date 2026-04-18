@@ -8,31 +8,32 @@ alternative locator strategy.
 Also handles AI-native actions (ai_click, ai_extract, ai_assert,
 ai_summarize) that bypass L1/L2 entirely.
 
-Skipped entirely when OPENAI_API_KEY is not set.
+Skipped entirely when no LLM provider is configured.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 
 from playwright.sync_api import Page
 
-from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
 from app.agent.prompts.resolver import (
     SYSTEM as _SYSTEM,
     USER_TEMPLATE as _USER_TMPL,
     PROMPTS as _AI_PROMPTS,
 )
+from app.layers.providers import LLMProvider
+from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
 
 logger = logging.getLogger(__name__)
 
-_MAX_PAGE_TEXT = 4000  # Truncate page text to stay within token limits
+_MAX_PAGE_TEXT = 4000
+_RESOLVE_MAX_TOKENS = 200
+_AI_ACTION_MAX_TOKENS = 500
 
 
 def _get_page_text(page: Page) -> str:
-    """Extract visible text from the page, truncated."""
     try:
         text = page.inner_text("body")
         return text[:_MAX_PAGE_TEXT] if text else ""
@@ -40,14 +41,26 @@ def _get_page_text(page: Page) -> str:
         return ""
 
 
+def _history_block(ctx: RunContext | None) -> str:
+    if not ctx or not ctx.history:
+        return ""
+    recent = ctx.recent_history(5)
+    lines = [
+        f"  - {h['action']}({h['target']}) → {h['result']} [L{h['layer']}]"
+        for h in recent
+    ]
+    return "\n\nRecent execution history (last steps):\n" + "\n".join(lines)
+
+
 class AIResolver:
     """Layer 3: LLM-based element resolution as a last resort."""
 
+    def __init__(self, provider: LLMProvider | None) -> None:
+        self._provider = provider
+
     @property
     def available(self) -> bool:
-        """Return True only when a non-empty OPENAI_API_KEY is configured."""
-        key = os.getenv("OPENAI_API_KEY", "").strip()
-        return bool(key)
+        return self._provider is not None
 
     def resolve(
         self,
@@ -56,55 +69,30 @@ class AIResolver:
         error: str,
         ctx: RunContext | None = None,
     ) -> StepResult | None:
-        """Ask the LLM for an alternative locator. Returns StepResult or None."""
-        if not self.available:
+        if self._provider is None:
             return None
 
         try:
-            from openai import OpenAI
-
-            client = OpenAI()
             user_msg = _USER_TMPL.format(
                 url=page.url,
                 title=page.title(),
                 action_type=action.type.value,
                 args=action.args,
                 error=error,
-            )
+            ) + _history_block(ctx)
 
-            # Enrich prompt with recent execution history
-            if ctx and ctx.history:
-                recent = ctx.recent_history(5)
-                history_lines = [
-                    f"  - {h['action']}({h['target']}) → {h['result']} [L{h['layer']}]"
-                    for h in recent
-                ]
-                user_msg += (
-                    "\n\nRecent execution history (last steps):\n"
-                    + "\n".join(history_lines)
-                )
+            raw = self._provider.complete(
+                _SYSTEM, user_msg,
+                temperature=0.0, max_tokens=_RESOLVE_MAX_TOKENS,
+            ).strip() or "{}"
 
-            resp = client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=[
-                    {"role": "system", "content": _SYSTEM},
-                    {"role": "user",   "content": user_msg},
-                ],
-                temperature=0,
-                max_tokens=200,
-            )
-
-            raw = (resp.choices[0].message.content or "{}").strip()
             suggestion = json.loads(raw)
             loc = self._build_locator(page, suggestion)
-
             if loc is None:
                 logger.warning(f"[L3] Suggestion yielded no match: {suggestion}")
                 return None
 
-            # Execute the action with the AI-resolved locator
             self._execute_with_locator(action, loc)
-
             reason = suggestion.get("reason", "AI resolved")
             logger.info(f"[L3] Step {action.step_num}: {reason}")
             return StepResult(
@@ -122,58 +110,33 @@ class AIResolver:
         page: Page,
         ctx: RunContext | None = None,
     ) -> StepResult | None:
-        """Handle AI-native actions (ai_click, ai_extract, ai_assert, ai_summarize)."""
-        if not self.available:
+        if self._provider is None:
             return None
 
-        action_key = action.type.value  # e.g. "ai_click"
+        action_key = action.type.value
         prompts = _AI_PROMPTS.get(action_key)
         if not prompts:
             logger.warning(f"[L3] No prompt template for AI action: {action_key}")
             return None
 
         try:
-            from openai import OpenAI
-
-            client = OpenAI()
             target = action.args[0] if action.args else ""
             page_text = _get_page_text(page)
-
             user_msg = prompts["user"].format(
                 url=page.url,
                 title=page.title(),
                 page_text=page_text,
                 target=target,
-            )
+            ) + _history_block(ctx)
 
-            # Enrich prompt with recent execution history
-            if ctx and ctx.history:
-                recent = ctx.recent_history(5)
-                history_lines = [
-                    f"  - {h['action']}({h['target']}) → {h['result']} [L{h['layer']}]"
-                    for h in recent
-                ]
-                user_msg += (
-                    "\n\nRecent execution history (last steps):\n"
-                    + "\n".join(history_lines)
-                )
-
-            resp = client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=[
-                    {"role": "system", "content": prompts["system"]},
-                    {"role": "user",   "content": user_msg},
-                ],
-                temperature=0,
-                max_tokens=500,
-            )
-
-            raw_response = (resp.choices[0].message.content or "").strip()
+            raw_response = self._provider.complete(
+                prompts["system"], user_msg,
+                temperature=0.0, max_tokens=_AI_ACTION_MAX_TOKENS,
+            ).strip()
 
             if action.type == ActionType.AI_CLICK:
                 return self._handle_ai_click(action, page, raw_response)
-            elif action.type == ActionType.AI_EXTRACT:
-                # Store extracted data in short-term memory
+            if action.type == ActionType.AI_EXTRACT:
                 if ctx is not None:
                     ctx.store("last_extract", raw_response)
                     if target:
@@ -182,9 +145,9 @@ class AIResolver:
                     action=action, success=True,
                     message=f"[L3] Extracted: {raw_response}", layer_used=3,
                 )
-            elif action.type == ActionType.AI_ASSERT:
+            if action.type == ActionType.AI_ASSERT:
                 return self._handle_ai_assert(action, raw_response)
-            elif action.type == ActionType.AI_SUMMARIZE:
+            if action.type == ActionType.AI_SUMMARIZE:
                 return StepResult(
                     action=action, success=True,
                     message=f"[L3] Summary: {raw_response}", layer_used=3,
@@ -198,7 +161,6 @@ class AIResolver:
     def _handle_ai_click(
         self, action: FlowAction, page: Page, raw: str
     ) -> StepResult | None:
-        """Process AI_CLICK: LLM returns a locator suggestion JSON → click."""
         try:
             suggestion = json.loads(raw)
             loc = self._build_locator(page, suggestion)
@@ -217,7 +179,6 @@ class AIResolver:
     def _handle_ai_assert(
         self, action: FlowAction, raw: str
     ) -> StepResult | None:
-        """Process AI_ASSERT: LLM returns {result, reason} JSON."""
         try:
             data = json.loads(raw)
             passed = data.get("result", False)
@@ -232,7 +193,6 @@ class AIResolver:
 
     @staticmethod
     def _execute_with_locator(action: FlowAction, loc) -> None:
-        """Execute the original action type using the AI-resolved locator."""
         value = action.args[1] if len(action.args) > 1 else ""
         t = action.type.value
 
