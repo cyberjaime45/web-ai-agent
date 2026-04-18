@@ -47,8 +47,9 @@ class Settings:
     lt_grid_url:       str  = field(default_factory=lambda: os.getenv("LT_GRID_URL", ""))
 
     # ── AI ────────────────────────────────────────────────────────
-    openai_api_key:    str  = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
-    openai_model:      str  = field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+    ai_provider:       str  = field(default_factory=lambda: os.getenv("AI_PROVIDER", ""))
+    llm_key:           str  = field(default_factory=lambda: os.getenv("LLM_KEY", ""))
+    llm_model:         str  = field(default_factory=lambda: os.getenv("LLM_MODEL", ""))
 
     # ── Timeouts (ms) ─────────────────────────────────────────────
     navigation_timeout: int = field(default_factory=lambda: _int("NAVIGATION_TIMEOUT", 30000))
