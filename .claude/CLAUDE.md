@@ -11,7 +11,7 @@ See @README.md for project overview.
 - Language: Python
 - Browser automation: Playwright (Python)
 - Test runner: pytest + custom conftest.py
-- AI layer: OpenAI SDK (Layer 3, optional)
+- AI layer: pluggable LLM provider (OpenAI, Gemini, or Anthropic — Layer 3, optional)
 - Reporting: HTML + JSON under `reports/<ENVIRONMENT>/`
 
 ## Commands
@@ -56,7 +56,8 @@ pip install -r requirements.txt
 | `app/execution/engine.py` | FlowRunner — orchestrates L1 → L2 → L3 + `run_flow` sub-flows |
 | `app/layers/deterministic.py` | L1 + L2 — dispatch-table, exact Playwright locators, fallback dispatch |
 | `app/layers/locator.py` | L2 — 5 fuzzy strategies per resolve method, selectolax similarity ≥ 0.6 |
-| `app/layers/ai_resolver.py` | L3 — OpenAI, only when L1+L2 fail, skipped if no API key |
+| `app/layers/ai_resolver.py` | L3 — consumes `LLMProvider`, only when L1+L2 fail, skipped if no provider configured |
+| `app/layers/providers/` | Provider abstraction — base ABC, factory, and adapters for OpenAI / Gemini / Claude |
 | `app/flow/parser.py` | Markdown parser — 4-stage pipeline, flow path resolution for `run_flow` |
 | `app/schemas/actions.py` | ActionType enum (42 types), FlowAction, StepResult, FlowResult |
 | `app/browser/session.py` | Browser factory — local (Playwright) or LambdaTest |
@@ -72,14 +73,17 @@ pip install -r requirements.txt
 | `BROWSER` | `chromium` | Browser engine: chromium, firefox, webkit |
 | `VIEWPORT` | `1920x1080` | Viewport size (WIDTHxHEIGHT) |
 | `SLOW_MO` | `0` | Delay between actions (ms) |
-| `OPENAI_API_KEY` | — | Enables L3 AI resolver (optional) |
+| `AI_PROVIDER` | — | LLM provider for L3: `openai` \| `gemini` \| `anthropic` (required when L3 is enabled) |
+| `LLM_KEY` | — | API key for the selected provider (required when L3 is enabled) |
+| `LLM_MODEL` | — | Model id for the selected provider (required when L3 is enabled, no default) |
 | `RUNNING_MODE` | `local` | `local` or `lambda` (LambdaTest cloud) |
 
 ## Rules
 
 - Never break the L1 → L2 → L3 fallback chain — each layer must signal failure cleanly for the next to activate
 - L1 uses `_L1_TIMEOUT = 5000ms` for action calls — keeps fast failover to L2 while preserving Playwright's auto-wait
-- L3 is optional by design — all flows must be runnable without `OPENAI_API_KEY`
+- L3 is optional by design — all flows must be runnable without `AI_PROVIDER`/`LLM_KEY`/`LLM_MODEL`. Partial config raises `ConfigError` at startup (fail fast)
+- Adding a new LLM provider means one new file under `app/layers/providers/` plus one mapping entry in the factory — no changes to `AIResolver` or the engine
 - Never use `time.sleep()` — use Playwright `wait_for*` methods
 - L1 supports CSS selectors and XPath directly via `_is_selector()` — no need to fall to L2 for selector-based targeting
 - `run_flow` is intercepted at the execution layer (engine.py), not the action dispatch — it's a flow-level directive

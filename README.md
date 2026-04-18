@@ -30,10 +30,11 @@ A Markdown-driven web automation agent that executes flows through a 3-layer det
 │  └────────────────────┬─────────────────────────────┘   │
 │                       │ fails                            │
 │  ┌────────────────────▼─────────────────────────────┐   │
-│  │  Layer 3 — AIResolver  (OpenAI, optional)        │   │
+│  │  Layer 3 — AIResolver  (LLM, optional)           │   │
 │  │  Invoked only when L1 + L2 both fail.            │   │
 │  │  Also handles AI-native actions directly.        │   │
-│  │  Skipped automatically if no OPENAI_API_KEY.     │   │
+│  │  Pluggable provider: OpenAI / Gemini / Claude.   │   │
+│  │  Skipped automatically if no provider set.       │   │
 │  └──────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────┘
                           │
@@ -546,7 +547,7 @@ Wait for the URL to contain a specific fragment. Times out after 10 seconds.
 
 ### AI-Native Actions (4)
 
-These actions bypass Layer 1 and Layer 2 entirely and go directly to Layer 3 (OpenAI). They require `OPENAI_API_KEY` to be set.
+These actions bypass Layer 1 and Layer 2 entirely and go directly to Layer 3. They require `AI_PROVIDER`, `LLM_KEY`, and `LLM_MODEL` to be set (see [Environment Variables](#environment-variables)).
 
 #### `ai_click`
 Describe the element to click in natural language. The LLM analyzes the page and resolves the element.
@@ -844,8 +845,9 @@ Copy `.env.example` to `.env`:
 | `BROWSER` | `chromium` | `chromium`, `firefox`, or `webkit` |
 | `HEADLESS` | `true` | `true` or `false` |
 | `SLOW_MO` | `0` | Milliseconds between actions |
-| `OPENAI_API_KEY` | — | Enables Layer 3 AI resolver and AI-native actions |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Model used for L3 and AI-native actions |
+| `AI_PROVIDER` | — | LLM provider for L3: `openai`, `gemini`, or `anthropic` |
+| `LLM_KEY` | — | API key for the selected provider |
+| `LLM_MODEL` | — | Model id for the selected provider (no default — must be set) |
 | `COVERAGE` | `0` | `1` to enable coverage tracking in report |
 | `COVERAGE_TARGET` | `80` | Coverage % target shown in report |
 | `THEME_STYLE` | `system` | Report theme: `light`, `dark`, or `system` |
@@ -903,7 +905,7 @@ open reports/staging/report.html
 |-------|---------|----------|
 | **L1 — Deterministic** | Always tried first | Dispatch-table driven. Exact Playwright `get_by_role`, `get_by_label`, `get_by_placeholder` locators. |
 | **L2 — Fallback** | L1 fails | 7+ fuzzy strategies per element type (clickable, input, checkbox, table row) + selectolax HTML similarity (≥ 0.6). |
-| **L3 — AI** | L1 + L2 fail, or AI-native action | OpenAI call with page context. Handles both element fallback and AI-native actions (`ai_click`, `ai_extract`, `ai_assert`, `ai_summarize`). Skipped if no `OPENAI_API_KEY`. |
+| **L3 — AI** | L1 + L2 fail, or AI-native action | LLM call with page context via a pluggable provider (OpenAI, Gemini, or Claude). Handles both element fallback and AI-native actions (`ai_click`, `ai_extract`, `ai_assert`, `ai_summarize`). Skipped if `AI_PROVIDER`/`LLM_KEY`/`LLM_MODEL` are not set. |
 
 Most flows run entirely on L1 with zero API calls. L2 handles case variations, extra whitespace, and partial text matches. L3 is the last resort for complex or dynamic pages, and the exclusive runtime for AI-native actions.
 
