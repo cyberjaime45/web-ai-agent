@@ -31,6 +31,7 @@ from app.schemas.actions import (
 from app.flow.parser import parse_flow_file, resolve_flow_path
 from app.layers.ai_resolver import AIResolver
 from app.layers.deterministic import DeterministicRunner
+from app.layers.providers import get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ class FlowRunner:
     ):
         self.artifacts_dir = Path(artifacts_dir)
         self.flows_dir = Path(flows_dir)
-        self._ai = AIResolver()
+        self._ai = AIResolver(provider=get_provider())
         self._seen_flows: set[str] = set()
         self._nesting_depth: int = 0
 
@@ -319,16 +320,16 @@ class FlowRunner:
             if not self._ai.available:
                 logger.warning(
                     f"[L3] Skipped AI action '{action.type.value}' — "
-                    "OPENAI_API_KEY is not set"
+                    "LLM provider not configured"
                 )
                 return StepResult(
                     action=action, success=False,
                     message=(
-                        f"AI action '{action.type.value}' requires OPENAI_API_KEY "
-                        "(L3 skipped: missing API key)"
+                        f"AI action '{action.type.value}' requires AI_PROVIDER, LLM_KEY and LLM_MODEL "
+                        "(L3 skipped: provider not configured)"
                     ),
                     layer_used=3,
-                    error="OPENAI_API_KEY is not set",
+                    error="LLM provider not configured",
                     screenshot_path=self._capture_failure_screenshot(page),
                 )
             ai_result = self._ai.resolve_ai_action(action, page, ctx)
@@ -384,10 +385,10 @@ class FlowRunner:
                 )
 
             # L3 skipped — report as L2 failure
-            logger.info("[L3] Skipped — OPENAI_API_KEY is not set")
+            logger.info("[L3] Skipped — LLM provider not configured")
             return StepResult(
                 action=action, success=False,
-                message=f"L1+L2 failed (L3 skipped: missing API key): {error_msg}",
+                message=f"L1+L2 failed (L3 skipped: provider not configured): {error_msg}",
                 layer_used=2,
                 error=error_msg,
                 screenshot_path=self._capture_failure_screenshot(page),
