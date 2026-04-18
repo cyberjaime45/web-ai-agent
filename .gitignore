@@ -12,6 +12,7 @@ claude-*.log
 tasks/todo.md
 tasks/lessons.md
 docs/
+docs
 
 # External tool builders
 *.vscode
