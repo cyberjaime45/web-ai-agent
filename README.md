@@ -67,6 +67,71 @@ uv run pytest flows/home_page.md -v
 
 ---
 
+## CLI
+
+The CLI in `main.py` is the agent entry point — a thin wrapper around
+`app.agent.orchestrator.Orchestrator`. Use it for shell invocations and for
+agent-to-agent calls from other processes. For in-process orchestration,
+import `Orchestrator` directly.
+
+```bash
+# Run a flow file
+uv run python main.py run flows/home_page.md
+
+# Run inline Markdown
+uv run python main.py run --inline '# Smoke
+## Steps
+1. goto: "https://example.com"
+2. assert_text: "Example Domain"
+'
+
+# Override the report environment
+uv run python main.py run flows/home_page.md --env qa1
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Flow passed |
+| `1` | Flow failed (one or more steps failed) |
+| `2` | Invocation error (bad args, missing file, parse error, runtime crash) |
+
+### Multi-agent contract — `--json`
+
+With `--json`, stdout is exactly one `FlowResult` JSON document followed by a
+newline, and nothing else. All logs go to stderr. This is the calling contract
+for parent agents in a multi-agent system:
+
+```python
+import json, subprocess
+
+proc = subprocess.run(
+    ["uv", "run", "python", "main.py", "run", "flows/home_page.md", "--json"],
+    capture_output=True, text=True,
+)
+result = json.loads(proc.stdout)   # FlowResult dict
+# result["success"]          → bool
+# result["passed"]           → int (computed)
+# result["failed"]           → int (computed)
+# result["skipped"]          → int (computed)
+# result["steps"]            → list[StepResult dict]
+# result["flow_name"]        → str
+```
+
+On invocation error in JSON mode, stdout is `{"error": "...", "type": "..."}`
+and exit is `2`.
+
+### CLI vs pytest
+
+| Use | Choose |
+|-----|--------|
+| Single flow invoked by another agent or service | **CLI** — `main.py run ... --json` |
+| Local dev, debugging a single flow | **CLI** — pretty stdout, faster startup |
+| Full suite, HTML report, CI | **pytest** — collection, fixtures, HTML report |
+
+---
+
 ## Running Flows
 
 ### Auto-discovery (default)
