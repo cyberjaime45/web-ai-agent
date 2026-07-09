@@ -139,7 +139,7 @@
 ## Foreflight Page
 - goto: "https://one.wheelsup.com/foreflight"
 - wait_load
-- assert_text: "Release Flights"
+- assert_text: "Configuration"
 - screenshot
 ## Airports Page
 - goto: "https://one.wheelsup.com/airports"

@@ -174,13 +174,90 @@ _CSS = """
 /* ── Ensure [hidden] always wins ── */
 [hidden] { display: none !important; }
 
+/* ════════════════════════════════════════════════════════════════════
+   QA PORTAL THEME — enterprise refresh, aligned with the QA website.
+   Adds only brand tokens, a navy top bar, softer cards, pill badges and
+   brand-blue buttons. Reuses every existing Bootstrap + .qa-* class so
+   the JS render layer is untouched. All overrides resolve through the
+   --qa-* tokens, so dark mode keeps working.
+   ════════════════════════════════════════════════════════════════════ */
+:root {
+  --qa-navy:       #0d1b2a;
+  --qa-blue:       #2563eb;
+  --qa-blue-hover: #1d4ed8;
+  --qa-radius:     14px;
+  --qa-card-sh:    0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.07);
+  --bs-body-font-family: 'Poppins', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+[data-bs-theme="light"] { --qa-page-bg: #f4f6f9; --qa-card-bd: #e7ebf0; }
+[data-bs-theme="dark"]  { --qa-card-bd: var(--bs-border-color); }
+
+body { font-family: var(--bs-body-font-family); }
+[data-bs-theme="light"] body { background: var(--qa-page-bg); color: #1f2937; }
+
+/* ── Cards — rounded, hairline border, soft shadow ── */
+.card {
+  border: 1px solid var(--qa-card-bd);
+  border-radius: var(--qa-radius);
+  box-shadow: var(--qa-card-sh);
+}
+[data-bs-theme="dark"] .card { box-shadow: none; }
+.card-body { padding: 1.15rem 1.25rem; }
+
+/* ── Brand top bar (full-bleed navy) ── */
+.qa-navbar { background: var(--qa-navy); width: 100%; }
+.qa-navbar-inner {
+  max-width: 1280px; margin: 0 auto;
+  padding: .8rem 1.5rem;
+  display: flex; align-items: center; gap: .65rem; flex-wrap: wrap;
+}
+.qa-navbar-inner,
+.qa-navbar-inner .text-secondary,
+.qa-navbar-inner .text-body-tertiary { color: #cbd5e1 !important; }
+.qa-navbar-inner .fw-bold.fs-6 { color: #fff; }
+.qa-navbar-inner .text-success { color: #4ade80 !important; }
+.qa-navbar-inner .text-danger  { color: #f87171 !important; }
+.qa-navbar-inner .badge.text-bg-info {
+  background: rgba(255,255,255,.14) !important; color: #dbeafe !important;
+}
+.qa-navbar-inner .btn-outline-secondary {
+  color: #e2e8f0; border-color: rgba(255,255,255,.25);
+}
+.qa-navbar-inner .btn-outline-secondary:hover {
+  background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.45);
+}
+
+/* ── Buttons — brand blue, gently rounded ── */
+.btn { border-radius: 9px; font-weight: 500; }
+.btn-sm { border-radius: 8px; }
+.btn-primary {
+  --bs-btn-bg: var(--qa-blue);            --bs-btn-border-color: var(--qa-blue);
+  --bs-btn-hover-bg: var(--qa-blue-hover); --bs-btn-hover-border-color: var(--qa-blue-hover);
+  --bs-btn-active-bg: var(--qa-blue-hover); --bs-btn-active-border-color: var(--qa-blue-hover);
+}
+
+/* ── Badges — soft pills that adapt to theme via --qa-* tokens ── */
+.badge { font-weight: 600; }
+.badge.rounded-pill { padding: .42em .8em; }
+.badge.text-bg-success { background: var(--qa-pass-bg) !important; color: var(--qa-pass) !important; }
+.badge.text-bg-danger  { background: var(--qa-fail-bg) !important; color: var(--qa-fail) !important; }
+.badge.text-bg-warning { background: var(--qa-skip-bg) !important; color: var(--qa-skip) !important; }
+
+/* ── Stat cards — larger, calmer numbers ── */
+.stat-value { font-size: 1.65rem; }
+#stat-cards .card-body { padding: .9rem 1rem !important; }
+
+/* ── Table polish ── */
+thead th { border-bottom-color: var(--qa-card-bd) !important; }
+.table-hover > tbody > tr:hover > * { background-color: rgba(37,99,235,.045); }
+
 /* ── App container ── */
 #app { max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 
 /* ── Logo badge ── */
 .rpt-logo {
   width: 50px; height: 38px; border-radius: 8px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: linear-gradient(135deg, #3b82f6, #1e40af);
   display: flex; align-items: center; justify-content: center;
   color: #fff; font-weight: 800; font-size: var(--fs-md); flex-shrink: 0;
 }
@@ -1282,6 +1359,10 @@ _HTML_SHELL = """<!DOCTYPE html>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <!-- Bootstrap Icons 1.11.3 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <!-- Brand font (Poppins) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
   <!-- Custom overrides -->
   <link rel="stylesheet" href="assets/report.css"/>
   <!-- highlight.js — theme toggled by JS based on current colour mode -->
@@ -1305,8 +1386,12 @@ _HTML_SHELL = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Brand top bar (full-bleed navy) -->
+<header class="qa-navbar" role="banner">
+  <div class="qa-navbar-inner" id="rpt-header"></div>
+</header>
+
 <div id="app">
-  <header class="d-flex align-items-center gap-2 py-3 border-bottom flex-wrap mb-3" id="rpt-header" role="banner"></header>
 
   <!-- Loading state -->
   <div id="loading-state" class="d-flex flex-column align-items-center justify-content-center gap-3 py-5" role="status" aria-live="polite">
