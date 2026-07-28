@@ -136,8 +136,13 @@ class FlowRunner:
                 current_section = action.section
                 section_failed = False
 
-            # ── Silently skip remaining steps in a failed section ──
+            # ── Record remaining steps of a failed section as skipped ──
             if section_failed:
+                result.steps.append(StepResult(
+                    action=action, success=False, skipped=True,
+                    message="skipped — earlier step in this section failed",
+                    layer_used=0,
+                ))
                 continue
 
             # ── Sub-flow execution ──
@@ -164,6 +169,7 @@ class FlowRunner:
                     action=action, success=False,
                     message=str(exc), layer_used=0, error=str(exc),
                     screenshot_path=self._capture_failure_screenshot(page),
+                    started_at=time.time(), ended_at=time.time(),
                 )
                 result.steps.append(sr)
                 _append_error(result, str(exc))
@@ -171,8 +177,11 @@ class FlowRunner:
                 continue
 
             t0 = time.monotonic()
+            w0 = time.time()
             step_result = self._run_step(resolved, page, runner, ctx)
             step_result.duration = round(time.monotonic() - t0, 3)
+            step_result.started_at = w0
+            step_result.ended_at = time.time()
             result.steps.append(step_result)
             ctx.record(action, step_result, page.url, page.title())
 
@@ -258,6 +267,7 @@ class FlowRunner:
             action=action, success=True,
             message=f"Running sub-flow: {sub_flow.name}",
             layer_used=0, duration=0.0,
+            started_at=time.time(), ended_at=time.time(),
         )
 
         self._seen_flows.add(ref)
@@ -285,14 +295,18 @@ class FlowRunner:
                     action=sub_action, success=False,
                     message=str(exc), layer_used=0, error=str(exc),
                     screenshot_path=self._capture_failure_screenshot(page),
+                    started_at=time.time(), ended_at=time.time(),
                 )
                 sr.sub_flow = sub_flow.name
                 results.append(sr)
                 break
 
             t0 = time.monotonic()
+            w0 = time.time()
             sr = self._run_step(resolved, page, runner, ctx)
             sr.duration = round(time.monotonic() - t0, 3)
+            sr.started_at = w0
+            sr.ended_at = time.time()
             sr.sub_flow = sub_flow.name
             results.append(sr)
 

@@ -86,6 +86,8 @@ class ProfessionalReportPlugin:
                 "section": s.action.section or "",
                 "screenshot": s.screenshot_path or "",
                 "layer": s.layer_used,
+                "ts_start": s.started_at,
+                "ts_end": s.ended_at,
             }
             for s in steps
         ]

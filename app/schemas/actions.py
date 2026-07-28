@@ -200,6 +200,8 @@ class StepResult:
     error:           Optional[str] = None
     duration:        float = 0.0      # seconds
     skipped:         bool = False     # True when step was skipped due to a prior section failure
+    started_at:      float = 0.0      # epoch seconds; 0.0 = never executed
+    ended_at:        float = 0.0      # epoch seconds; 0.0 = never executed
 
 
 @dataclass
