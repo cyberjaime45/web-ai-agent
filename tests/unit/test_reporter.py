@@ -272,6 +272,18 @@ def test_events_routed_by_start_time():
     assert tests[1]["console"][0]["step"] == "goto b"
 
 
+def test_duplicate_section_names_split_with_distinct_ids():
+    # ## Page / ## Other / ## Page — same name twice, non-adjacent
+    steps = [
+        make_step(label="a", section="Page", ts_start=BASE, ts_end=BASE + 1),
+        make_step(label="b", section="Other", ts_start=BASE + 1, ts_end=BASE + 2),
+        make_step(label="c", section="Page", ts_start=BASE + 2, ts_end=BASE + 3),
+    ]
+    tests = _build_tests(make_result(flow_steps=steps))
+    assert [t["name"] for t in tests] == ["Page", "Other", "Page"]
+    assert [t["id"][-4:] for t in tests] == ["::s1", "::s2", "::s3"]
+
+
 def test_dropped_counters_attach_to_last_test():
     r = make_result(outcome="failed", flow_steps=sectioned_steps())
     r["capture_dropped"] = {"console": 7, "network": 9}

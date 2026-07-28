@@ -332,3 +332,4 @@ details.crow summary::-webkit-details-marker{display:none}
 @media(max-width:640px){.tllbl{flex-basis:90px}}
 #gconchips,#gnetchips{display:flex;gap:8px;flex-wrap:wrap}
 #pane-console .loglist,#pane-network .netlist{max-height:none;overflow:visible}
+@media(max-width:760px){.tabs{gap:16px;padding:0 16px;overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabs button{white-space:nowrap;flex:none}}
