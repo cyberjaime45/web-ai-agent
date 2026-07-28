@@ -7,6 +7,7 @@ by pytest_collect_file — no test_*.py files needed.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import time
@@ -23,6 +24,7 @@ from app.execution.engine import FlowRunner
 from app.schemas.actions import FlowResult
 from app.browser.session import create_browser
 from app.browser.driver import BrowserDriver
+from app.observability.recorder import PageRecorder
 from app.observability.reporter import generate_report
 from app.utils.banner import show_banner
 
@@ -30,10 +32,7 @@ from app.utils.banner import show_banner
 
 load_dotenv()
 
-_ENV          = os.getenv("ENVIRONMENT", "staging")
-_COVERAGE     = int(os.getenv("COVERAGE", "0"))
-_COV_TARGET   = int(os.getenv("COVERAGE_TARGET", "80"))
-_THEME_STYLE  = os.getenv("THEME_STYLE", "system")
+_ENV = os.getenv("ENVIRONMENT", "staging")
 
 # ── Configure logging ───────────────────────────────────────────
 
@@ -48,7 +47,6 @@ _PROJECT_ROOT = Path(__file__).parent
 _REPORT_DIR   = _PROJECT_ROOT / "reports" / _ENV
 _IMAGES_DIR   = _REPORT_DIR / "images"
 _REPORT_PATH  = _REPORT_DIR / "report.html"
-_HISTORY_PATH = _PROJECT_ROOT / "reports" / "run_history.json"
 
 
 # ── Professional report plugin ──────────────────────────────────
@@ -61,49 +59,53 @@ class ProfessionalReportPlugin:
         self.results: list[dict] = []
         self.failure_screenshots: dict[str, str] = {}
         self.flow_steps: dict[str, list[dict]] = {}
+        self.flow_errors: dict[str, str] = {}
+        self.captures: dict[str, dict] = {}
         self.session_start = time.time()
 
     def record_screenshot(self, nodeid: str, path: str) -> None:
         self.failure_screenshots[nodeid] = path
 
+    def record_error(self, nodeid: str, error: str) -> None:
+        self.flow_errors[nodeid] = error
+
+    def record_capture(self, nodeid: str, console: list[dict], network: list[dict]) -> None:
+        """Store console/network entries captured by the PageRecorder."""
+        self.captures[nodeid] = {"console": console, "network": network}
+
     def record_steps(self, nodeid: str, steps: list) -> None:
         """Serialize FlowResult.steps for the report (both pass and fail)."""
-        # Compute section-local step numbers (reset per section)
-        section_counters: dict[str, int] = {}
-        serialized: list[dict] = []
-        for s in steps:
-            sec = s.action.section or ""
-            section_counters[sec] = section_counters.get(sec, 0) + 1
-            local_num = section_counters[sec]
-            serialized.append({
-                "label": self._step_label(s, local_num),
+        self.flow_steps[nodeid] = [
+            {
+                "name": s.action.raw,
                 "passed": s.success,
                 "skipped": getattr(s, "skipped", False),
                 "msg": "" if s.success else s.message,
                 "duration": s.duration,
                 "sub_flow": s.sub_flow,
-                "section": sec,
+                "section": s.action.section or "",
                 "screenshot": s.screenshot_path or "",
-            })
-        self.flow_steps[nodeid] = serialized
-
-    @staticmethod
-    def _step_label(s, local_num: int = 0) -> str:
-        """Build a display label for a step, with sub-flow prefix when nested."""
-        num = local_num or s.action.step_num
-        layer = f"[L{s.layer_used}{'' if s.success else ' FAIL'}]"
-        prefix = f"\u21b3 [{s.sub_flow}]  " if s.sub_flow else ""
-        return f"Step {num:>2} {layer}  {prefix}{s.action.raw}"
+                "layer": s.layer_used,
+            }
+            for s in steps
+        ]
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when == "call" or (report.when == "setup" and report.failed):
+            started = getattr(report, "start", None)
             self.results.append(
                 {
                     "nodeid":   report.nodeid,
                     "name":     report.nodeid.split("::")[-1],
-                    "class":    "::".join(report.nodeid.split("::")[1:-1]),
                     "outcome":  report.outcome,
                     "duration": getattr(report, "duration", 0.0),
+                    "started_at": (
+                        datetime.datetime.fromtimestamp(started).astimezone().isoformat(
+                            timespec="milliseconds"
+                        )
+                        if started
+                        else ""
+                    ),
                     "longrepr": str(report.longrepr) if report.failed else "",
                     "screenshot": None,
                 }
@@ -111,22 +113,19 @@ class ProfessionalReportPlugin:
 
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
         for r in self.results:
-            path = self.failure_screenshots.get(r["nodeid"])
-            if path:
-                r["screenshot"] = path
-            steps = self.flow_steps.get(r["nodeid"])
-            if steps is not None:
-                r["flow_steps"] = steps
+            nodeid = r["nodeid"]
+            r["screenshot"] = self.failure_screenshots.get(nodeid)
+            r["error"] = self.flow_errors.get(nodeid, "")
+            r["flow_steps"] = self.flow_steps.get(nodeid, [])
+            capture = self.captures.get(nodeid, {})
+            r["console"] = capture.get("console", [])
+            r["network"] = capture.get("network", [])
 
         generate_report(
             results=self.results,
             session_start=self.session_start,
             output_path=_REPORT_PATH,
             environment=_ENV,
-            coverage=_COVERAGE,
-            coverage_target=_COV_TARGET,
-            history_path=_HISTORY_PATH,
-            theme_style=_THEME_STYLE,
         )
         print(f"\n📊 Report: {_REPORT_PATH}")
 
@@ -345,6 +344,10 @@ class FlowItem(pytest.Item):
             page = ctx.new_page()
             page.set_default_timeout(self.flow.timeout)
 
+            # Capture console errors/warnings + network traffic for the report.
+            recorder = PageRecorder()
+            recorder.attach(page)
+
             flows_dir = Path(str(self.fspath)).parent if self.fspath else Path("flows")
             runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=flows_dir)
             result: FlowResult = runner.run(self.flow, page)
@@ -373,8 +376,12 @@ class FlowItem(pytest.Item):
                 if result.last_screenshot and plugin:
                     plugin.record_screenshot(self.nodeid, result.last_screenshot)
 
-            if plugin and result.steps:
-                plugin.record_steps(self.nodeid, result.steps)
+            if plugin:
+                if result.steps:
+                    plugin.record_steps(self.nodeid, result.steps)
+                if not result.success:
+                    plugin.record_error(self.nodeid, result.error)
+                plugin.record_capture(self.nodeid, recorder.console, recorder.network)
 
             # Report pass/fail status to LambdaTest
             _set_lambdatest_status(page, result.success, result.error)
