@@ -49,6 +49,7 @@ a{color:var(--accent)}
 .px:hover{outline:2px solid #a5c2ff;outline-offset:1px}
 .px.passed,.px.xfailed{background:var(--pass)} .px.failed{background:var(--fail)}
 .px.skipped{background:#b7bcc2} .px.error{background:var(--err)} .px.flaky,.px.xpassed{background:#d99a11}
+@media(max-width:640px){.hmain{flex-wrap:wrap}.hright{margin-left:0}}
 /* tabs — the header's bottom border doubles as the tab underline track */
 .tabs{display:flex;gap:26px;padding:0 32px}
 .tabs button{background:none;border:none;color:var(--muted);font:500 13.5px var(--sans);padding:12px 2px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
