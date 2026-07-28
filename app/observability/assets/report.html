@@ -32,6 +32,8 @@
     <button role="tab" aria-selected="true" data-tab="overview">Overview</button>
     <button role="tab" aria-selected="false" data-tab="tests">Tests <span class="count" id="tcount"></span></button>
     <button role="tab" aria-selected="false" data-tab="timeline">Timeline</button>
+    <button role="tab" aria-selected="false" data-tab="console">Console <span class="count" id="ccount"></span></button>
+    <button role="tab" aria-selected="false" data-tab="network">Network <span class="count" id="ncount"></span></button>
     <button role="tab" aria-selected="false" data-tab="summary">Summary</button>
   </nav>
 </header>
@@ -66,6 +68,21 @@
     <div class="panel">
       <div class="ptitle">Execution timeline<span class="right" id="wallclock"></span></div>
       <div id="lanes"></div><div class="ticks" id="ticks"></div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-console">
+    <div class="panel"><div class="ptitle">Console — all tests</div>
+      <div class="minibar"><input class="minisearch" id="gconsearch" placeholder="Search messages…"><span id="gconchips"></span></div>
+      <div class="loglist" id="gconlist"></div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-network">
+    <div class="panel"><div class="ptitle">Network — all tests</div>
+      <div id="gnetsum"></div>
+      <div class="minibar"><input class="minisearch" id="gnetsearch" placeholder="Search URL or endpoint…"><span id="gnetchips"></span></div>
+      <div class="netlist" id="gnetlist"></div>
     </div>
   </div>
 

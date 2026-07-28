@@ -612,3 +612,68 @@ document.getElementById('overlay').onclick = closeDrawer;
   document.getElementById('ticks').innerHTML =
     [0,.25,.5,.75,1].map(f => `<span>${fmtMs(span*f)}</span>`).join('');
 })();
+
+/* ── execution-level console & network (secondary, aggregated) ──
+   NET_CTX is shared with the drawer's network pane; whichever list rendered
+   last owns the copy buttons — only one list is interactable at a time, and
+   every render (filter/search/open) refreshes it. */
+(function globalViews(){
+  const bySeq = (a, b) => (a.e.ts ?? 0) - (b.e.ts ?? 0) || (a.e.seq ?? 0) - (b.e.seq ?? 0);
+  const CON = T.flatMap((t, i) => (t.console || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
+  const NET = T.flatMap((t, i) => (t.network || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
+  document.getElementById('ccount').textContent = CON.length;
+  document.getElementById('ncount').textContent = NET.length;
+
+  /* console */
+  const n = l => CON.filter(x => lvlOf(x.e) === l).length;
+  document.getElementById('gconchips').innerHTML =
+    [['error','Errors'], ['warning','Warnings'], ['info','Info'], ['debug','Debug']]
+      .map(([l, lbl]) => `<span class="fchip gcf" data-cf="${l}">${lbl}<span class="n">${n(l)}</span></span>`).join('');
+  let clvl = '', cq = '', cshown = 200;
+  const renderCon = () => {
+    const keep = CON.filter(x => (!clvl || lvlOf(x.e) === clvl) &&
+      (!cq || (x.e.text + ' ' + (x.e.location || '')).toLowerCase().includes(cq)));
+    document.getElementById('gconlist').innerHTML =
+      keep.slice(0, cshown).map(x => conRowHtml(x.e, x.t0, x.i)).join('') ||
+      '<div class="empty">No matching console entries.</div>';
+    if (keep.length > cshown)
+      document.getElementById('gconlist').innerHTML +=
+        `<button class="showmore" id="gconmore">Show more (${keep.length - cshown} hidden)</button>`;
+    const more = document.getElementById('gconmore');
+    if (more) more.onclick = () => { cshown += 400; renderCon(); };
+  };
+  document.querySelectorAll('.gcf').forEach(ch => ch.onclick = () => {
+    clvl = clvl === ch.dataset.cf ? '' : ch.dataset.cf;
+    document.querySelectorAll('.gcf').forEach(x => x.classList.toggle('on', x.dataset.cf === clvl));
+    renderCon();
+  });
+  document.getElementById('gconsearch').addEventListener('input', e => { cq = e.target.value.toLowerCase(); cshown = 200; renderCon(); });
+  renderCon();
+
+  /* network */
+  document.getElementById('gnetsum').innerHTML = netSummaryHtml(NET.map(x => x.e));
+  const cnt = c => c === '' ? NET.length : c === 'bad' ? NET.filter(x => !x.e.ok).length : NET.filter(x => catOf(x.e) === c).length;
+  document.getElementById('gnetchips').innerHTML = NET_CATS.filter(([c]) => cnt(c)).map(([c, lbl]) =>
+    `<span class="fchip gnf${c === '' ? ' on' : ''}" data-nf="${c}">${lbl}<span class="n">${cnt(c)}</span></span>`).join('');
+  let ncat = '', nq = '', nshown = 150;
+  const renderNet = () => {
+    const keep = NET.filter(x => (ncat === '' || (ncat === 'bad' ? !x.e.ok : catOf(x.e) === ncat)) &&
+      (!nq || x.e.url.toLowerCase().includes(nq)));
+    NET_CTX = keep.map(x => x.e);
+    document.getElementById('gnetlist').innerHTML =
+      keep.slice(0, nshown).map((x, i) => netRowHtml(x.e, x.t0, i, x.i)).join('') ||
+      '<div class="empty">No matching requests.</div>';
+    if (keep.length > nshown)
+      document.getElementById('gnetlist').innerHTML +=
+        `<button class="showmore" id="gnetmore">Show more (${keep.length - nshown} hidden)</button>`;
+    const more = document.getElementById('gnetmore');
+    if (more) more.onclick = () => { nshown += 400; renderNet(); };
+  };
+  document.querySelectorAll('.gnf').forEach(ch => ch.onclick = () => {
+    ncat = ch.dataset.nf;
+    document.querySelectorAll('.gnf').forEach(x => x.classList.toggle('on', x === ch));
+    renderNet();
+  });
+  document.getElementById('gnetsearch').addEventListener('input', e => { nq = e.target.value.toLowerCase(); nshown = 150; renderNet(); });
+  renderNet();
+})();

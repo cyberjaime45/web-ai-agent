@@ -330,3 +330,5 @@ details.crow summary::-webkit-details-marker{display:none}
 .tldot.net{background:#c2410c;border-radius:2px}
 .tlshot{position:absolute;top:-2px;font-size:10px;text-decoration:none}
 @media(max-width:640px){.tllbl{flex-basis:90px}}
+#gconchips,#gnetchips{display:flex;gap:8px;flex-wrap:wrap}
+#pane-console .loglist,#pane-network .netlist{max-height:none;overflow:visible}
