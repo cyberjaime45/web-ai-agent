@@ -876,6 +876,8 @@ web-agent/
 │   │   └── session.py              # Agent short-term session memory
 │   │
 │   ├── observability/
+│   │   ├── assets/                 # Static report shell, CSS, and JS
+│   │   ├── recorder.py             # Per-test console + network capture
 │   │   └── reporter.py             # HTML + JSON report generator
 │   │
 │   ├── skills/
@@ -913,9 +915,6 @@ Copy `.env.example` to `.env`:
 | `AI_PROVIDER` | — | LLM provider for L3: `openai`, `gemini`, or `anthropic` |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider (no default — must be set) |
-| `COVERAGE` | `0` | `1` to enable coverage tracking in report |
-| `COVERAGE_TARGET` | `80` | Coverage % target shown in report |
-| `THEME_STYLE` | `system` | Report theme: `light`, `dark`, or `system` |
 
 ### Multi-environment reports
 
