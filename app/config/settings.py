@@ -55,6 +55,11 @@ class Settings:
     navigation_timeout: int = field(default_factory=lambda: _int("NAVIGATION_TIMEOUT", 30000))
     action_timeout:     int = field(default_factory=lambda: _int("ACTION_TIMEOUT", 10000))
 
+    # ── Reporting ─────────────────────────────────────────────────
+    # Extra sensitive key substrings (comma-separated) redacted from
+    # report network headers/payloads, on top of the built-in list.
+    report_redact:     str  = field(default_factory=lambda: os.getenv("REPORT_REDACT", ""))
+
     # ── Artifact capture ──────────────────────────────────────────
     capture_screenshots:     bool = field(default_factory=lambda: _bool("CAPTURE_SCREENSHOTS", "true"))
     capture_html_snapshots:  bool = field(default_factory=lambda: _bool("CAPTURE_HTML_SNAPSHOTS", "true"))

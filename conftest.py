@@ -69,9 +69,11 @@ class ProfessionalReportPlugin:
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
 
-    def record_capture(self, nodeid: str, console: list[dict], network: list[dict]) -> None:
+    def record_capture(self, nodeid: str, console: list[dict],
+                       network: list[dict], dropped: dict | None = None) -> None:
         """Store console/network entries captured by the PageRecorder."""
-        self.captures[nodeid] = {"console": console, "network": network}
+        self.captures[nodeid] = {"console": console, "network": network,
+                                 "dropped": dropped or {}}
 
     def record_steps(self, nodeid: str, steps: list) -> None:
         """Serialize FlowResult.steps for the report (both pass and fail)."""
@@ -122,6 +124,7 @@ class ProfessionalReportPlugin:
             capture = self.captures.get(nodeid, {})
             r["console"] = capture.get("console", [])
             r["network"] = capture.get("network", [])
+            r["capture_dropped"] = capture.get("dropped", {})
 
         generate_report(
             results=self.results,
@@ -383,7 +386,8 @@ class FlowItem(pytest.Item):
                     plugin.record_steps(self.nodeid, result.steps)
                 if not result.success:
                     plugin.record_error(self.nodeid, result.error)
-                plugin.record_capture(self.nodeid, recorder.console, recorder.network)
+                plugin.record_capture(self.nodeid, recorder.console,
+                                      recorder.network, recorder.dropped)
 
             # Report pass/fail status to LambdaTest
             _set_lambdatest_status(page, result.success, result.error)
