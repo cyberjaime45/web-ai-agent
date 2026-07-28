@@ -6,6 +6,16 @@ const failedLike = s => s === 'failed' || s === 'error';
 const isFlaky = t => t.retries > 0 && !failedLike(t.status);
 const effStatus = t => isFlaky(t) ? 'flaky' : t.status;
 const suiteOf = t => (t.file.match(/^(?:apps|tests|flows)\/([^/]+)\//) || [,'(root)'])[1];
+const lvlOf = c => c.level === 'pageerror' ? 'error' : c.level === 'log' ? 'info' : c.level;
+const fmtBytes = b => b == null ? '' : b >= 1048576 ? (b/1048576).toFixed(1)+' MB' : b >= 1024 ? (b/1024).toFixed(1)+' KB' : b+' B';
+const relTime = (ts, t0) => (ts != null && t0 != null) ? '+' + fmtMs(ts - t0) : '';
+const NET_CATS = [['','All'], ['bad','Failed'], ['xhr','XHR'], ['doc','Doc'], ['js','JS'], ['css','CSS'], ['img','Img'], ['other','Other']];
+function catOf(n){
+  const rt = n.resource_type || '';
+  return rt === 'xhr' || rt === 'fetch' ? 'xhr' : rt === 'document' ? 'doc' :
+    rt === 'script' ? 'js' : rt === 'stylesheet' ? 'css' :
+    rt === 'image' || rt === 'media' || rt === 'font' ? 'img' : 'other';
+}
 const T = DATA.tests, TOT = DATA.totals, ENV = DATA.environment;
 const flakyCount = T.filter(isFlaky).length;
 const healCount = T.reduce((n,t) => n + (t.healings||[]).length, 0);
@@ -180,7 +190,13 @@ document.addEventListener('keydown', e => {
 });
 
 function chips(t){
+  const cerr = (t.console||[]).filter(c => lvlOf(c) === 'error').length;
+  const cwarn = (t.console||[]).filter(c => lvlOf(c) === 'warning').length;
+  const nbad = (t.network||[]).filter(n => !n.ok).length;
   return [
+    cerr ? `<span class="chiplet cbad" title="console errors">⚠ ${cerr}</span>` : '',
+    cwarn ? `<span class="chiplet cwarn" title="console warnings">⚠ ${cwarn}</span>` : '',
+    nbad ? `<span class="chiplet cbad" title="failed requests">⇅ ${nbad}</span>` : '',
     t.retries ? `<span class="chiplet" style="color:var(--skip)" title="reruns">↻ ${t.retries}</span>` : '',
     (t.healings||[]).length ? `<span class="chiplet" style="color:var(--skip)" title="healed locators">🩹 ${t.healings.length}</span>` : '',
     t.ai ? '<span class="chiplet" style="color:var(--accent)">✦ AI</span>' : '',
@@ -334,41 +350,203 @@ function artsHtml(t){
   if (a.video) parts.push(`<div><a href="${ART(a.video)}" target="_blank">🎬 Video</a><video src="${ART(a.video)}" controls preload="none"></video></div>`);
   return parts.length ? `<div class="arts">${parts.join('')}</div>` : '<div class="empty" style="padding:14px 0">No artifacts captured.</div>';
 }
-function netRowHtml(n){
+/* ── console & network row renderers (shared by drawer + execution tabs) ── */
+function groupConsole(logs){
+  const map = new Map(), out = [];
+  logs.forEach(c => {
+    const k = c.level + ' ' + c.text + ' ' + (c.location || '');
+    if (map.has(k)) map.get(k).count++;
+    else { const g = {...c, count: 1}; map.set(k, g); out.push(g); }
+  });
+  return out;
+}
+function conRowHtml(c, t0, ti){
+  const lvl = lvlOf(c);
+  const lines = String(c.text ?? '').split('\n');
+  const main = `<span class="ctime">${relTime(c.ts, t0)}</span><span class="clvl ${lvl}">${esc(c.level)}</span>
+    <span class="ctext">${esc(lines[0])}${c.count > 1 ? `<span class="cxn">×${c.count}</span>` : ''}</span>
+    ${ti != null ? `<span class="cfrom" onclick="openTest(${ti})">${esc(T[ti].title || T[ti].name)}</span>` : ''}
+    ${c.step ? `<span class="cstep" title="active step">${esc(c.step)}</span>` : ''}
+    ${c.location ? `<span class="cloc" title="${esc(c.location)}">${esc(c.location.replace(/^https?:\/\/[^/]*/, ''))}</span>` : ''}`;
+  return lines.length > 1
+    ? `<details class="crow ${lvl}"><summary>${main}<span class="nchev">▸</span></summary><pre class="codebox">${esc(lines.slice(1).join('\n'))}</pre></details>`
+    : `<div class="crow ${lvl}">${main}</div>`;
+}
+function curlOf(n){
+  const q = s => `'${String(s).replace(/'/g, "'\\''")}'`;
+  const h = Object.entries(n.request_headers || {}).map(([k, v]) => ` -H ${q(k + ': ' + v)}`).join('');
+  return `curl -X ${n.method} ${q(n.url)}${h}${n.post_data ? ` --data ${q(n.post_data)}` : ''}`;
+}
+let NET_CTX = [];   // entries behind the currently rendered network rows
+window.copyIdx = (kind, i, btn) => {
+  const n = NET_CTX[i]; if (!n) return;
+  const txt = kind === 'curl' ? curlOf(n) : n.url;
+  try { navigator.clipboard.writeText(txt).then(() => { btn.textContent = '✓'; setTimeout(() => btn.textContent = kind === 'curl' ? 'Copy cURL' : 'Copy URL', 900); }, () => {}); } catch(e) {}
+};
+const fmtKv = o => Object.entries(o || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+function netRowHtml(n, t0, idx, ti){
   let host = '', path = n.url;
-  try { const u = new URL(n.url); host = u.host; path = u.pathname + u.search; } catch(e){}
+  try { const u = new URL(n.url); host = u.host; path = u.pathname + u.search; } catch(e) {}
   const status = n.status != null
     ? `<span class="nstat ${n.status >= 400 ? 'sbad' : n.status >= 300 ? 'swarn' : 'sok'}">${n.status}</span>`
-    : '<span class="nstat sbad">ERR</span>';
-  const inner = `<span class="nmethod">${esc(n.method)}</span>${status}
+    : `<span class="nstat ${n.method === 'WS' ? 'swarn' : 'sbad'}">${n.method === 'WS' ? 'WS' : 'ERR'}</span>`;
+  const slow = (n.duration_ms || 0) > 2000;
+  const summary = `<span class="nmethod">${esc(n.method)}</span>${status}
     <span class="nurl" title="${esc(n.url)}"><span class="nhost">${esc(host)}</span>${esc(path)}</span>
+    ${ti != null ? `<span class="cfrom" onclick="event.preventDefault();openTest(${ti})">${esc(T[ti].title || T[ti].name)}</span>` : ''}
     ${n.failure ? `<span class="nfailure">${esc(n.failure)}</span>` : ''}
+    <span class="ntime">${relTime(n.ts, t0)}</span>
+    <span class="ndur${slow ? ' slow' : ''}"${slow ? ' title="slow request (>2s)"' : ''}>${n.duration_ms != null ? fmtMs(n.duration_ms) : ''}</span>
+    <span class="nsize">${fmtBytes(n.size)}</span>
     ${n.resource_type ? `<span class="ntype">${esc(n.resource_type)}</span>` : ''}`;
-  // failed calls with a captured payload expand to show the response body
-  if (!n.ok && n.body)
-    return `<details class="netrow bad"><summary>${inner}<span class="nchev">▸</span></summary><pre class="codebox netbody">${esc(n.body)}</pre></details>`;
-  return `<div class="netrow ${n.ok ? 'ok' : 'bad'}">${inner}</div>`;
+  let qp = '';
+  try { qp = [...new URL(n.url).searchParams].map(([k, v]) => `${k} = ${v}`).join('\n'); } catch(e) {}
+  const detail = `<div class="ndetail">
+    <div class="nbtns">
+      <button class="minibtn" onclick="copyIdx('curl',${idx},this)">Copy cURL</button>
+      <button class="minibtn" onclick="copyIdx('url',${idx},this)">Copy URL</button>
+      ${n.step ? `<span class="cstep" title="active step">during: ${esc(n.step)}</span>` : ''}
+    </div>
+    ${qp ? `<div class="sublbl">Query parameters</div><pre class="codebox">${esc(qp)}</pre>` : ''}
+    ${n.request_headers ? `<div class="sublbl">Request headers</div><pre class="codebox">${esc(fmtKv(n.request_headers))}</pre>` : ''}
+    ${n.post_data ? `<div class="sublbl">Request body</div><pre class="codebox">${esc(n.post_data)}</pre>` : ''}
+    ${n.response_headers ? `<div class="sublbl">Response headers</div><pre class="codebox">${esc(fmtKv(n.response_headers))}</pre>` : ''}
+    ${n.body ? `<div class="sublbl">Response body</div><pre class="codebox netbody">${esc(n.body)}</pre>` : ''}
+  </div>`;
+  return `<details class="netrow ${n.ok ? 'ok' : 'bad'}"><summary>${summary}<span class="nchev">▸</span></summary>${detail}</details>`;
+}
+function netSummaryHtml(net){
+  const failed = net.filter(n => !n.ok).length;
+  const bytes = net.reduce((s, n) => s + (n.size || 0), 0);
+  const withD = net.filter(n => n.duration_ms != null);
+  const slowest = withD.length ? Math.max(...withD.map(n => n.duration_ms)) : null;
+  const withT = net.filter(n => n.ts != null);
+  const span = withT.length ? Math.max(...withT.map(n => n.ts + (n.duration_ms || 0))) - Math.min(...withT.map(n => n.ts)) : null;
+  return `<div class="netsum">
+    <span><b>${net.length}</b> requests</span>
+    <span class="${failed ? 'ko' : ''}"><b>${failed}</b> failed</span>
+    <span><b>${fmtBytes(bytes) || '0 B'}</b> transferred</span>
+    ${slowest != null ? `<span>slowest <b>${fmtMs(slowest)}</b></span>` : ''}
+    ${span != null ? `<span>span <b>${fmtMs(span)}</b></span>` : ''}</div>`;
+}
+
+/* ── drawer panes ── */
+function consolePaneHtml(t){
+  const logs = t.console || [];
+  if (!logs.length && !t.console_dropped)
+    return '<div class="empty" style="padding:14px 0">No console messages captured.</div>';
+  const n = l => logs.filter(c => lvlOf(c) === l).length;
+  const chips = [['error','Errors'], ['warning','Warnings'], ['info','Info'], ['debug','Debug']]
+    .map(([l, lbl]) => `<span class="fchip cf" data-cf="${l}">${lbl}<span class="n">${n(l)}</span></span>`).join('');
+  return `<div class="minibar"><input class="minisearch" id="consearch" placeholder="Search messages…">${chips}</div>
+    <div class="loglist" id="conlist"></div>
+    ${t.console_dropped ? `<div class="dropnote">${t.console_dropped} more entries were not captured (flow limit).</div>` : ''}`;
+}
+function wireConsolePane(t){
+  const list = document.getElementById('conlist');
+  if (!list) return;
+  const groups = groupConsole(t.console || []);
+  let lvl = '', q = '';
+  const render = () => {
+    const keep = groups.filter(c => (!lvl || lvlOf(c) === lvl) &&
+      (!q || (c.text + ' ' + (c.location || '')).toLowerCase().includes(q)));
+    list.innerHTML = keep.map(c => conRowHtml(c, t.t0)).join('') ||
+      '<div class="empty" style="padding:10px 0">No matching messages.</div>';
+  };
+  document.querySelectorAll('.cf').forEach(ch => ch.onclick = () => {
+    lvl = lvl === ch.dataset.cf ? '' : ch.dataset.cf;
+    document.querySelectorAll('.cf').forEach(x => x.classList.toggle('on', x.dataset.cf === lvl));
+    render();
+  });
+  document.getElementById('consearch').addEventListener('input', e => { q = e.target.value.toLowerCase(); render(); });
+  render();
 }
 function netPaneHtml(t){
   const net = t.network || [];
-  if (!net.length) return '<div class="empty" style="padding:14px 0">No network activity recorded.</div>';
-  const failed = net.filter(n => !n.ok).length;
-  return `<div class="nethead">
-      <span class="fchip nf on" data-nf="">All<span class="n">${net.length}</span></span>
-      ${failed ? `<span class="fchip nf" data-nf="bad">Failed<span class="n">${failed}</span></span>` : ''}
-    </div>
-    <div class="netlist" id="netlist">${net.map(netRowHtml).join('')}</div>`;
+  if (!net.length && !t.network_dropped)
+    return '<div class="empty" style="padding:14px 0">No network activity recorded.</div>';
+  const cnt = c => c === '' ? net.length : c === 'bad' ? net.filter(n => !n.ok).length : net.filter(n => catOf(n) === c).length;
+  const chips = NET_CATS.filter(([c]) => cnt(c)).map(([c, lbl]) =>
+    `<span class="fchip nf${c === '' ? ' on' : ''}" data-nf="${c}">${lbl}<span class="n">${cnt(c)}</span></span>`).join('');
+  return `${netSummaryHtml(net)}
+    <div class="minibar"><input class="minisearch" id="netsearch" placeholder="Search URL or endpoint…">
+      <select class="minisel" id="netsort"><option value="time">By time</option><option value="dur">By duration</option><option value="status">By status</option><option value="size">By size</option></select>
+      ${chips}</div>
+    <div class="netlist" id="netlist"></div>
+    ${t.network_dropped ? `<div class="dropnote">${t.network_dropped} more requests were not captured (flow limit).</div>` : ''}`;
 }
+function wireNetPane(t){
+  const list = document.getElementById('netlist');
+  if (!list) return;
+  const net = t.network || [];
+  let cat = '', q = '', sort = 'time', shown = 100;
+  const render = () => {
+    let keep = net.filter(n => (cat === '' || (cat === 'bad' ? !n.ok : catOf(n) === cat)) &&
+      (!q || n.url.toLowerCase().includes(q)));
+    if (sort === 'dur') keep = [...keep].sort((a, b) => (b.duration_ms || 0) - (a.duration_ms || 0));
+    else if (sort === 'status') keep = [...keep].sort((a, b) => (b.status || 999) - (a.status || 999));
+    else if (sort === 'size') keep = [...keep].sort((a, b) => (b.size || 0) - (a.size || 0));
+    NET_CTX = keep;
+    list.innerHTML = keep.slice(0, shown).map((n, i) => netRowHtml(n, t.t0, i)).join('') ||
+      '<div class="empty" style="padding:10px 0">No matching requests.</div>';
+    if (keep.length > shown)
+      list.innerHTML += `<button class="showmore" id="netmore">Show more (${keep.length - shown} hidden)</button>`;
+    const more = document.getElementById('netmore');
+    if (more) more.onclick = () => { shown += 200; render(); };
+  };
+  document.querySelectorAll('.nf').forEach(ch => ch.onclick = () => {
+    cat = ch.dataset.nf;
+    document.querySelectorAll('.nf').forEach(x => x.classList.toggle('on', x === ch));
+    render();
+  });
+  document.getElementById('netsearch').addEventListener('input', e => { q = e.target.value.toLowerCase(); shown = 100; render(); });
+  document.getElementById('netsort').addEventListener('change', e => { sort = e.target.value; render(); });
+  render();
+}
+function relatedHtml(t){
+  if (!failedLike(t.status)) return '';
+  const fs = failedStep(t);
+  const from = fs && fs.ts != null ? fs.ts - 2000 :
+    t.t0 != null ? t.t0 + Math.max(t.duration_ms - 10000, 0) : null;
+  if (from == null) return '';
+  const end = t.t0 != null ? t.t0 + t.duration_ms + 2000 : Infinity;
+  const cons = (t.console || []).filter(c => lvlOf(c) === 'error' && c.ts >= from && c.ts <= end).slice(-5);
+  const net = (t.network || []).filter(n => !n.ok && n.ts >= from && n.ts <= end).slice(-5);
+  if (!cons.length && !net.length) return '';
+  return `<div class="sec"><h3>Likely related activity</h3><div class="relbox">
+    <div class="relnote">Browser activity near the failure — troubleshooting hints, not a confirmed root cause.</div>
+    ${cons.map(c => conRowHtml(c, t.t0)).join('')}
+    ${net.map(n => `<div class="crow error"><span class="ctime">${relTime(n.ts, t.t0)}</span><span class="clvl error">net</span><span class="ctext">${esc(n.method)} ${esc(n.url)} — ${n.failure ? esc(n.failure) : 'HTTP ' + n.status}</span></div>`).join('')}
+  </div></div>`;
+}
+function dtlPaneHtml(t){
+  const leaves = (t.steps || []).filter((s, i, a) => !(a[i + 1] && a[i + 1].depth > s.depth));
+  const timed = leaves.filter(s => s.ts != null);
+  if (t.t0 == null || !timed.length)
+    return '<div class="empty" style="padding:14px 0">No timing data for this test.</div>';
+  const span = Math.max(t.duration_ms, 1);
+  const trunc = s => s.length > 34 ? s.slice(0, 32) + '…' : s;
+  const bars = timed.map(s => `<div class="tlrow"><span class="tllbl" title="${esc(s.name)}">${esc(trunc(s.name))}</span>
+    <div class="tltrack"><div class="tlbar ${s.status}" style="left:${(s.ts - t.t0)/span*100}%;width:${Math.max((s.duration_ms || 0)/span*100, .6)}%"></div>
+    ${s.attachment ? `<a class="tlshot" href="${ART(s.attachment)}" target="_blank" style="left:${Math.min((s.ts - t.t0 + (s.duration_ms || 0))/span*100, 98)}%" title="screenshot">📸</a>` : ''}</div></div>`).join('');
+  const dots = (t.console || []).filter(c => c.ts != null && (lvlOf(c) === 'error' || lvlOf(c) === 'warning'))
+      .map(c => `<i class="tldot ${lvlOf(c)}" style="left:${(c.ts - t.t0)/span*100}%" title="${esc(String(c.text).slice(0, 80))}"></i>`).join('')
+    + (t.network || []).filter(n => !n.ok && n.ts != null)
+      .map(n => `<i class="tldot net" style="left:${(n.ts - t.t0)/span*100}%" title="${esc(n.method + ' ' + n.url)}"></i>`).join('');
+  return `<div class="tlwrap">${bars}
+    ${dots ? `<div class="tlrow"><span class="tllbl">console / network</span><div class="tltrack">${dots}</div></div>` : ''}
+    <div class="axis"><span>0</span><span>${fmtMs(span)}</span></div></div>`;
+}
+let lastDtab = 'd-art';
 function openTest(i){
   const t = T[i];
-  const consoleRows = (t.console || []).map(c =>
-    `<div class="${c.level}">[${c.level}] ${esc(c.text)}${c.location ? ` (${esc(c.location)})` : ''}</div>`).join('') || '<div class="net-ok">No console errors or warnings.</div>';
   document.getElementById('drawer').innerHTML = `
     <div class="dhead">
       <div class="dtitle"><span class="badge ${effStatus(t)}">${effStatus(t)}</span><h2>${esc(t.title || t.name)}</h2>
         <button class="iconbtn" onclick="closeDrawer()">✕</button></div>
       <div class="dmeta">
-        <div><span>file </span><b>${esc(t.file)}</b></div><div><span>test </span><b>${esc(t.name)}</b></div>
+        <div><span>file </span><b>${esc(t.file)}</b></div>
+        ${t.flow ? `<div><span>flow </span><b>${esc(t.flow)}</b></div>` : `<div><span>test </span><b>${esc(t.name)}</b></div>`}
         <div><span>duration </span><b>${fmtMs(t.duration_ms)}</b></div>
         <div><span>started </span><b>${t.started_at ? new Date(t.started_at).toLocaleTimeString() : '—'}</b></div>
         ${t.retries ? `<div><span>reruns </span><b>${t.retries}</b></div>` : ''}
@@ -377,29 +555,31 @@ function openTest(i){
     </div>
     <div class="dbody">
       ${errorHtml(t)}
+      ${relatedHtml(t)}
       ${aiHtml(t.ai)}${healHtml(t)}
       <div class="sec"><h3>Steps</h3>${stepsHtml(t)}</div>
       <div class="sec">
         <div class="dtabs">
-          <span class="dtab active" data-t="d-art">Artifacts</span>
+          <span class="dtab" data-t="d-art">Artifacts</span>
           <span class="dtab" data-t="d-con">Console (${(t.console||[]).length})</span>
           <span class="dtab" data-t="d-net">Network (${(t.network||[]).length})</span>
+          <span class="dtab" data-t="d-tl">Timeline</span>
         </div>
-        <div class="dpane active" id="d-art">${artsHtml(t)}</div>
-        <div class="dpane" id="d-con"><div class="loglist">${consoleRows}</div></div>
+        <div class="dpane" id="d-art">${artsHtml(t)}</div>
+        <div class="dpane" id="d-con">${consolePaneHtml(t)}</div>
         <div class="dpane" id="d-net">${netPaneHtml(t)}</div>
+        <div class="dpane" id="d-tl">${dtlPaneHtml(t)}</div>
       </div>
     </div>`;
-  document.querySelectorAll('.dtab').forEach(tab => tab.onclick = () => {
-    document.querySelectorAll('.dtab').forEach(x => x.classList.remove('active'));
-    document.querySelectorAll('.dpane').forEach(x => x.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById(tab.dataset.t).classList.add('active');
-  });
-  document.querySelectorAll('.nf').forEach(ch => ch.onclick = () => {
-    document.querySelectorAll('.nf').forEach(x => x.classList.toggle('on', x === ch));
-    document.getElementById('netlist').classList.toggle('failed-only', ch.dataset.nf === 'bad');
-  });
+  const tabs = [...document.querySelectorAll('.dtab')];
+  const activate = tab => {
+    tabs.forEach(x => x.classList.toggle('active', x === tab));
+    document.querySelectorAll('.dpane').forEach(x => x.classList.toggle('active', x.id === tab.dataset.t));
+    lastDtab = tab.dataset.t;   // keep the selected tab across tests
+  };
+  activate(tabs.find(x => x.dataset.t === lastDtab) || tabs[0]);
+  tabs.forEach(tab => tab.onclick = () => activate(tab));
+  wireConsolePane(t); wireNetPane(t);
   document.getElementById('drawer').classList.add('show');
   document.getElementById('overlay').classList.add('show');
 }
