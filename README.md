@@ -915,6 +915,7 @@ Copy `.env.example` to `.env`:
 | `AI_PROVIDER` | — | LLM provider for L3: `openai`, `gemini`, or `anthropic` |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider (no default — must be set) |
+| `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network headers/payloads |
 
 ### Multi-environment reports
 
@@ -939,23 +940,26 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 
 ```
 reports/staging/
-├── report.html     # Interactive UI (charts, table, failure details, PDF export)
-├── report.json     # Raw structured data
+├── report.html     # Interactive UI (overview, tests, timeline, console, network)
+├── report.json     # Raw structured data (same payload as the UI)
 ├── assets/
 │   ├── report.css
-│   └── report.js
+│   ├── report.js
+│   └── data.js     # This run's payload (window.__WEBAGENT_DATA__)
 └── images/
     └── *.png       # Screenshots from the run
 ```
 
 The report includes:
-- Result distribution doughnut chart
-- Pass rate trend across last 8 runs
-- Test duration bars
-- Category breakdown
-- Expandable test details with per-step duration and execution layer
-- Failure screenshots with lightbox zoom
-- PDF export (2-page report with failure details and embedded screenshots)
+- Each `## section` of a flow file shown as its own test with status, duration, and steps
+- A right-side drawer per test with Artifacts, Console, Network, and Timeline tabs
+- Console messages (all levels) with level filters, search, repeat grouping, and source locations
+- Network requests with method/status/type/duration/size, filters (Failed/XHR/Doc/JS/CSS/Img), search, sorting, expandable headers/payloads, and Copy cURL/URL actions
+- Console errors and network activity routed to the section and step where they occurred
+- "Likely related activity" hints next to failures (nearby console errors and failed requests)
+- Execution-level Console and Network tabs aggregating all tests with per-test attribution
+- Healed-locator tracking (L2/L3 usage) and failure screenshots
+- Sensitive headers/fields (Authorization, cookies, tokens…) redacted automatically; extend via `REPORT_REDACT`
 
 ```bash
 open reports/staging/report.html
