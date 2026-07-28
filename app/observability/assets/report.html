@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web Agent Test Report</title>
+<link rel="stylesheet" href="assets/report.css">
+</head>
+<body>
+<header class="topbar">
+  <section class="hero">
+    <div class="hmain">
+      <div class="hlogo">W</div>
+      <div class="hbody">
+        <div class="htitle"><h1>Web Agent Test Report</h1><span class="hchip" id="envchip"></span></div>
+        <div class="hmeta">
+          <span id="hdate"></span>
+          <span>Run ID: <b class="mono" id="hrunid"></b><button class="copybtn" id="copyrun" title="Copy run id">⧉</button></span>
+          <span>Triggered by: <b id="htrigger"></b></span>
+          <span>Browser: <b id="hbrowser"></b></span>
+        </div>
+      </div>
+      <div class="hright">
+        <button class="iconbtn" id="themebtn" title="Toggle dark mode">◐</button>
+        <span class="pill" id="statuspill"></span>
+      </div>
+    </div>
+    <div class="pulselbl">Execution order</div>
+    <div class="pulse" id="pulse"></div>
+  </section>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="overview">Overview</button>
+    <button role="tab" aria-selected="false" data-tab="tests">Tests <span class="count" id="tcount"></span></button>
+    <button role="tab" aria-selected="false" data-tab="timeline">Timeline</button>
+    <button role="tab" aria-selected="false" data-tab="summary">Summary</button>
+  </nav>
+</header>
+
+<div class="wrap">
+  <div class="pane active" id="pane-overview">
+    <div class="ai-banner" id="aibanner" style="display:none"><span class="tag">✦ AI run summary</span><p id="aisummary"></p></div>
+    <div class="cards" id="cards"></div>
+    <div class="grid g3">
+      <div class="panel"><div class="ptitle">Result distribution</div><div class="donutrow" id="donut"></div></div>
+      <div class="panel"><div class="ptitle">Duration distribution</div><div id="histo"></div></div>
+      <div class="panel"><div class="ptitle">Healed locators</div><div id="healsum"></div></div>
+    </div>
+    <div class="grid g2">
+      <div class="panel"><div class="ptitle">Failures</div><div id="failures"></div></div>
+      <div class="panel"><div class="ptitle">Slowest tests</div><div id="slowest"></div></div>
+    </div>
+    <div class="panel"><div class="ptitle">Suites</div><div id="suites"></div></div>
+  </div>
+
+  <div class="pane" id="pane-tests">
+    <div class="toolbar">
+      <div class="searchbox">🔍<input id="search" placeholder="Search tests, files, errors, markers…"><span class="kbd">/</span></div>
+      <div id="fchips"></div>
+      <select id="marker"><option value="">All markers</option></select>
+      <select id="suite"><option value="">All suites</option></select>
+    </div>
+    <div id="tests"></div>
+  </div>
+
+  <div class="pane" id="pane-timeline">
+    <div class="panel">
+      <div class="ptitle">Execution timeline<span class="right" id="wallclock"></span></div>
+      <div id="lanes"></div><div class="ticks" id="ticks"></div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-summary">
+    <div class="grid g3">
+      <div class="panel"><div class="ptitle">Timing</div><div id="sum-timing"></div></div>
+      <div class="panel"><div class="ptitle">Target environment</div><div id="sum-env"></div></div>
+      <div class="panel"><div class="ptitle">Toolchain &amp; run</div><div id="sum-tool"></div></div>
+    </div>
+  </div>
+  <footer id="foot"></footer>
+</div>
+
+<div id="overlay"></div>
+<div id="drawer"></div>
+
+<script src="assets/data.js"></script>
+<script src="assets/report.js"></script>
+</body>
+</html>
