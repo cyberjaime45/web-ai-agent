@@ -89,6 +89,10 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
         "duration_ms": round((s.get("duration") or 0.0) * 1000, 1),
         "depth": depth,
     }
+    if s.get("ts_start"):
+        rec["ts"] = round(s["ts_start"] * 1000)
+        rec["started_at"] = datetime.datetime.fromtimestamp(
+            s["ts_start"]).astimezone().isoformat(timespec="milliseconds")
     if rec["status"] == "failed" and s.get("msg"):
         rec["error"] = s["msg"]
     if s.get("screenshot"):
@@ -143,22 +147,29 @@ def _nest_sub_flows(steps: list[dict], started_at: str, depth: int) -> list[dict
     return out
 
 
+def _section_runs(flow_steps: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Group steps into consecutive (section, steps) runs.
+
+    Sub-flow steps inherit the current section — their own section comes
+    from the sub-flow's markdown and would cause false section breaks.
+    """
+    runs: list[tuple[str, list[dict]]] = []
+    current: str | None = None
+    for s in flow_steps:
+        sec = current if s.get("sub_flow") else (s.get("section") or "")
+        if sec != current or not runs:
+            runs.append((sec or "", []))
+            current = sec or ""
+        runs[-1][1].append(s)
+    return runs
+
+
 def _build_steps(flow_steps: list[dict], started_at: str) -> list[dict]:
     """Serialized StepResults → flat depth-annotated step records (Astra tree)."""
     if not flow_steps:
         return []
 
-    # Sub-flow steps inherit the current section — their own section comes
-    # from the sub-flow's markdown and would cause false section breaks.
-    sections: list[tuple[str, list[dict]]] = []
-    current: str | None = None
-    for s in flow_steps:
-        sec = current if s.get("sub_flow") else (s.get("section") or "")
-        if sec != current or not sections:
-            sections.append((sec or "", []))
-            current = sec or ""
-        sections[-1][1].append(s)
-
+    sections = _section_runs(flow_steps)
     distinct = {name for name, _ in sections if name}
     show_sections = len(distinct) > 1 or (len(distinct) == 1 and "Steps" not in distinct)
 
@@ -171,6 +182,57 @@ def _build_steps(flow_steps: list[dict], started_at: str) -> list[dict]:
         else:
             out.extend(_nest_sub_flows(group_steps, started_at, 0))
     return out
+
+
+# ── Section splitting & event routing ────────────────────────────────────────
+
+def _splittable(runs: list[tuple[str, list[dict]]]) -> bool:
+    """Split when ≥2 distinct named sections and executed steps have clocks."""
+    distinct = {name for name, _ in runs if name}
+    if len(distinct) < 2:
+        return False
+    return all(s.get("ts_start")
+               for _, steps in runs for s in steps if not s.get("skipped"))
+
+
+def _attribute_steps(entries: list[dict], steps: list[dict]) -> None:
+    """Best-effort: label each entry with the step active at its start."""
+    windows = [(round(s["ts_start"] * 1000), round(s["ts_end"] * 1000),
+                s.get("name") or s.get("label", ""))
+               for s in steps if s.get("ts_start")]
+    for e in entries:
+        ts = e.get("ts")
+        if ts is None:
+            continue
+        for lo, hi, name in windows:
+            if lo <= ts <= hi:
+                e["step"] = name
+                break
+
+
+def _route_events(entries: list[dict], starts: list[tuple[int, int]],
+                  n: int) -> list[list[dict]]:
+    """Route entries to section index by start time.
+
+    ``starts`` is [(window_start_ms, section_index)] sorted ascending —
+    skipped sections have no window and receive nothing. An entry belongs to
+    the last section that started before it; earlier events go to the first
+    windowed section (spec: activity stays with the test where it started).
+    """
+    buckets: list[list[dict]] = [[] for _ in range(n)]
+    if not starts:
+        return buckets
+    for e in entries:
+        ts = e.get("ts")
+        idx = starts[0][1]
+        if ts is not None:
+            for ms, i in starts:
+                if ts >= ms:
+                    idx = i
+                else:
+                    break
+        buckets[idx].append(e)
+    return buckets
 
 
 # ── Test records ─────────────────────────────────────────────────────────────
@@ -216,6 +278,16 @@ def _build_test(r: dict) -> dict:
         ],
     }
 
+    stamped = [s for s in flow_steps if s.get("ts_start")]
+    test["t0"] = round(stamped[0]["ts_start"] * 1000) if stamped else None
+    _attribute_steps(test["console"], flow_steps)
+    _attribute_steps(test["network"], flow_steps)
+    dropped = r.get("capture_dropped") or {}
+    if dropped.get("console"):
+        test["console_dropped"] = dropped["console"]
+    if dropped.get("network"):
+        test["network_dropped"] = dropped["network"]
+
     if status in ("failed", "error"):
         message = r.get("error") or (r.get("longrepr") or "").split("\n")[0] or "Flow failed"
         test["error"] = {
@@ -224,6 +296,96 @@ def _build_test(r: dict) -> dict:
             "traceback": r.get("longrepr") or None,
         }
     return test
+
+
+def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict:
+    nodeid = r.get("nodeid", "")
+    file = nodeid.split("::")[0] if "::" in nodeid else nodeid
+    executed = [s for s in steps if not s.get("skipped")]
+    failed = [s for s in steps if not s.get("passed") and not s.get("skipped")]
+    if failed:
+        status = "failed"
+    elif not executed:
+        status = "skipped"
+    else:
+        status = "passed"
+    t0 = round(executed[0]["ts_start"] * 1000) if executed else None
+    t_end = round(max(s["ts_end"] for s in executed) * 1000) if executed else None
+    started_iso = (datetime.datetime.fromtimestamp(executed[0]["ts_start"])
+                   .astimezone().isoformat(timespec="milliseconds")
+                   if executed else r.get("started_at") or "")
+
+    test: dict[str, Any] = {
+        "id": f"{file}::s{idx}",   # ordinal id — stable even with duplicate names
+        "name": name,
+        "title": name,
+        "file": file,
+        "flow": r.get("name") or "",
+        "markers": [],
+        "status": status,
+        "started_at": started_iso,
+        "t0": t0,
+        "duration_ms": float(t_end - t0) if t0 is not None else 0.0,
+        "retries": 0,
+        "steps": _nest_sub_flows(steps, started_iso, 0),
+        "console": [],
+        "network": [],
+        "artifacts": {"screenshot": None, "screenshots": []},
+        "healings": [
+            {
+                "description": s.get("name") or s.get("label", ""),
+                "original": None,
+                "healed_by": "L3 (AI)" if s.get("layer") == 3 else "L2 (fuzzy match)",
+                "resolved": s.get("msg") or "resolved at runtime",
+                "layer": s.get("layer"),
+            }
+            for s in steps if (s.get("layer") or 1) > 1 and s.get("passed")
+        ],
+    }
+    if failed:
+        test["error"] = {
+            "message": failed[-1].get("msg") or r.get("error") or "Section failed",
+            "kind": "FlowError",
+            "traceback": r.get("longrepr") or None,
+        }
+        shot = next((s["screenshot"] for s in reversed(steps)
+                     if not s.get("passed") and s.get("screenshot")), None)
+        test["artifacts"]["screenshot"] = shot
+    return test
+
+
+def _build_tests(r: dict) -> list[dict]:
+    """One test per section when splittable, else the single flow test."""
+    flow_steps = r.get("flow_steps") or []
+    runs = _section_runs(flow_steps)
+    if not _splittable(runs):
+        return [_build_test(r)]
+
+    tests = [_build_section_test(r, i + 1, name or "Steps", steps)
+             for i, (name, steps) in enumerate(runs)]
+
+    starts = sorted((t["t0"], i) for i, t in enumerate(tests)
+                    if t["t0"] is not None)
+    for entries_key in ("console", "network"):
+        buckets = _route_events(r.get(entries_key) or [], starts, len(tests))
+        for i, t in enumerate(tests):
+            t[entries_key] = buckets[i]
+            _attribute_steps(t[entries_key], runs[i][1])
+
+    # Flow-end failure screenshot → last failing section without one.
+    if r.get("screenshot"):
+        for t in reversed(tests):
+            if t["status"] == "failed":
+                t["artifacts"]["screenshot"] = (t["artifacts"]["screenshot"]
+                                                or r["screenshot"])
+                break
+
+    dropped = r.get("capture_dropped") or {}
+    if dropped.get("console"):
+        tests[-1]["console_dropped"] = dropped["console"]
+    if dropped.get("network"):
+        tests[-1]["network_dropped"] = dropped["network"]
+    return tests
 
 
 # ── generate_report ──────────────────────────────────────────────────────────
@@ -244,7 +406,7 @@ def generate_report(
         r["screenshot"] = _screenshot_rel_path(r.get("screenshot"), report_dir)
         for s in r.get("flow_steps") or []:
             s["screenshot"] = _screenshot_rel_path(s.get("screenshot"), report_dir) or ""
-        tests.append(_build_test(r))
+        tests.extend(_build_tests(r))
 
     total = len(tests)
     passed = sum(1 for t in tests if t["status"] == "passed")

@@ -7,15 +7,19 @@ import time
 
 import pytest
 
-from app.observability.reporter import _build_steps, _build_test, generate_report
+from app.observability.reporter import (
+    _build_steps, _build_test, _build_tests, generate_report,
+)
 
 
 def make_step(label="click: \"Login\"", passed=True, skipped=False, msg="",
-              duration=0.5, sub_flow="", section="", screenshot="", layer=1):
+              duration=0.5, sub_flow="", section="", screenshot="", layer=1,
+              ts_start=0.0, ts_end=0.0):
     return {
         "label": label, "name": label, "passed": passed, "skipped": skipped,
         "msg": msg, "duration": duration, "sub_flow": sub_flow,
         "section": section, "screenshot": screenshot, "layer": layer,
+        "ts_start": ts_start, "ts_end": ts_end,
     }
 
 
@@ -176,6 +180,124 @@ def test_build_test_console_network_passthrough():
     t = _build_test(r)
     assert t["console"][0]["text"] == "boom"
     assert t["network"][0]["status"] == 200
+
+
+# ── _build_tests: section splitting ─────────────────────────────────────────
+
+BASE = 1_700_000_000.0  # epoch seconds
+
+
+def sectioned_steps():
+    return [
+        make_step(label="goto a", section="Login Page", ts_start=BASE, ts_end=BASE + 1),
+        make_step(label="assert a", section="Login Page", ts_start=BASE + 1, ts_end=BASE + 2),
+        make_step(label="goto b", section="Home Page", passed=False, msg="nope",
+                  screenshot="images/f.png", ts_start=BASE + 2, ts_end=BASE + 4),
+        make_step(label="assert b", section="Home Page", passed=False, skipped=True),
+        make_step(label="goto c", section="Leads Page", ts_start=BASE + 4, ts_end=BASE + 5),
+    ]
+
+
+def test_split_produces_one_test_per_section():
+    r = make_result(outcome="failed", error="boom", longrepr="tb",
+                    flow_steps=sectioned_steps())
+    tests = _build_tests(r)
+    assert [(t["name"], t["status"]) for t in tests] == [
+        ("Login Page", "passed"), ("Home Page", "failed"), ("Leads Page", "passed"),
+    ]
+    assert [t["id"] for t in tests] == [
+        "flows/login/sso.md::s1", "flows/login/sso.md::s2", "flows/login/sso.md::s3",
+    ]
+    assert all(t["file"] == "flows/login/sso.md" for t in tests)
+    assert all(t["flow"] == "SSO Login" for t in tests)
+    # steps are depth-0 within their section (no redundant section group)
+    assert [s["depth"] for s in tests[0]["steps"]] == [0, 0]
+    # failing section carries its own error + failed-step screenshot
+    assert tests[1]["error"]["message"] == "nope"
+    assert tests[1]["error"]["traceback"] == "tb"
+    assert tests[1]["artifacts"]["screenshot"] == "images/f.png"
+    assert "error" not in tests[0]
+    # timing window per section
+    assert tests[0]["t0"] == round(BASE * 1000)
+    assert tests[0]["duration_ms"] == pytest.approx(2000.0)
+
+
+def test_no_split_for_single_section():
+    r = make_result(flow_steps=[make_step(section="Steps", ts_start=BASE, ts_end=BASE + 1)])
+    tests = _build_tests(r)
+    assert len(tests) == 1 and tests[0]["name"] == "SSO Login"
+
+
+def test_no_split_without_step_timestamps():
+    r = make_result(flow_steps=[
+        make_step(section="One"), make_step(section="Two"),
+    ])
+    tests = _build_tests(r)
+    assert len(tests) == 1   # old data → flow-level fallback
+
+
+def test_all_skipped_section_becomes_skipped_test():
+    steps = sectioned_steps()
+    steps[4] = make_step(label="goto c", section="Leads Page",
+                         passed=False, skipped=True)
+    tests = _build_tests(make_result(outcome="failed", flow_steps=steps))
+    assert tests[2]["status"] == "skipped"
+    assert tests[2]["duration_ms"] == 0.0
+
+
+def test_events_routed_by_start_time():
+    console = [
+        {"level": "error", "text": "early", "location": None,
+         "ts": round((BASE - 5) * 1000), "seq": 1},          # before first → s1
+        {"level": "error", "text": "home", "location": None,
+         "ts": round((BASE + 2.5) * 1000), "seq": 2},        # inside Home window
+        {"level": "warning", "text": "late", "location": None,
+         "ts": round((BASE + 99) * 1000), "seq": 3},         # after last → s3
+    ]
+    network = [
+        {"method": "GET", "url": "https://x.test/a", "status": 200, "ok": True,
+         "failure": None, "resource_type": "xhr",
+         "ts": round((BASE + 0.5) * 1000), "duration_ms": 40.0,
+         "size": 10, "body": None, "seq": 4},
+    ]
+    r = make_result(outcome="failed", flow_steps=sectioned_steps(),
+                    console=console, network=network)
+    tests = _build_tests(r)
+    assert [c["text"] for c in tests[0]["console"]] == ["early"]
+    assert [c["text"] for c in tests[1]["console"]] == ["home"]
+    assert [c["text"] for c in tests[2]["console"]] == ["late"]
+    assert [n["url"] for n in tests[0]["network"]] == ["https://x.test/a"]
+    # step attribution: the xhr started during "goto a"
+    assert tests[0]["network"][0]["step"] == "goto a"
+    assert tests[1]["console"][0]["step"] == "goto b"
+
+
+def test_dropped_counters_attach_to_last_test():
+    r = make_result(outcome="failed", flow_steps=sectioned_steps())
+    r["capture_dropped"] = {"console": 7, "network": 9}
+    tests = _build_tests(r)
+    assert "console_dropped" not in tests[0]
+    assert tests[-1]["console_dropped"] == 7 and tests[-1]["network_dropped"] == 9
+
+
+def test_single_test_path_gets_t0_and_step_attribution():
+    r = make_result(flow_steps=[make_step(ts_start=BASE, ts_end=BASE + 1)],
+                    console=[{"level": "error", "text": "x", "location": None,
+                              "ts": round((BASE + 0.2) * 1000), "seq": 1}])
+    t = _build_tests(r)[0]
+    assert t["t0"] == round(BASE * 1000)
+    assert t["console"][0]["step"] == 'click: "Login"'
+
+
+def test_generate_report_counts_section_tests(tmp_path):
+    out = tmp_path / "report.html"
+    r = make_result(outcome="failed", error="boom", longrepr="tb",
+                    flow_steps=sectioned_steps())
+    generate_report([r], time.time() - 5, out, "staging")
+    payload = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert payload["totals"]["total"] == 3
+    assert payload["totals"]["passed"] == 2
+    assert payload["totals"]["failed"] == 1
 
 
 # ── generate_report ──────────────────────────────────────────────────────────
