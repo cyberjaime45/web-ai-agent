@@ -57,14 +57,10 @@ class ProfessionalReportPlugin:
 
     def __init__(self) -> None:
         self.results: list[dict] = []
-        self.failure_screenshots: dict[str, str] = {}
         self.flow_steps: dict[str, list[dict]] = {}
         self.flow_errors: dict[str, str] = {}
         self.captures: dict[str, dict] = {}
         self.session_start = time.time()
-
-    def record_screenshot(self, nodeid: str, path: str) -> None:
-        self.failure_screenshots[nodeid] = path
 
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
@@ -111,14 +107,12 @@ class ProfessionalReportPlugin:
                         else ""
                     ),
                     "longrepr": str(report.longrepr) if report.failed else "",
-                    "screenshot": None,
                 }
             )
 
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
         for r in self.results:
             nodeid = r["nodeid"]
-            r["screenshot"] = self.failure_screenshots.get(nodeid)
             r["error"] = self.flow_errors.get(nodeid, "")
             r["flow_steps"] = self.flow_steps.get(nodeid, [])
             capture = self.captures.get(nodeid, {})
@@ -219,31 +213,6 @@ def _annotate_failure_screenshot(shot_path: str, page) -> None:
         img.save(shot_path)
     except Exception:
         pass  # Annotation is best-effort; never block reporting
-
-
-# ── Screenshot capture on call-phase failure ───────────────────
-#
-# Captured here — inside makereport for the "call" phase — because
-# the browser page is still open at this point.
-
-@pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
-    outcome = yield
-    rep = outcome.get_result()
-    setattr(item, f"rep_{rep.when}", rep)
-
-    if call.when == "call" and rep.failed:
-        funcargs = getattr(item, "funcargs", None) or {}
-        driver: BrowserDriver | None = funcargs.get("browser_driver")  # type: ignore[assignment]
-        if driver is not None:
-            try:
-                shot_path = driver.capture_screenshot(str(uuid.uuid4()))
-                _annotate_failure_screenshot(shot_path, driver.page)
-                plugin = item.config.pluginmanager.get_plugin("professional_report")
-                if plugin is not None:
-                    plugin.record_screenshot(item.nodeid, shot_path)
-            except Exception:
-                pass
 
 
 # ── Inline / explicit-path flow injection ─────────────────────
@@ -360,26 +329,23 @@ class FlowItem(pytest.Item):
             # Record steps for the report (both pass and fail)
             plugin = self.config.pluginmanager.get_plugin("professional_report")
 
-            # Take a fresh failure screenshot while the browser is still open.
+            # Failure screenshots live on the failing step — single path.
+            # The engine captures one at the failure site; only when that was
+            # impossible (page navigating, crash) capture the flow-end state
+            # here instead. Skipped steps never get a screenshot.
             if not result.success:
-                try:
-                    shot_path = str(self._artifacts / f"{uuid.uuid4()}.png")
-                    page.screenshot(path=shot_path)
-                    _annotate_failure_screenshot(shot_path, page)
-                    result.last_screenshot = shot_path
-                except Exception:
-                    pass  # best-effort; don't block test reporting
-
-                # Backfill: ensure the last failing step always has a screenshot.
-                # The engine may have failed to capture one (page navigating, etc.).
-                if result.last_screenshot:
-                    for s in reversed(result.steps):
-                        if not s.success and not s.screenshot_path:
-                            s.screenshot_path = result.last_screenshot
-                            break
-
-                if result.last_screenshot and plugin:
-                    plugin.record_screenshot(self.nodeid, result.last_screenshot)
+                failed_steps = [s for s in result.steps
+                                if not s.success and not getattr(s, "skipped", False)]
+                last_failed = failed_steps[-1] if failed_steps else None
+                if last_failed is not None and not last_failed.screenshot_path:
+                    try:
+                        shot_path = str(self._artifacts / f"{uuid.uuid4()}.png")
+                        page.screenshot(path=shot_path)
+                        _annotate_failure_screenshot(shot_path, page)
+                        last_failed.screenshot_path = shot_path
+                        result.last_screenshot = shot_path
+                    except Exception:
+                        pass  # best-effort; don't block test reporting
 
             if plugin:
                 if result.steps:

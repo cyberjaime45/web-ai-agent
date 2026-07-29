@@ -70,6 +70,17 @@ def _step_status(s: dict) -> str:
     return "passed" if s.get("passed") else "failed"
 
 
+def _failure_screenshot(steps: list[dict]) -> str | None:
+    """Screenshot of the last failed (non-skipped) step — the failure site.
+
+    Skipped steps never carry screenshots; this is the single source for a
+    test's failure screenshot in the payload.
+    """
+    return next((s["screenshot"] for s in reversed(steps)
+                 if not s.get("passed") and not s.get("skipped")
+                 and s.get("screenshot")), None)
+
+
 def _group_status(children: list[dict]) -> str:
     statuses = {c["status"] for c in children}
     if "failed" in statuses:
@@ -95,7 +106,7 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
             s["ts_start"]).astimezone().isoformat(timespec="milliseconds")
     if rec["status"] == "failed" and s.get("msg"):
         rec["error"] = s["msg"]
-    if s.get("screenshot"):
+    if s.get("screenshot") and rec["status"] != "skipped":
         rec["attachment"] = s["screenshot"]
     return rec
 
@@ -262,7 +273,7 @@ def _build_test(r: dict) -> dict:
         "console": r.get("console") or [],
         "network": r.get("network") or [],
         "artifacts": {
-            "screenshot": r.get("screenshot"),
+            "screenshot": _failure_screenshot(flow_steps),
             "screenshots": [],
         },
         "healings": [
@@ -348,9 +359,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
             "kind": "FlowError",
             "traceback": r.get("longrepr") or None,
         }
-        shot = next((s["screenshot"] for s in reversed(steps)
-                     if not s.get("passed") and s.get("screenshot")), None)
-        test["artifacts"]["screenshot"] = shot
+        test["artifacts"]["screenshot"] = _failure_screenshot(steps)
     return test
 
 
@@ -371,14 +380,6 @@ def _build_tests(r: dict) -> list[dict]:
         for i, t in enumerate(tests):
             t[entries_key] = buckets[i]
             _attribute_steps(t[entries_key], runs[i][1])
-
-    # Flow-end failure screenshot → last failing section without one.
-    if r.get("screenshot"):
-        for t in reversed(tests):
-            if t["status"] == "failed":
-                t["artifacts"]["screenshot"] = (t["artifacts"]["screenshot"]
-                                                or r["screenshot"])
-                break
 
     dropped = r.get("capture_dropped") or {}
     if dropped.get("console"):
@@ -403,7 +404,6 @@ def generate_report(
     tests = []
     for r in results:
         r = dict(r)
-        r["screenshot"] = _screenshot_rel_path(r.get("screenshot"), report_dir)
         for s in r.get("flow_steps") or []:
             s["screenshot"] = _screenshot_rel_path(s.get("screenshot"), report_dir) or ""
         tests.extend(_build_tests(r))

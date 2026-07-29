@@ -25,7 +25,7 @@ def make_step(label="click: \"Login\"", passed=True, skipped=False, msg="",
 
 def make_result(nodeid="flows/login/sso.md::SSO Login", outcome="passed",
                 duration=2.5, longrepr="", error="", started_at="2026-07-28T10:00:00",
-                screenshot=None, flow_steps=None, console=None, network=None):
+                flow_steps=None, console=None, network=None):
     return {
         "nodeid": nodeid,
         "name": nodeid.split("::")[-1],
@@ -34,7 +34,6 @@ def make_result(nodeid="flows/login/sso.md::SSO Login", outcome="passed",
         "longrepr": longrepr,
         "error": error,
         "started_at": started_at,
-        "screenshot": screenshot,
         "flow_steps": flow_steps if flow_steps is not None else [],
         "console": console or [],
         "network": network or [],
@@ -147,15 +146,36 @@ def test_build_test_failure_error_info():
         outcome="failed",
         error="Flow 'SSO Login' failed — element not found",
         longrepr="full traceback here",
-        screenshot="images/fail.png",
-        flow_steps=[make_step(passed=False, msg="element not found")],
+        flow_steps=[make_step(passed=False, msg="element not found",
+                              screenshot="images/fail.png")],
     )
     t = _build_test(r)
     assert t["status"] == "failed"
     assert t["error"]["message"] == "Flow 'SSO Login' failed — element not found"
     assert t["error"]["kind"] == "FlowError"
     assert t["error"]["traceback"] == "full traceback here"
+    # failure screenshot comes from the failing step — the single source
     assert t["artifacts"]["screenshot"] == "images/fail.png"
+
+
+def test_skipped_steps_never_carry_screenshots():
+    steps = [
+        make_step(label="goto", section="One", ts_start=BASE, ts_end=BASE + 1),
+        make_step(label="boom", section="One", passed=False, msg="fail",
+                  screenshot="images/failed_step.png",
+                  ts_start=BASE + 1, ts_end=BASE + 2),
+        make_step(label="after", section="One", passed=False, skipped=True,
+                  screenshot="images/stray.png"),   # must be ignored
+        make_step(label="next", section="Two", ts_start=BASE + 2, ts_end=BASE + 3),
+    ]
+    tests = _build_tests(make_result(outcome="failed", flow_steps=steps))
+    failed_test = tests[0]
+    assert failed_test["artifacts"]["screenshot"] == "images/failed_step.png"
+    skipped_leaf = [s for s in failed_test["steps"] if s["status"] == "skipped"][0]
+    assert "attachment" not in skipped_leaf
+    # the failure screenshot is the failed step's, never the skipped step's
+    failed_leaf = [s for s in failed_test["steps"] if s["status"] == "failed"][0]
+    assert failed_leaf["attachment"] == "images/failed_step.png"
 
 
 def test_build_test_healings_from_layers():
