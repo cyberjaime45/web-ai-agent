@@ -164,7 +164,8 @@ select{background:var(--card);border:1px solid var(--border);border-radius:9px;p
 /* ── Drawer ─────────────────────────────────────────────────────────── */
 #overlay{position:fixed;inset:0;background:rgba(15,20,30,.45);opacity:0;pointer-events:none;transition:opacity .15s;z-index:40}
 #overlay.show{opacity:1;pointer-events:auto}
-#drawer{position:fixed;top:0;right:0;bottom:0;width:min(820px,94vw);background:var(--card);border-left:1px solid var(--border);transform:translateX(102%);transition:transform .18s ease;z-index:50;overflow-y:auto}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(clamp(680px,65vw,1400px),94vw);background:var(--card);border-left:1px solid var(--border);transform:translateX(102%);transition:transform .18s ease;z-index:50;overflow-y:auto}
+@media(max-width:700px){#drawer{width:100vw;border-left:none}}
 #drawer.show{transform:none}
 .dhead{position:sticky;top:0;background:var(--card);border-bottom:1px solid var(--border);padding:16px 22px;z-index:2}
 .dtitle{display:flex;align-items:center;gap:12px}
