@@ -952,7 +952,7 @@ reports/staging/
 
 The report includes:
 - Each `## section` of a flow file shown as its own test with status, duration, and steps
-- A right-side drawer per test with Artifacts, Console, Network, and Timeline tabs
+- A right-side drawer per test with Artifacts, Console, and Network tabs
 - Console messages (all levels) with level filters, search, repeat grouping, and source locations
 - Network requests with method/status/type/duration/size, filters (Failed/XHR/Doc/JS/CSS/Img), search, sorting, expandable headers/payloads, and Copy cURL/URL actions
 - Console errors and network activity routed to the section and step where they occurred

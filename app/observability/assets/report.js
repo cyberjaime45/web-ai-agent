@@ -519,24 +519,6 @@ function relatedHtml(t){
     ${net.map(n => `<div class="crow error"><span class="ctime">${relTime(n.ts, t.t0)}</span><span class="clvl error">net</span><span class="ctext">${esc(n.method)} ${esc(n.url)} — ${n.failure ? esc(n.failure) : 'HTTP ' + n.status}</span></div>`).join('')}
   </div></div>`;
 }
-function dtlPaneHtml(t){
-  const leaves = (t.steps || []).filter((s, i, a) => !(a[i + 1] && a[i + 1].depth > s.depth));
-  const timed = leaves.filter(s => s.ts != null);
-  if (t.t0 == null || !timed.length)
-    return '<div class="empty" style="padding:14px 0">No timing data for this test.</div>';
-  const span = Math.max(t.duration_ms, 1);
-  const trunc = s => s.length > 34 ? s.slice(0, 32) + '…' : s;
-  const bars = timed.map(s => `<div class="tlrow"><span class="tllbl" title="${esc(s.name)}">${esc(trunc(s.name))}</span>
-    <div class="tltrack"><div class="tlbar ${s.status}" style="left:${(s.ts - t.t0)/span*100}%;width:${Math.max((s.duration_ms || 0)/span*100, .6)}%"></div>
-    ${s.attachment ? `<a class="tlshot" href="${ART(s.attachment)}" target="_blank" style="left:${Math.min((s.ts - t.t0 + (s.duration_ms || 0))/span*100, 98)}%" title="screenshot">📸</a>` : ''}</div></div>`).join('');
-  const dots = (t.console || []).filter(c => c.ts != null && (lvlOf(c) === 'error' || lvlOf(c) === 'warning'))
-      .map(c => `<i class="tldot ${lvlOf(c)}" style="left:${(c.ts - t.t0)/span*100}%" title="${esc(String(c.text).slice(0, 80))}"></i>`).join('')
-    + (t.network || []).filter(n => !n.ok && n.ts != null)
-      .map(n => `<i class="tldot net" style="left:${(n.ts - t.t0)/span*100}%" title="${esc(n.method + ' ' + n.url)}"></i>`).join('');
-  return `<div class="tlwrap">${bars}
-    ${dots ? `<div class="tlrow"><span class="tllbl">console / network</span><div class="tltrack">${dots}</div></div>` : ''}
-    <div class="axis"><span>0</span><span>${fmtMs(span)}</span></div></div>`;
-}
 let lastDtab = 'd-art';
 function openTest(i){
   const t = T[i];
@@ -563,12 +545,10 @@ function openTest(i){
           <span class="dtab" data-t="d-art">Artifacts</span>
           <span class="dtab" data-t="d-con">Console (${(t.console||[]).length})</span>
           <span class="dtab" data-t="d-net">Network (${(t.network||[]).length})</span>
-          <span class="dtab" data-t="d-tl">Timeline</span>
         </div>
         <div class="dpane" id="d-art">${artsHtml(t)}</div>
         <div class="dpane" id="d-con">${consolePaneHtml(t)}</div>
         <div class="dpane" id="d-net">${netPaneHtml(t)}</div>
-        <div class="dpane" id="d-tl">${dtlPaneHtml(t)}</div>
       </div>
     </div>`;
   const tabs = [...document.querySelectorAll('.dtab')];

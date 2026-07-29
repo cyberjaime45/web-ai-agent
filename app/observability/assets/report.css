@@ -318,19 +318,6 @@ details.crow summary::-webkit-details-marker{display:none}
 .relbox{border:1px solid var(--fail);border-radius:10px;padding:8px 10px;background:var(--fail-bg)}
 .relnote{font-size:11px;color:var(--muted);font-style:italic;margin-bottom:6px}
 .relbox .crow{background:none}
-/* drawer timeline */
-.tlwrap{padding:6px 0}
-.tlrow{display:flex;align-items:center;gap:8px;padding:2px 0}
-.tllbl{flex:0 0 150px;font:10.5px var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
-.tltrack{position:relative;flex:1;height:14px;background:var(--border);border-radius:4px}
-.tlbar{position:absolute;top:2px;height:10px;border-radius:3px;background:var(--pass)}
-.tlbar.failed{background:var(--fail)}
-.tlbar.skipped{background:#b7bcc2}
-.tldot{position:absolute;top:3px;width:8px;height:8px;border-radius:50%;background:var(--fail)}
-.tldot.warning{background:#d99a11}
-.tldot.net{background:#c2410c;border-radius:2px}
-.tlshot{position:absolute;top:-2px;font-size:10px;text-decoration:none}
-@media(max-width:640px){.tllbl{flex-basis:90px}}
 #gconchips,#gnetchips{display:flex;gap:8px;flex-wrap:wrap}
 #pane-console .loglist,#pane-network .netlist{max-height:none;overflow:visible}
 @media(max-width:760px){.tabs{gap:16px;padding:0 16px;overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabs button{white-space:nowrap;flex:none}}
