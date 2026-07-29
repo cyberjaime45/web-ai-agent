@@ -340,16 +340,6 @@ function healHtml(t){
       ${e.original ? `<br>stale: <code>${esc(e.original)}</code>` : ''}
       <br>healed by <code>${esc(e.healed_by)}</code> → <code>${esc(e.resolved)}</code></li>`).join('')}</ul></div></div>`;
 }
-function artsHtml(t){
-  const a = t.artifacts || {}, parts = [];
-  if (a.screenshot) parts.push(`<div><a href="${ART(a.screenshot)}" target="_blank">📸 Screenshot</a><a href="${ART(a.screenshot)}" target="_blank"><img src="${ART(a.screenshot)}" loading="lazy"></a></div>`);
-  (a.screenshots || []).forEach(s => {
-    const label = s.split('/').pop().replace(/\.png$/, '').replace(/^\d+_/, '');
-    parts.push(`<div><a href="${ART(s)}" target="_blank">📸 ${esc(label)}</a><a href="${ART(s)}" target="_blank"><img src="${ART(s)}" loading="lazy"></a></div>`);
-  });
-  if (a.video) parts.push(`<div><a href="${ART(a.video)}" target="_blank">🎬 Video</a><video src="${ART(a.video)}" controls preload="none"></video></div>`);
-  return parts.length ? `<div class="arts">${parts.join('')}</div>` : '<div class="empty" style="padding:14px 0">No artifacts captured.</div>';
-}
 /* ── console & network row renderers (shared by drawer + execution tabs) ── */
 function groupConsole(logs){
   const map = new Map(), out = [];
@@ -519,7 +509,7 @@ function relatedHtml(t){
     ${net.map(n => `<div class="crow error"><span class="ctime">${relTime(n.ts, t.t0)}</span><span class="clvl error">net</span><span class="ctext">${esc(n.method)} ${esc(n.url)} — ${n.failure ? esc(n.failure) : 'HTTP ' + n.status}</span></div>`).join('')}
   </div></div>`;
 }
-let lastDtab = 'd-art';
+let lastDtab = 'd-con';
 function openTest(i){
   const t = T[i];
   document.getElementById('drawer').innerHTML = `
@@ -542,11 +532,9 @@ function openTest(i){
       <div class="sec"><h3>Steps</h3>${stepsHtml(t)}</div>
       <div class="sec">
         <div class="dtabs">
-          <span class="dtab" data-t="d-art">Artifacts</span>
           <span class="dtab" data-t="d-con">Console (${(t.console||[]).length})</span>
           <span class="dtab" data-t="d-net">Network (${(t.network||[]).length})</span>
         </div>
-        <div class="dpane" id="d-art">${artsHtml(t)}</div>
         <div class="dpane" id="d-con">${consolePaneHtml(t)}</div>
         <div class="dpane" id="d-net">${netPaneHtml(t)}</div>
       </div>
