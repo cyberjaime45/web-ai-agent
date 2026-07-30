@@ -226,28 +226,30 @@ details.fullout summary:hover{color:var(--text)}
 .loglist{font:12px/1.6 var(--mono);background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:260px;overflow:auto}
 .loglist .warning{color:var(--skip)} .loglist .error,.loglist .pageerror{color:var(--fail)}
 .net-ok{color:var(--muted)}
-/* network panel — method/status chips, dimmed hosts, expandable failures */
-.nethead{display:flex;gap:8px;margin-bottom:8px}
-.nethead .fchip{padding:5px 11px;font-size:12px}
+/* network panel — fixed data-grid columns shared by header + every row */
 .netlist{border:1px solid var(--border);border-radius:10px;background:var(--card2);max-height:320px;overflow:auto}
 .netlist.failed-only .netrow.ok{display:none}
-.netrow{border-bottom:1px solid var(--border2);font:12px var(--mono)}
+.netrow{border-bottom:1px solid var(--border2);font:12px var(--mono);min-width:min-content}
 .netrow:last-child{border-bottom:none}
-div.netrow,.netrow summary{display:flex;align-items:center;gap:10px;padding:7px 12px;min-width:0}
+.netrow summary,.nethead{display:grid;grid-template-columns:56px 44px minmax(160px,1fr) 60px 60px 60px 74px 14px;align-items:center;column-gap:10px;padding:7px 12px;min-width:622px}
+#gnetlist .netrow summary,#gnetlist .nethead{grid-template-columns:56px 44px minmax(160px,1fr) 150px 60px 60px 60px 74px 14px;min-width:782px}
+.nethead{position:sticky;top:0;z-index:1;background:var(--card2);color:var(--muted);font:700 9.5px var(--mono);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)}
+.nethead .num{text-align:right}
 .netrow.bad{box-shadow:inset 3px 0 0 var(--fail)}
 .netrow.bad summary{cursor:pointer;list-style:none}
 .netrow.bad summary::-webkit-details-marker{display:none}
 .netrow.bad summary:hover{background:var(--fail-bg)}
-.nmethod{color:var(--muted);font-weight:700;font-size:10.5px;letter-spacing:.06em;width:44px;flex:none}
-.nstat{font:700 10.5px var(--mono);border-radius:5px;padding:1px 7px;flex:none}
+.nmethod{color:var(--muted);font-weight:700;font-size:10.5px;letter-spacing:.06em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nstat{font:700 10.5px var(--mono);border-radius:5px;padding:1px 4px;text-align:center;white-space:nowrap;overflow:hidden}
 .nstat.sok{color:var(--pass);background:var(--pass-bg)}
 .nstat.swarn{color:var(--skip);background:var(--skip-bg)}
 .nstat.sbad{color:var(--fail);background:var(--fail-bg)}
-.nurl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nurl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nhost{color:var(--muted)}
-.nfailure{color:var(--fail);flex:none;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ntype{color:var(--muted);font-size:10.5px;border:1px solid var(--border);border-radius:4px;padding:0 6px;flex:none}
-.nchev{color:var(--fail);font-size:10px;flex:none;transition:transform .12s}
+.nfailure{color:var(--fail);margin-left:8px}
+.ntype{color:var(--muted);font-size:10.5px;border:1px solid var(--border);border-radius:4px;padding:0 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ntype:empty{visibility:hidden}
+.nchev{color:var(--fail);font-size:10px;text-align:center;transition:transform .12s}
 details.netrow[open] .nchev{transform:rotate(90deg)}
 pre.codebox.netbody{margin:0 12px 10px;max-height:180px;border-left:3px solid var(--fail);white-space:pre-wrap;word-break:break-word}
 .aibox{background:var(--accent-bg);border:1px solid var(--accent);border-radius:10px;padding:14px}
@@ -298,10 +300,8 @@ details.crow summary::-webkit-details-marker{display:none}
 .netsum{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
 .netsum b{color:var(--text)}
 .netsum .ko b{color:var(--fail)}
-.ntime{color:var(--muted);font-size:10.5px;min-width:46px;text-align:right;flex:none}
-.ndur{color:var(--muted);font-size:10.5px;min-width:44px;text-align:right;flex:none}
+.ntime,.ndur,.nsize{color:var(--muted);font-size:10.5px;text-align:right;white-space:nowrap;overflow:hidden}
 .ndur.slow{color:var(--skip);font-weight:700}
-.nsize{color:var(--muted);font-size:10.5px;min-width:44px;text-align:right;flex:none}
 .netrow summary{cursor:pointer;list-style:none}
 .netrow summary::-webkit-details-marker{display:none}
 .netrow summary:hover{background:var(--accent-bg)}
@@ -317,5 +317,6 @@ details.crow summary::-webkit-details-marker{display:none}
 .relnote{font-size:11px;color:var(--muted);font-style:italic;margin-bottom:6px}
 .relbox .crow{background:none}
 #gconchips,#gnetchips{display:flex;gap:8px;flex-wrap:wrap}
-#pane-console .loglist,#pane-network .netlist{max-height:none;overflow:visible}
+#pane-console .loglist{max-height:none;overflow:visible}
+#pane-network .netlist{max-height:none}
 @media(max-width:760px){.tabs{gap:16px;padding:0 16px;overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabs button{white-space:nowrap;flex:none}}

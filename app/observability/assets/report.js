@@ -382,13 +382,12 @@ function netRowHtml(n, t0, idx, ti){
     : `<span class="nstat ${n.method === 'WS' ? 'swarn' : 'sbad'}">${n.method === 'WS' ? 'WS' : 'ERR'}</span>`;
   const slow = (n.duration_ms || 0) > 2000;
   const summary = `<span class="nmethod">${esc(n.method)}</span>${status}
-    <span class="nurl" title="${esc(n.url)}"><span class="nhost">${esc(host)}</span>${esc(path)}</span>
+    <span class="nurl" title="${esc(n.url)}"><span class="nhost">${esc(host)}</span>${esc(path)}${n.failure ? ` <span class="nfailure">${esc(n.failure)}</span>` : ''}</span>
     ${ti != null ? `<span class="cfrom" onclick="event.preventDefault();openTest(${ti})">${esc(T[ti].title || T[ti].name)}</span>` : ''}
-    ${n.failure ? `<span class="nfailure">${esc(n.failure)}</span>` : ''}
     <span class="ntime">${relTime(n.ts, t0)}</span>
     <span class="ndur${slow ? ' slow' : ''}"${slow ? ' title="slow request (>2s)"' : ''}>${n.duration_ms != null ? fmtMs(n.duration_ms) : ''}</span>
     <span class="nsize">${fmtBytes(n.size)}</span>
-    ${n.resource_type ? `<span class="ntype">${esc(n.resource_type)}</span>` : ''}`;
+    <span class="ntype"${n.resource_type ? ` title="${esc(n.resource_type)}"` : ''}>${esc(n.resource_type || '')}</span>`;
   let qp = '';
   try { qp = [...new URL(n.url).searchParams].map(([k, v]) => `${k} = ${v}`).join('\n'); } catch(e) {}
   const detail = `<div class="ndetail">
@@ -405,6 +404,8 @@ function netRowHtml(n, t0, idx, ti){
   </div>`;
   return `<details class="netrow ${n.ok ? 'ok' : 'bad'}"><summary>${summary}<span class="nchev">▸</span></summary>${detail}</details>`;
 }
+const netHeadHtml = withTest =>
+  `<div class="nethead"><span>Method</span><span>Status</span><span>Name</span>${withTest ? '<span>Test</span>' : ''}<span class="num">Offset</span><span class="num">Duration</span><span class="num">Size</span><span>Type</span><span></span></div>`;
 function netSummaryHtml(net){
   const failed = net.filter(n => !n.ok).length;
   const bytes = net.reduce((s, n) => s + (n.size || 0), 0);
@@ -477,7 +478,8 @@ function wireNetPane(t){
     else if (sort === 'status') keep = [...keep].sort((a, b) => (b.status || 999) - (a.status || 999));
     else if (sort === 'size') keep = [...keep].sort((a, b) => (b.size || 0) - (a.size || 0));
     NET_CTX = keep;
-    list.innerHTML = keep.slice(0, shown).map((n, i) => netRowHtml(n, t.t0, i)).join('') ||
+    const rows = keep.slice(0, shown).map((n, i) => netRowHtml(n, t.t0, i)).join('');
+    list.innerHTML = rows ? netHeadHtml() + rows :
       '<div class="empty" style="padding:10px 0">No matching requests.</div>';
     if (keep.length > shown)
       list.innerHTML += `<button class="showmore" id="netmore">Show more (${keep.length - shown} hidden)</button>`;
@@ -628,9 +630,9 @@ document.getElementById('overlay').onclick = closeDrawer;
     const keep = NET.filter(x => (ncat === '' || (ncat === 'bad' ? !x.e.ok : catOf(x.e) === ncat)) &&
       (!nq || x.e.url.toLowerCase().includes(nq)));
     NET_CTX = keep.map(x => x.e);
+    const rows = keep.slice(0, nshown).map((x, i) => netRowHtml(x.e, x.t0, i, x.i)).join('');
     document.getElementById('gnetlist').innerHTML =
-      keep.slice(0, nshown).map((x, i) => netRowHtml(x.e, x.t0, i, x.i)).join('') ||
-      '<div class="empty">No matching requests.</div>';
+      rows ? netHeadHtml(true) + rows : '<div class="empty">No matching requests.</div>';
     if (keep.length > nshown)
       document.getElementById('gnetlist').innerHTML +=
         `<button class="showmore" id="gnetmore">Show more (${keep.length - nshown} hidden)</button>`;
