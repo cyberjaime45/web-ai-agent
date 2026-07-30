@@ -359,8 +359,72 @@ def test_generate_report_writes_all_files(tmp_path):
     # pass rate excludes skipped: 1 passed of 2 executed
     assert payload["totals"]["pass_rate"] == 50.0
     assert payload["environment"]["env"] == "staging"
-    # report.json mirrors the payload
-    assert json.loads((tmp_path / "report.json").read_text(encoding="utf-8")) == payload
+    # report.json mirrors the payload, plus the full inline detail arrays
+    full = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert full["totals"] == payload["totals"]
+    assert [t["id"] for t in full["tests"]] == [t["id"] for t in payload["tests"]]
+
+
+def _slim_payload(tmp_path):
+    data_js = (tmp_path / "assets" / "data.js").read_text(encoding="utf-8")
+    return json.loads(data_js[len("window.__WEBAGENT_DATA__ = "):].rstrip().rstrip(";"))
+
+
+def _shard(tmp_path, i):
+    raw = (tmp_path / "assets" / "data" / f"t-{i}.js").read_text(encoding="utf-8")
+    prefix = f"window.__WEBAGENT_DETAIL__({i}, "
+    assert raw.startswith(prefix)
+    return json.loads(raw[len(prefix):].rstrip().rstrip(";").rstrip(")"))
+
+
+def test_generate_report_shards_detail_per_test(tmp_path):
+    console = [
+        {"level": "error", "text": "boom", "ts": round((BASE + 0.5) * 1000), "seq": 1},
+        {"level": "warning", "text": "meh", "ts": round((BASE + 2.5) * 1000), "seq": 2},
+    ]
+    network = [{"method": "GET", "url": "https://x/a", "status": 200, "ok": True,
+                "ts": round((BASE + 4.2) * 1000), "seq": 3}]
+    r = make_result(outcome="failed", error="boom", longrepr="tb",
+                    flow_steps=sectioned_steps(), console=console, network=network)
+    generate_report([r], time.time() - 5, tmp_path / "report.html", "staging")
+
+    slim = _slim_payload(tmp_path)
+    # detail arrays never ship in the upfront payload — counts replace them
+    assert all("console" not in t and "network" not in t for t in slim["tests"])
+    assert [t["counts"] for t in slim["tests"]] == [
+        {"console": 1, "con_err": 1, "con_warn": 0, "network": 0, "net_bad": 0},
+        {"console": 1, "con_err": 0, "con_warn": 1, "network": 0, "net_bad": 0},
+        {"console": 0, "con_err": 0, "con_warn": 0, "network": 1, "net_bad": 0},
+    ]
+    # one JSONP-style shard per test, holding the routed events
+    assert [c["text"] for c in _shard(tmp_path, 0)["console"]] == ["boom"]
+    assert [c["text"] for c in _shard(tmp_path, 1)["console"]] == ["meh"]
+    assert [n["url"] for n in _shard(tmp_path, 2)["network"]] == ["https://x/a"]
+    # report.json keeps the inline arrays (machine mirror, CI compat)
+    full = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert [len(t["console"]) for t in full["tests"]] == [1, 1, 0]
+    assert [len(t["network"]) for t in full["tests"]] == [0, 0, 1]
+
+
+def test_generate_report_counts_pageerror_and_failed_requests(tmp_path):
+    r = make_result(
+        console=[{"level": "pageerror", "text": "TypeError"}],
+        network=[{"method": "GET", "url": "https://x/bad", "ok": False},
+                 {"method": "GET", "url": "https://x/ok", "ok": True}],
+    )
+    generate_report([r], time.time(), tmp_path / "report.html", "staging")
+    assert _slim_payload(tmp_path)["tests"][0]["counts"] == {
+        "console": 1, "con_err": 1, "con_warn": 0, "network": 2, "net_bad": 1,
+    }
+
+
+def test_generate_report_removes_stale_shards(tmp_path):
+    stale = tmp_path / "assets" / "data" / "t-7.js"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("window.__WEBAGENT_DETAIL__(7, {});", encoding="utf-8")
+    generate_report([make_result()], time.time(), tmp_path / "report.html", "staging")
+    assert not stale.exists()
+    assert (tmp_path / "assets" / "data" / "t-0.js").exists()
 
 
 def test_generate_report_html_references_assets(tmp_path):

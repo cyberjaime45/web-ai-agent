@@ -5,17 +5,22 @@ the whole environment folder is portable):
 
     reports/<env>/
     ├── report.html         static shell
-    ├── report.json         this run's payload as plain JSON
+    ├── report.json         this run's full payload as plain JSON
     ├── assets/report.css   static styles
     ├── assets/report.js    static rendering code
-    ├── assets/data.js      this run's payload (window.__WEBAGENT_DATA__)
+    ├── assets/data.js      slim payload (window.__WEBAGENT_DATA__): run meta +
+    │                       per-test steps/errors/artifacts + detail counts
+    ├── assets/data/t-<i>.js   per-test console/network detail, loaded lazily
+    │                       (window.__WEBAGENT_DETAIL__(i, {...}) callback)
     └── images/             screenshots per run
 
 The shell, CSS, and JS are copied from the packaged ``observability/assets/``
 files and overwritten on every run so the report always matches the installed
-framework version; only ``assets/data.js`` (and report.json) change between
-runs. The payload ships as a script file rather than inline JSON or fetch()
-because browsers load <script src> over file:// but block local fetch.
+framework version; only the data files change between runs. Payloads ship as
+script files rather than inline JSON or fetch() because browsers load
+<script src> over file:// but block local fetch — the UI lazy-loads a test's
+detail shard by injecting its <script> tag when the drawer or an
+execution-level Console/Network tab first needs it.
 
 WebAgent-specific data maps onto the shared report schema:
   sections            → collapsible step groups (depth tree)
@@ -31,6 +36,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -391,6 +397,15 @@ def _build_tests(r: dict) -> list[dict]:
 
 # ── generate_report ──────────────────────────────────────────────────────────
 
+def _js_json(obj: Any) -> str:
+    """JSON serialized for embedding in a JS source file.
+
+    U+2028/U+2029 are valid in JSON but not in JS source — escape them.
+    """
+    data = json.dumps(obj, ensure_ascii=False)
+    return data.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
 def generate_report(
     results: list[dict],
     session_start: float,
@@ -451,11 +466,34 @@ def generate_report(
             (packaged / source_name).read_text(encoding="utf-8"), encoding="utf-8"
         )
 
-    data = json.dumps(payload, ensure_ascii=False)
-    # U+2028/U+2029 are valid in JSON but not in JS source — escape them.
-    data = data.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    # Per-test detail shards: console/network stay out of the upfront payload
+    # and load lazily via <script> injection (fetch() is blocked on file://).
+    detail_dir = report_dir / "assets" / "data"
+    shutil.rmtree(detail_dir, ignore_errors=True)
+    detail_dir.mkdir(parents=True)
+    slim_tests = []
+    for i, t in enumerate(tests):
+        console = t.get("console") or []
+        network = t.get("network") or []
+        (detail_dir / f"t-{i}.js").write_text(
+            f"window.__WEBAGENT_DETAIL__({i}, "
+            f"{_js_json({'console': console, 'network': network})});\n",
+            encoding="utf-8",
+        )
+        slim = {k: v for k, v in t.items() if k not in ("console", "network")}
+        slim["counts"] = {
+            "console": len(console),
+            "con_err": sum(1 for c in console
+                           if c.get("level") in ("error", "pageerror")),
+            "con_warn": sum(1 for c in console if c.get("level") == "warning"),
+            "network": len(network),
+            "net_bad": sum(1 for n in network if not n.get("ok")),
+        }
+        slim_tests.append(slim)
+
     (report_dir / "assets" / "data.js").write_text(
-        f"window.__WEBAGENT_DATA__ = {data};\n", encoding="utf-8"
+        f"window.__WEBAGENT_DATA__ = {_js_json(dict(payload, tests=slim_tests))};\n",
+        encoding="utf-8",
     )
     (report_dir / "report.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"

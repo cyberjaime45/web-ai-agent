@@ -941,14 +941,21 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 ```
 reports/staging/
 ├── report.html     # Interactive UI (overview, tests, timeline, console, network)
-├── report.json     # Raw structured data (same payload as the UI)
+├── report.json     # Raw structured data, full detail inline (for CI/tooling)
 ├── assets/
 │   ├── report.css
 │   ├── report.js
-│   └── data.js     # This run's payload (window.__WEBAGENT_DATA__)
+│   ├── data.js     # Slim payload: run meta + per-test steps/errors/counts
+│   └── data/
+│       └── t-<i>.js  # Per-test console/network detail, lazy-loaded on demand
 └── images/
     └── *.png       # Screenshots from the run
 ```
+
+The UI loads only the slim payload upfront; a test's console/network detail
+shard is fetched (via `<script>` injection, so `file://` works) the first time
+its drawer opens, and the execution-level Console/Network tabs load the rest on
+first open. Large runs stay fast to open, and the folder remains fully portable.
 
 The report includes:
 - Each `## section` of a flow file shown as its own test with status, duration, and steps

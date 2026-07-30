@@ -21,6 +21,43 @@ const flakyCount = T.filter(isFlaky).length;
 const healCount = T.reduce((n,t) => n + (t.healings||[]).length, 0);
 const byStart = T.map((t,i)=>i).sort((a,b) => (T[a].started_at||'').localeCompare(T[b].started_at||''));
 
+/* ── lazy per-test detail (console/network live in assets/data/t-<i>.js) ──
+   Shards are JSONP-style scripts because fetch() is blocked on file://.
+   Legacy payloads carry the arrays inline; those short-circuit the loader. */
+const hasDetail = t => t.console !== undefined;
+const nCounts = t => t.counts || {          // legacy payloads: derive from inline arrays
+  console: (t.console || []).length,
+  con_err: (t.console || []).filter(c => lvlOf(c) === 'error').length,
+  con_warn: (t.console || []).filter(c => lvlOf(c) === 'warning').length,
+  network: (t.network || []).length,
+  net_bad: (t.network || []).filter(n => !n.ok).length,
+};
+const DETAIL_CB = {}, DETAIL_P = {};
+window.__WEBAGENT_DETAIL__ = (i, d) => {
+  if (!T[i]) return;
+  T[i].console = (d && d.console) || [];
+  T[i].network = (d && d.network) || [];
+  if (DETAIL_CB[i]) { DETAIL_CB[i](); delete DETAIL_CB[i]; }
+};
+function loadDetail(i){
+  if (hasDetail(T[i])) return Promise.resolve(T[i]);
+  if (!DETAIL_P[i]) DETAIL_P[i] = new Promise((ok, err) => {
+    DETAIL_CB[i] = () => ok(T[i]);
+    const s = document.createElement('script');
+    s.src = `assets/data/t-${i}.js`;
+    // scripts execute before their load event, so on load the callback has
+    // already run — if it hasn't, the shard is missing or corrupt
+    const fail = () => {
+      if (!DETAIL_CB[i]) return;
+      delete DETAIL_CB[i]; delete DETAIL_P[i];
+      err(new Error('detail shard unavailable'));
+    };
+    s.onerror = fail; s.onload = fail;
+    document.head.appendChild(s);
+  });
+  return DETAIL_P[i];
+}
+
 /* ── theme ── */
 const themebtn = document.getElementById('themebtn');
 const setTheme = m => { document.documentElement.dataset.theme = m; try{localStorage.setItem('webagent-theme', m)}catch(e){} };
@@ -49,6 +86,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab
 function showTab(name){
   document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name));
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + name));
+  if (name === 'console' || name === 'network') ensureGlobalViews();
 }
 document.getElementById('foot').textContent =
   `Generated on ${new Date(DATA.created_at).toLocaleString()} · Web Agent ${ENV.framework}`;
@@ -190,9 +228,7 @@ document.addEventListener('keydown', e => {
 });
 
 function chips(t){
-  const cerr = (t.console||[]).filter(c => lvlOf(c) === 'error').length;
-  const cwarn = (t.console||[]).filter(c => lvlOf(c) === 'warning').length;
-  const nbad = (t.network||[]).filter(n => !n.ok).length;
+  const {con_err: cerr, con_warn: cwarn, net_bad: nbad} = nCounts(t);
   return [
     cerr ? `<span class="chiplet cbad" title="console errors">⚠ ${cerr}</span>` : '',
     cwarn ? `<span class="chiplet cwarn" title="console warnings">⚠ ${cwarn}</span>` : '',
@@ -512,8 +548,11 @@ function relatedHtml(t){
   </div></div>`;
 }
 let lastDtab = 'd-con';
+let drawerSeq = 0;   // ignore shard arrivals for a test the user has left
 function openTest(i){
   const t = T[i];
+  const counts = nCounts(t);
+  const loading = '<div class="empty" style="padding:14px 0">Loading detail data…</div>';
   document.getElementById('drawer').innerHTML = `
     <div class="dhead">
       <div class="dtitle"><span class="badge ${effStatus(t)}">${effStatus(t)}</span><h2>${esc(t.title || t.name)}</h2>
@@ -529,16 +568,16 @@ function openTest(i){
     </div>
     <div class="dbody">
       ${errorHtml(t)}
-      ${relatedHtml(t)}
+      <div id="d-rel">${hasDetail(t) ? relatedHtml(t) : ''}</div>
       ${aiHtml(t.ai)}${healHtml(t)}
       <div class="sec"><h3>Steps</h3>${stepsHtml(t)}</div>
       <div class="sec">
         <div class="dtabs">
-          <span class="dtab" data-t="d-con">Console (${(t.console||[]).length})</span>
-          <span class="dtab" data-t="d-net">Network (${(t.network||[]).length})</span>
+          <span class="dtab" data-t="d-con">Console (${counts.console})</span>
+          <span class="dtab" data-t="d-net">Network (${counts.network})</span>
         </div>
-        <div class="dpane" id="d-con">${consolePaneHtml(t)}</div>
-        <div class="dpane" id="d-net">${netPaneHtml(t)}</div>
+        <div class="dpane" id="d-con">${hasDetail(t) ? consolePaneHtml(t) : loading}</div>
+        <div class="dpane" id="d-net">${hasDetail(t) ? netPaneHtml(t) : loading}</div>
       </div>
     </div>`;
   const tabs = [...document.querySelectorAll('.dtab')];
@@ -549,7 +588,24 @@ function openTest(i){
   };
   activate(tabs.find(x => x.dataset.t === lastDtab) || tabs[0]);
   tabs.forEach(tab => tab.onclick = () => activate(tab));
-  wireConsolePane(t); wireNetPane(t);
+  const fillDetail = () => {
+    document.getElementById('d-rel').innerHTML = relatedHtml(t);
+    document.getElementById('d-con').innerHTML = consolePaneHtml(t);
+    document.getElementById('d-net').innerHTML = netPaneHtml(t);
+    wireConsolePane(t); wireNetPane(t);
+  };
+  if (hasDetail(t)) { wireConsolePane(t); wireNetPane(t); }
+  else {
+    const seq = ++drawerSeq;
+    loadDetail(i).then(
+      () => { if (seq === drawerSeq) fillDetail(); },
+      () => {
+        if (seq !== drawerSeq) return;
+        const miss = '<div class="empty" style="padding:14px 0">Detail data unavailable — this test\'s shard is missing from assets/data/.</div>';
+        document.getElementById('d-con').innerHTML = miss;
+        document.getElementById('d-net').innerHTML = miss;
+      });
+  }
   document.getElementById('drawer').classList.add('show');
   document.getElementById('overlay').classList.add('show');
 }
@@ -584,15 +640,34 @@ document.getElementById('overlay').onclick = closeDrawer;
 })();
 
 /* ── execution-level console & network (secondary, aggregated) ──
+   Tab badges come from the precomputed counts; the entries themselves load
+   on first open of either tab (all detail shards, rendered together).
    NET_CTX is shared with the drawer's network pane; whichever list rendered
    last owns the copy buttons — only one list is interactable at a time, and
    every render (filter/search/open) refreshes it. */
-(function globalViews(){
+(function globalBadges(){
+  let c = 0, n = 0;
+  T.forEach(t => { const k = nCounts(t); c += k.console; n += k.network; });
+  document.getElementById('ccount').textContent = c;
+  document.getElementById('ncount').textContent = n;
+  document.getElementById('gconlist').innerHTML = '<div class="empty">Loading detail data…</div>';
+  document.getElementById('gnetlist').innerHTML = '<div class="empty">Loading detail data…</div>';
+})();
+let globalReady = null;
+function ensureGlobalViews(){
+  if (globalReady) return;
+  globalReady = Promise.all(T.map((t, i) => loadDetail(i).then(() => 0, () => 1)))
+    .then(fails => initGlobalViews(fails.reduce((a, b) => a + b, 0)));
+}
+function initGlobalViews(missing){
+  if (missing){
+    const note = `<div class="dropnote">Detail for ${missing} test(s) could not be loaded (missing shard files).</div>`;
+    document.getElementById('gconlist').insertAdjacentHTML('beforebegin', note);
+    document.getElementById('gnetlist').insertAdjacentHTML('beforebegin', note);
+  }
   const bySeq = (a, b) => (a.e.ts ?? 0) - (b.e.ts ?? 0) || (a.e.seq ?? 0) - (b.e.seq ?? 0);
   const CON = T.flatMap((t, i) => (t.console || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
   const NET = T.flatMap((t, i) => (t.network || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
-  document.getElementById('ccount').textContent = CON.length;
-  document.getElementById('ncount').textContent = NET.length;
 
   /* console */
   const n = l => CON.filter(x => lvlOf(x.e) === l).length;
@@ -646,4 +721,4 @@ document.getElementById('overlay').onclick = closeDrawer;
   });
   document.getElementById('gnetsearch').addEventListener('input', e => { nq = e.target.value.toLowerCase(); nshown = 150; renderNet(); });
   renderNet();
-})();
+}
