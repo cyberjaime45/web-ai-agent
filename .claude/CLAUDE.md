@@ -55,7 +55,8 @@ pip install -r requirements.txt
 | `conftest.py` | pytest plugin — flow discovery, FlowFile, FlowItem, report plugin |
 | `app/execution/engine.py` | FlowRunner — orchestrates L1 → L2 → L3 + `run_flow` sub-flows |
 | `app/layers/deterministic.py` | L1 + L2 — dispatch-table, exact Playwright locators, fallback dispatch |
-| `app/layers/locator.py` | L2 — 5 fuzzy strategies per resolve method, selectolax similarity ≥ 0.6 |
+| `app/layers/locator.py` | L2 — 4 Playwright strategies polled (5 s), then one selectolax fuzzy pass (similarity ≥ 0.6) |
+| `app/config/settings.py` | The only env reader — loads `.env`, typed `settings` singleton, `report_dir`/`images_dir` |
 | `app/layers/ai_resolver.py` | L3 — consumes `LLMProvider`, only when L1+L2 fail, skipped if no provider configured |
 | `app/layers/providers/` | Provider abstraction — base ABC, factory, and adapters for OpenAI / Gemini / Claude |
 | `app/flow/parser.py` | Markdown parser — 4-stage pipeline, flow path resolution for `run_flow` |
@@ -90,6 +91,8 @@ pip install -r requirements.txt
 - L3 is optional by design — all flows must be runnable without `AI_PROVIDER`/`LLM_KEY`/`LLM_MODEL`. Partial config raises `ConfigError` at startup (fail fast)
 - Adding a new LLM provider means one new file under `app/layers/providers/` plus one mapping entry in the factory — no changes to `AIResolver` or the engine
 - Never use `time.sleep()` — use Playwright `wait_for*` methods
+- Read configuration through `settings` (`app/config/settings.py`), never `os.getenv` in app code — it loads `.env` once for pytest and the CLI alike
+- One browser per session (local mode): flows get a fresh `BrowserContext`, never a new browser launch; LambdaTest keeps one grid session per flow
 - L1 supports CSS selectors and XPath directly via `_is_selector()` — no need to fall to L2 for selector-based targeting
 - `run_flow` is intercepted at the execution layer (engine.py), not the action dispatch — it's a flow-level directive
 - Minimal impact: only touch code relevant to the task
