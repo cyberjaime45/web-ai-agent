@@ -33,7 +33,10 @@ class DeterministicRunner:
     # truly missing.  The page's default_timeout (30s) is preserved for
     # explicit waits and assertions.
     _L1_TIMEOUT = 5000
-    _MAX_L1_RETRIES = 2
+    # Playwright already polls actionability for the whole _L1_TIMEOUT window,
+    # so a second identical window rarely changes the outcome and doubled the
+    # cost of every genuinely missing element (10.5 s before L2 could start).
+    _MAX_L1_RETRIES = 1
     _RETRY_PAUSE_MS = 500
 
     # Common selectors for blocking UI elements (modals, banners, overlays)
@@ -194,13 +197,13 @@ class DeterministicRunner:
             except Exception as exc:
                 last_exc = exc
                 if attempt < self._MAX_L1_RETRIES:
-                    logger.debug(
-                        f"[L1] Step {action.step_num} attempt {attempt} failed, "
-                        f"retrying in {self._RETRY_PAUSE_MS}ms: {exc}"
-                    )
+                    logger.debug("[L1] Step %s attempt %s failed, retrying in %sms: %s",
+                                 action.step_num, attempt, self._RETRY_PAUSE_MS, exc)
                     self.page.wait_for_timeout(self._RETRY_PAUSE_MS)
 
-        logger.debug(f"[L1] Step {action.step_num} failed after {self._MAX_L1_RETRIES} attempts: {last_exc}")
+        # %-style: Playwright errors carry multi-KB call logs — only format at DEBUG.
+        logger.debug("[L1] Step %s failed after %s attempt(s): %s",
+                     action.step_num, self._MAX_L1_RETRIES, last_exc)
         return self._layer2(action, original_error=str(last_exc))
 
     # ── Layer 1 — dispatch ────────────────────────────────────────
@@ -259,15 +262,20 @@ class DeterministicRunner:
 
     # ── L1 handlers: Click ────────────────────────────────────────
 
-    def _h_click(self, action: FlowAction) -> StepResult:
-        target = action.args[0]
+    def _resolve_clickable_l1(self, target: str):
+        """Selector, else exact button → link → text (shared by click variants)."""
         if _is_selector(target):
-            self.page.locator(target).first.click(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"Clicked element '{target}'", 1)
+            return self.page.locator(target)
         loc = self.page.get_by_role("button", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_role("link", name=target, exact=True)
-        loc.first.click(timeout=self._L1_TIMEOUT)
+        if loc.count() == 0:
+            loc = self.page.get_by_text(target, exact=True)
+        return loc
+
+    def _h_click(self, action: FlowAction) -> StepResult:
+        target = action.args[0]
+        self._resolve_clickable_l1(target).first.click(timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Clicked '{target}'", 1)
 
     def _h_click_link_text(self, action: FlowAction) -> StepResult:
@@ -277,28 +285,12 @@ class DeterministicRunner:
 
     def _h_double_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        if _is_selector(target):
-            self.page.locator(target).first.dblclick(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'Double-clicked "{target}"', 1)
-        loc = self.page.get_by_role("button", name=target, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_role("link", name=target, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_text(target, exact=True)
-        loc.first.dblclick(timeout=self._L1_TIMEOUT)
+        self._resolve_clickable_l1(target).first.dblclick(timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Double-clicked "{target}"', 1)
 
     def _h_right_click(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        if _is_selector(target):
-            self.page.locator(target).first.click(button="right", timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'Right-clicked "{target}"', 1)
-        loc = self.page.get_by_role("button", name=target, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_role("link", name=target, exact=True)
-        if loc.count() == 0:
-            loc = self.page.get_by_text(target, exact=True)
-        loc.first.click(button="right", timeout=self._L1_TIMEOUT)
+        self._resolve_clickable_l1(target).first.click(button="right", timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Right-clicked "{target}"', 1)
 
     def _h_hover(self, action: FlowAction) -> StepResult:
@@ -339,13 +331,7 @@ class DeterministicRunner:
 
     def _h_focus(self, action: FlowAction) -> StepResult:
         label = action.args[0]
-        if _is_selector(label):
-            self.page.locator(label).first.focus(timeout=self._L1_TIMEOUT)
-        else:
-            loc = self.page.get_by_label(label, exact=True)
-            if loc.count() == 0:
-                loc = self.page.get_by_placeholder(label, exact=True)
-            loc.first.focus(timeout=self._L1_TIMEOUT)
+        self._resolve_input_l1(label).first.focus(timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Focused "{label}"', 1)
 
     def _h_select(self, action: FlowAction) -> StepResult:
@@ -456,21 +442,19 @@ class DeterministicRunner:
             return self._ok(action, f'Text "{text}" is absent/hidden', 1)
         raise AssertionError(f'Text "{text}" is still visible on the page.')
 
+    def _resolve_text_target(self, target: str):
+        """Selector, else partial text match (visibility assertions)."""
+        return (self.page.locator(target) if _is_selector(target)
+                else self.page.get_by_text(target, exact=False))
+
     def _h_assert_visible(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        if _is_selector(target):
-            loc = self.page.locator(target)
-        else:
-            loc = self.page.get_by_text(target, exact=False)
-        loc.first.wait_for(state="visible", timeout=5000)
+        self._resolve_text_target(target).first.wait_for(state="visible", timeout=5000)
         return self._ok(action, f'Element "{target}" is visible', 1)
 
     def _h_assert_hidden(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        if _is_selector(target):
-            loc = self.page.locator(target)
-        else:
-            loc = self.page.get_by_text(target, exact=False)
+        loc = self._resolve_text_target(target)
         if loc.count() == 0 or loc.first.is_hidden():
             return self._ok(action, f'Element "{target}" is not visible', 1)
         raise AssertionError(f'Element "{target}" is still visible.')
@@ -482,7 +466,8 @@ class DeterministicRunner:
             raise AssertionError(f"URL '{url}' does not contain '{fragment}'")
         return self._ok(action, f"URL contains '{fragment}'", 1)
 
-    def _h_assert_enabled(self, action: FlowAction) -> StepResult:
+    def _assert_disabled_state(self, action: FlowAction, expect_disabled: bool) -> StepResult:
+        """Shared body of assert_enabled / assert_disabled."""
         target = action.args[0]
         if _is_selector(target):
             loc = self.page.locator(target)
@@ -491,22 +476,17 @@ class DeterministicRunner:
             if loc.count() == 0:
                 loc = self.page.get_by_text(target, exact=True)
         loc.first.wait_for(state="visible", timeout=5000)
-        if loc.first.is_disabled():
-            raise AssertionError(f'Element "{target}" is disabled.')
-        return self._ok(action, f'Element "{target}" is enabled', 1)
+        disabled = loc.first.is_disabled()
+        if disabled != expect_disabled:
+            state = "disabled" if disabled else "enabled"
+            raise AssertionError(f'Element "{target}" is {state}.')
+        return self._ok(action, f'Element "{target}" is {"disabled" if disabled else "enabled"}', 1)
+
+    def _h_assert_enabled(self, action: FlowAction) -> StepResult:
+        return self._assert_disabled_state(action, expect_disabled=False)
 
     def _h_assert_disabled(self, action: FlowAction) -> StepResult:
-        target = action.args[0]
-        if _is_selector(target):
-            loc = self.page.locator(target)
-        else:
-            loc = self.page.get_by_role("button", name=target)
-            if loc.count() == 0:
-                loc = self.page.get_by_text(target, exact=True)
-        loc.first.wait_for(state="visible", timeout=5000)
-        if not loc.first.is_disabled():
-            raise AssertionError(f'Element "{target}" is enabled (expected disabled).')
-        return self._ok(action, f'Element "{target}" is disabled', 1)
+        return self._assert_disabled_state(action, expect_disabled=True)
 
     def _h_assert_checked(self, action: FlowAction) -> StepResult:
         target = action.args[0]

@@ -8,13 +8,18 @@ L1 already exhausts exact-match locators, so L2 starts with fuzzy
 Resolution order for clickable elements:
   1. Fuzzy role+name  (button / link)
   2. get_by_text exact / partial
-  3. selectolax fuzzy HTML search (similarity >= 0.6)
+  3. selectolax fuzzy HTML search (similarity >= 0.6) — once, after the poll
 
 Resolution order for inputs:
   1. get_by_label partial
   2. get_by_placeholder partial
   3. get_by_role "textbox" exact / partial
-  4. selectolax label->for->input lookup
+  4. selectolax label->for->input lookup — once, after the poll
+
+Playwright strategies are cheap (one count() round-trip each) and are polled
+until the element appears. The selectolax pass serialises and parses the whole
+DOM, so it runs a single time after the poll gives up rather than on every
+200 ms cycle.
 
 Resolution order for checkboxes / radios:
   1. get_by_label partial
@@ -75,8 +80,7 @@ class FallbackLocator:
             lambda: page.get_by_role("link",   name=target),
             lambda: page.get_by_text(target, exact=True),
             lambda: page.get_by_text(target),
-            lambda: self._fuzzy_clickable(page, target),
-        ])
+        ]) or self._fuzzy_clickable(page, target)
 
     def resolve_input(self, page: Page, target: str) -> Locator | None:
         if _is_selector(target):
@@ -86,20 +90,13 @@ class FallbackLocator:
             lambda: page.get_by_placeholder(target),
             lambda: page.get_by_role("textbox", name=target, exact=True),
             lambda: page.get_by_role("textbox", name=target),
-            lambda: self._fuzzy_input(page, target),
-        ])
+        ]) or self._fuzzy_input(page, target)
 
     def resolve_checkbox(self, page: Page, target: str) -> Locator | None:
         return self._resolve_with_poll(page, [
             lambda: page.get_by_label(target),
             lambda: page.get_by_role("checkbox", name=target),
             lambda: page.get_by_role("radio", name=target),
-        ])
-
-    def resolve_table_row(self, page: Page, text: str) -> Locator | None:
-        return self._resolve_with_poll(page, [
-            lambda: page.locator(f'tr:has-text("{text}")'),
-            lambda: page.locator(f'[role="row"]:has-text("{text}")'),
         ])
 
     # ── helpers ───────────────────────────────────────────────────────────
@@ -139,44 +136,49 @@ class FallbackLocator:
             pass
         return None
 
-    def _fuzzy_clickable(self, page: Page, target: str) -> Locator | None:
+    _FUZZY_MIN = 0.6
+
+    @classmethod
+    def _best_fuzzy(cls, page: Page, css: str, target: str):
+        """The node matching *css* whose text is most similar to *target*.
+
+        One DOM serialisation + one parse per call. Returns ``None`` when no
+        node reaches the similarity floor or selectolax is unavailable.
+        """
         try:
             from selectolax.parser import HTMLParser
-
-            tree = HTMLParser(page.content())
-            best_score, best_text = 0.0, None
-            for node in tree.css("button, a, [role=button], [role=link], [role=menuitem], [role=tab]"):
-                text = node.text(strip=True)
-                if not text:
-                    continue
+        except ImportError:
+            logger.warning("[L2] selectolax not installed — fuzzy HTML matching disabled")
+            return None
+        tree = HTMLParser(page.content())
+        best_score, best = cls._FUZZY_MIN, None
+        for node in tree.css(css):
+            text = node.text(strip=True)
+            if text:
                 score = _similarity(target, text)
-                if score > best_score and score >= 0.6:
-                    best_score, best_text = score, text
+                if score > best_score:
+                    best_score, best = score, node
+        if best is not None:
+            logger.debug("[L2] Fuzzy match %r -> %r (%.2f)", target, best.text(strip=True), best_score)
+        return best
 
-            if best_text:
-                logger.debug(f"[L2] Fuzzy match '{target}' -> '{best_text}' ({best_score:.2f})")
+    def _fuzzy_clickable(self, page: Page, target: str) -> Locator | None:
+        try:
+            node = self._best_fuzzy(
+                page, "button, a, [role=button], [role=link], [role=menuitem], [role=tab]", target)
+            if node is not None:
+                best_text = node.text(strip=True)
                 return self._try(lambda: page.get_by_text(best_text))
         except Exception as exc:
-            logger.debug(f"[L2] fuzzy_clickable error: {exc}")
+            logger.debug("[L2] fuzzy_clickable error: %s", exc)
         return None
 
     def _fuzzy_input(self, page: Page, target: str) -> Locator | None:
         try:
-            from selectolax.parser import HTMLParser
-
-            tree = HTMLParser(page.content())
-            best_score, best_for_id = 0.0, None
-            for label in tree.css("label"):
-                text = label.text(strip=True)
-                if not text:
-                    continue
-                score = _similarity(target, text)
-                if score > best_score and score >= 0.6:
-                    best_score = score
-                    best_for_id = label.attributes.get("for")
-
-            if best_for_id:
-                return self._try(lambda: page.locator(f"#{best_for_id}"))
+            node = self._best_fuzzy(page, "label", target)
+            for_id = node.attributes.get("for") if node is not None else None
+            if for_id:
+                return self._try(lambda: page.locator(f"#{for_id}"))
         except Exception as exc:
-            logger.debug(f"[L2] fuzzy_input error: {exc}")
+            logger.debug("[L2] fuzzy_input error: %s", exc)
         return None

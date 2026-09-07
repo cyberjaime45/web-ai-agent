@@ -116,6 +116,9 @@ class FlowRunner:
         if provider is _RESOLVE_PROVIDER:
             provider = get_provider()
         self._ai = AIResolver(provider=provider)
+        # Created once here; the failure-screenshot path only formats a name.
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        self._artifacts_abs = self.artifacts_dir.resolve()
         self._seen_flows: set[str] = set()
         self._nesting_depth: int = 0
 
@@ -167,38 +170,15 @@ class FlowRunner:
                         section_failed = True
                 continue
 
-            # ── Resolve env var placeholders before execution ──
-            try:
-                resolved = _resolve_env_placeholders(action)
-            except RuntimeError as exc:
-                sr = StepResult(
-                    action=action, success=False,
-                    message=str(exc), layer_used=0, error=str(exc),
-                    screenshot_path=self._capture_failure_screenshot(page),
-                    started_at=time.time(), ended_at=time.time(),
-                )
-                result.steps.append(sr)
-                _append_error(result, str(exc))
-                section_failed = True
-                continue
-
-            t0 = time.monotonic()
-            w0 = time.time()
-            step_result = self._run_step(resolved, page, runner, ctx)
-            step_result.duration = round(time.monotonic() - t0, 3)
-            step_result.started_at = w0
-            step_result.ended_at = time.time()
+            step_result = self._execute_one(action, page, runner, ctx)
             result.steps.append(step_result)
-            ctx.record(action, step_result, page.url)
-
             if step_result.screenshot_path:
                 result.last_screenshot = step_result.screenshot_path
-
             if not step_result.success:
                 _append_error(result, step_result.message)
                 logger.error(
-                    f"Flow '{flow.name}' failed at step {action.step_num}: "
-                    f"{resolved.raw!r} — {step_result.message}"
+                    "Flow '%s' failed at step %s: %r — %s",
+                    flow.name, action.step_num, step_result.action.raw, step_result.message,
                 )
                 section_failed = True
 
@@ -210,15 +190,12 @@ class FlowRunner:
     def _capture_failure_screenshot(self, page: Page) -> str | None:
         """Take a screenshot on step failure. Returns the file path or None."""
         try:
-            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
-            path = str(
-                self.artifacts_dir.resolve() / f"fail_{uuid.uuid4().hex[:12]}.png"
-            )
+            path = str(self._artifacts_abs / f"fail_{uuid.uuid4().hex[:12]}.png")
             page.screenshot(path=path, full_page=False)
-            logger.debug(f"[Screenshot] Captured failure screenshot: {path}")
+            logger.debug("[Screenshot] Captured failure screenshot: %s", path)
             return path
         except Exception as exc:
-            logger.warning(f"[Screenshot] Failed to capture screenshot: {exc}")
+            logger.warning("[Screenshot] Failed to capture screenshot: %s", exc)
             return None
 
     # ── Sub-flow handling ──────────────────────────────────────────
@@ -293,32 +270,9 @@ class FlowRunner:
                         return results
                 continue
 
-            # Resolve env var placeholders
-            try:
-                resolved = _resolve_env_placeholders(sub_action)
-            except RuntimeError as exc:
-                sr = StepResult(
-                    action=sub_action, success=False,
-                    message=str(exc), layer_used=0, error=str(exc),
-                    screenshot_path=self._capture_failure_screenshot(page),
-                    started_at=time.time(), ended_at=time.time(),
-                )
-                sr.sub_flow = sub_flow.name
-                results.append(sr)
-                break
-
-            t0 = time.monotonic()
-            w0 = time.time()
-            sr = self._run_step(resolved, page, runner, ctx)
-            sr.duration = round(time.monotonic() - t0, 3)
-            sr.started_at = w0
-            sr.ended_at = time.time()
+            sr = self._execute_one(sub_action, page, runner, ctx)
             sr.sub_flow = sub_flow.name
             results.append(sr)
-
-            # Record sub-flow step in short-term memory
-            ctx.record(sub_action, sr, page.url)
-
             if not sr.success:
                 break
 
@@ -327,6 +281,43 @@ class FlowRunner:
         return results
 
     # ── Single step execution ─────────────────────────────────────
+
+    def _execute_one(
+        self,
+        action: FlowAction,
+        page: Page,
+        runner: DeterministicRunner,
+        ctx: RunContext,
+    ) -> StepResult:
+        """Resolve placeholders, run the step through L1→L2→L3, stamp timing.
+
+        The one place a step is timed and recorded — top-level and sub-flow
+        loops both go through here so their results carry the same fields.
+        """
+        w0 = time.time()
+        try:
+            resolved = _resolve_env_placeholders(action)
+        except RuntimeError as exc:
+            return StepResult(
+                action=action, success=False,
+                message=str(exc), layer_used=0, error=str(exc),
+                screenshot_path=self._capture_failure_screenshot(page),
+                started_at=w0, ended_at=time.time(),
+            )
+
+        t0 = time.monotonic()
+        sr = self._run_step(resolved, page, runner, ctx)
+        sr.duration = round(time.monotonic() - t0, 3)
+        sr.started_at = w0
+        sr.ended_at = time.time()
+        ctx.record(action, sr, page.url)
+        return sr
+
+    def _with_failure_shot(self, sr: StepResult, page: Page) -> StepResult:
+        """Attach a failure screenshot to an L3 result that lacks one."""
+        if not sr.success and not sr.screenshot_path:
+            sr.screenshot_path = self._capture_failure_screenshot(page)
+        return sr
 
     def _run_step(
         self,
@@ -354,9 +345,7 @@ class FlowRunner:
                 )
             ai_result = self._ai.resolve_ai_action(action, page, ctx)
             if ai_result is not None:
-                if not ai_result.success and not ai_result.screenshot_path:
-                    ai_result.screenshot_path = self._capture_failure_screenshot(page)
-                return ai_result
+                return self._with_failure_shot(ai_result, page)
             return StepResult(
                 action=action, success=False,
                 message=f"AI action failed: {action.type.value}",
@@ -374,13 +363,14 @@ class FlowRunner:
                 f"failed: {error_msg}"
             )
 
-            # Layer 3 — AI fallback (only if API key is available)
-            if self._ai.available:
+            # Layer 3 — AI fallback, only for actions L3 can actually perform
+            # (element interactions). Assertions/waits/keys have no L3 path:
+            # sending them would cost two LLM calls and could not change the
+            # outcome.
+            if self._ai.available and self._ai.supports(action.type):
                 ai_result = self._ai.resolve(action, page, error_msg, ctx)
                 if ai_result is not None:
-                    if not ai_result.success and not ai_result.screenshot_path:
-                        ai_result.screenshot_path = self._capture_failure_screenshot(page)
-                    return ai_result
+                    return self._with_failure_shot(ai_result, page)
 
                 # Single re-prompt with enriched context
                 enriched = (
@@ -391,9 +381,7 @@ class FlowRunner:
                 logger.debug("[L3] Re-prompting with enriched context")
                 ai_retry = self._ai.resolve(action, page, enriched, ctx)
                 if ai_retry is not None:
-                    if not ai_retry.success and not ai_retry.screenshot_path:
-                        ai_retry.screenshot_path = self._capture_failure_screenshot(page)
-                    return ai_retry
+                    return self._with_failure_shot(ai_retry, page)
 
                 # Both L3 attempts failed
                 return StepResult(
@@ -405,10 +393,11 @@ class FlowRunner:
                 )
 
             # L3 skipped — report as L2 failure
-            logger.info("[L3] Skipped — LLM provider not configured")
+            why = "provider not configured" if not self._ai.available else "no L3 path for this action"
+            logger.info("[L3] Skipped — %s", why)
             return StepResult(
                 action=action, success=False,
-                message=f"L1+L2 failed (L3 skipped: provider not configured): {error_msg}",
+                message=f"L1+L2 failed (L3 skipped: {why}): {error_msg}",
                 layer_used=2,
                 error=error_msg,
                 screenshot_path=self._capture_failure_screenshot(page),

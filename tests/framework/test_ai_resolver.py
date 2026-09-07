@@ -72,3 +72,27 @@ def test_resolve_returns_none_when_provider_unavailable():
 def test_resolve_ai_action_returns_none_when_provider_unavailable():
     resolver = AIResolver(provider=None)
     assert resolver.resolve_ai_action(_action(), MagicMock()) is None
+
+
+# ── L3 only executes element interactions ──────────────────────────────────
+
+
+def test_supports_only_locator_actions():
+    assert AIResolver.supports(ActionType.CLICK)
+    assert AIResolver.supports(ActionType.FILL)
+    for kind in (ActionType.ASSERT_TEXT, ActionType.WAIT_FOR_TEXT, ActionType.PRESS, ActionType.GOTO):
+        assert not AIResolver.supports(kind), kind
+
+
+def test_execute_with_locator_rejects_unsupported_action():
+    import pytest
+    loc = MagicMock()
+    with pytest.raises(ValueError, match="cannot execute 'assert_text'"):
+        AIResolver._execute_with_locator(_action(ActionType.ASSERT_TEXT, args=("x",)), loc)
+    loc.click.assert_not_called()
+
+
+def test_execute_with_locator_passes_value_for_fill():
+    loc = MagicMock()
+    AIResolver._execute_with_locator(_action(ActionType.FILL, args=("Email", "a@b.c")), loc)
+    loc.fill.assert_called_once_with("a@b.c")

@@ -14,9 +14,10 @@ Skipped entirely when no LLM provider is configured.
 from __future__ import annotations
 
 import json
+from typing import Callable
 import logging
 
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
 from app.agent.prompts.resolver import (
     SYSTEM as _SYSTEM,
@@ -52,11 +53,34 @@ def _history_block(ctx: RunContext | None) -> str:
     return "\n\nRecent execution history (last steps):\n" + "\n".join(lines)
 
 
+# Element interactions L3 can carry out once it has a locator. Anything else
+# (assertions, waits, key presses, navigation) has no L3 execution path.
+_LOCATOR_ACTIONS: dict[ActionType, Callable[[Locator, str], None]] = {
+    ActionType.CLICK:           lambda loc, _v: loc.click(),
+    ActionType.CLICK_LINK_TEXT: lambda loc, _v: loc.click(),
+    ActionType.DOUBLE_CLICK:    lambda loc, _v: loc.dblclick(),
+    ActionType.RIGHT_CLICK:     lambda loc, _v: loc.click(button="right"),
+    ActionType.HOVER:           lambda loc, _v: loc.hover(),
+    ActionType.FILL:            lambda loc, v: loc.fill(v),
+    ActionType.TYPE:            lambda loc, v: loc.press_sequentially(v),
+    ActionType.SELECT:          lambda loc, v: loc.select_option(v),
+    ActionType.CHECK:           lambda loc, _v: loc.check(),
+    ActionType.UNCHECK:         lambda loc, _v: loc.uncheck(),
+    ActionType.CLEAR:           lambda loc, _v: loc.clear(),
+    ActionType.FOCUS:           lambda loc, _v: loc.focus(),
+}
+
+
 class AIResolver:
     """Layer 3: LLM-based element resolution as a last resort."""
 
     def __init__(self, provider: LLMProvider | None) -> None:
         self._provider = provider
+
+    @staticmethod
+    def supports(action_type: ActionType) -> bool:
+        """True when ``resolve`` can execute this action with a locator."""
+        return action_type in _LOCATOR_ACTIONS
 
     @property
     def available(self) -> bool:
@@ -192,32 +216,14 @@ class AIResolver:
             return None
 
     @staticmethod
-    def _execute_with_locator(action: FlowAction, loc) -> None:
-        value = action.args[1] if len(action.args) > 1 else ""
-        t = action.type.value
-
-        if t in ("click", "click_link_text"):
-            loc.click()
-        elif t == "double_click":
-            loc.dblclick()
-        elif t == "right_click":
-            loc.click(button="right")
-        elif t == "hover":
-            loc.hover()
-        elif t == "fill":
-            loc.fill(value)
-        elif t == "type":
-            loc.press_sequentially(value)
-        elif t == "select":
-            loc.select_option(value)
-        elif t == "check":
-            loc.check()
-        elif t == "uncheck":
-            loc.uncheck()
-        elif t == "clear":
-            loc.clear()
-        elif t == "focus":
-            loc.focus()
+    def _execute_with_locator(action: FlowAction, loc: Locator) -> None:
+        """Perform *action* on *loc*; raises for action types without an L3 path
+        so a suggestion for an assertion can never be reported as a pass."""
+        try:
+            perform = _LOCATOR_ACTIONS[action.type]
+        except KeyError:
+            raise ValueError(f"L3 cannot execute '{action.type.value}'") from None
+        perform(loc, action.args[1] if len(action.args) > 1 else "")
 
     @staticmethod
     def _build_locator(page: Page, s: dict):
