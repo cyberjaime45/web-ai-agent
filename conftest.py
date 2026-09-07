@@ -1,7 +1,7 @@
 """
 Shared pytest fixtures and hooks for the Web AI Agent runtime.
 
-Auto-discovery: .md flow files in flows/ are collected automatically
+Auto-discovery: .md flow files under tests/<app>/flows/ are collected automatically
 by pytest_collect_file — no test_*.py files needed.
 """
 
@@ -274,7 +274,7 @@ def pytest_collection_modifyitems(
 # When it finds a .md file inside a "flows" directory it creates a
 # FlowFile node, which in turn yields one FlowItem per flow file.
 # FlowItem.runtest() launches its own Playwright browser so no
-# test_*.py file is needed — just drop a .md file in src/flows/.
+# test_*.py file is needed — just drop a .md file in tests/<app>/flows/.
 
 
 def _set_lambdatest_status(page, success: bool, error: str = "") -> None:
@@ -322,7 +322,7 @@ class FlowItem(pytest.Item):
             recorder = PageRecorder()
             recorder.attach(page)
 
-            flows_dir = Path(str(self.fspath)).parent if self.fspath else Path("flows")
+            flows_dir = Path(str(self.fspath)).parent
             runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=flows_dir)
             result: FlowResult = runner.run(self.flow, page)
 
@@ -407,7 +407,7 @@ class FlowFile(pytest.File):
 
 
 def pytest_collect_file(parent, file_path: Path):
-    """Hook: turn every .md file in a flows/ directory into a test."""
+    """Hook: turn every .md file in a flows/ directory (tests/<app>/flows/) into a test."""
     if file_path.suffix == ".md" and "flows" in file_path.parts:
         # Skip auto-discovery when --flow_file explicitly targets this file —
         # the injection in pytest_collection_modifyitems will handle it.
@@ -422,8 +422,7 @@ def pytest_collect_file(parent, file_path: Path):
 
 @pytest.fixture(scope="session")
 def all_flows() -> dict[str, FlowDefinition]:
-    flows_dir = Path(__file__).parent / "flows"
-    return load_all_flows(flows_dir)
+    return load_all_flows(Path(__file__).parent / "tests")
 
 
 @pytest.fixture

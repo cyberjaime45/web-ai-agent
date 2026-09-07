@@ -90,7 +90,7 @@ When modifying AIResolver:
 
 ## conftest.py — pytest plugin
 
-- `pytest_collect_file`: hooks into pytest collection, returns `FlowFile` for `.md` files in `flows/` directories
+- `pytest_collect_file`: hooks into pytest collection, returns `FlowFile` for `.md` files in `flows/` directories (`tests/<app>/flows/`)
 - `FlowFile`: collection node, parses Markdown into `FlowDefinition`
 - `FlowItem`: individual test item, calls `FlowRunner.run()` in `runtest()`
 - `ProfessionalReportPlugin`: collects results, generates HTML report at session end

@@ -9,7 +9,7 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 1. **Read the full error message** — which layer raised it? Check for `PlaywrightTimeout`, `RuntimeError` (L2 exhausted), or AI resolver failure
 2. **Open the HTML report** — `open reports/<env>/report.html`
 3. **Check failure screenshot** — `reports/<env>/images/`
-4. **Run with headed browser** — `HEADLESS=false pytest --flow_file=flows/failing.md`
+4. **Run with headed browser** — `HEADLESS=false pytest --flow_file=tests/<app>/flows/failing.md`
 5. **Check which layer failed** — step results show `[L1]`, `[L2]`, or `[L3]`
 6. **Reproduce the exact step** — isolate it with `--flow='<single step>'`
 
@@ -45,8 +45,8 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | `FlowParseError` | Invalid action keyword or wrong arg count | Check syntax: `keyword: "arg1" \| "arg2"` |
-| pytest can't discover flow | File not in `flows/` directory path | Check `conftest.py` collection — needs `flows` in path |
-| Sub-flow not found | Wrong `run_flow` reference | Check path: `"login/sso_login"` resolves to `flows/login/sso_login.md` |
+| pytest can't discover flow | File not under `tests/<app>/flows/` | Check `conftest.py` collection — needs `flows` in path and `tests` in `testpaths` |
+| Sub-flow not found | Wrong `run_flow` reference | Resolved relative to the calling flow's directory: `"components/sso_login"` → `tests/fms/flows/components/sso_login.md` |
 | Circular flow reference | Flow A calls B which calls A | Break the cycle; restructure shared steps |
 | Report not generated | `ENVIRONMENT` not set / write permission | Set env var; check `reports/` dir exists |
 
@@ -56,7 +56,7 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 - [ ] Identified which layer raised the error
 - [ ] Root cause found (not just symptom)
 - [ ] Fix is minimal — only touches what's broken
-- [ ] `pytest --flow_file=flows/failing.md` passes
+- [ ] `pytest --flow_file=tests/<app>/flows/failing.md` passes
 - [ ] Full `pytest` run passes (no regressions)
 - [ ] Report generates cleanly
 - [ ] No `time.sleep()` introduced

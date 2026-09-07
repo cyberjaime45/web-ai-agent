@@ -5,7 +5,7 @@
 - password: "Welcome1!"
 
 ## Steps
-- run_flow: "login/ms_login"
+- run_flow: "components/ms_login"
 - click: "Book your flight"
 - wait_load
 <!-- Search form page -->

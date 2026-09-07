@@ -357,14 +357,20 @@ def parse_flow_file(filepath: Path) -> FlowDefinition:
     )
 
 
-def load_all_flows(flows_dir: Path | str = "flows") -> dict[str, FlowDefinition]:
-    """Load all .md flow files from the given directory."""
+def load_all_flows(flows_dir: Path | str = "tests") -> dict[str, FlowDefinition]:
+    """Load every .md flow file under any ``flows/`` directory below *flows_dir*.
+
+    Flows live at ``tests/<app>/flows/`` (components included), so the walk
+    is recursive and keyed by flow name.
+    """
     flows_path = Path(flows_dir)
     if not flows_path.exists():
         raise FileNotFoundError(f"Flows directory not found: {flows_path}")
 
     flows: dict[str, FlowDefinition] = {}
-    for md_file in sorted(flows_path.glob("*.md")):
+    for md_file in sorted(flows_path.rglob("*.md")):
+        if "flows" not in md_file.relative_to(flows_path).parts:
+            continue
         flow = parse_flow_file(md_file)
         flows[flow.name] = flow
 

@@ -1,7 +1,7 @@
 # FMS MVC Smoke Tests
 
 ## Login Page
-- run_flow: "../components/login/sso_login"
+- run_flow: "components/sso_login"
 - wait_load
 
 ## Home Page

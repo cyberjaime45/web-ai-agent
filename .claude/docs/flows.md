@@ -8,18 +8,30 @@ Each flow is a sequence of steps parsed through a 4-stage pipeline:
 
 ## File location & naming
 
+Flows are test assets: they live beside the suite for the application they exercise, one
+`tests/<app>/` per application under test.
+
 ```
-flows/
-  home_page.md
-  booking_flow.md
-  charter_up.md
-  login/              ← subdirectories for reusable flows
-    sso_login.md
-    ms_login.md
+tests/
+  framework/            ← the runtime's own self-tests (no browser)
+  wheelsup_site/
+    flows/
+      home_page.md
+      charter_up.md
+  members_site/
+    flows/
+      booking_flow.md
+      components/       ← reusable sub-flows for this app
+        ms_login.md
+  fms/
+    flows/
+      production_smoke.md
+      components/
+        sso_login.md
 ```
 
-pytest discovers all `.md` files under `flows/` (including subdirectories if they contain `flows` in the path).
-Use `--flow_file=flows/login/sso_login.md` to run a single file explicitly.
+pytest discovers all `.md` files under any `flows/` directory inside `tests/` (`components/` included).
+Use `--flow_file=tests/fms/flows/production_smoke.md` to run a single file explicitly.
 
 ## Step syntax
 
@@ -111,10 +123,10 @@ Call another flow file from within a flow:
 - click: "Settings"
 ```
 
-Path resolution (relative to `flows/` directory):
-- `"sso_login"` → `flows/sso_login.md`
-- `"login/sso_login"` → `flows/login/sso_login.md`
-- `"login/sso_login.md"` → `flows/login/sso_login.md`
+Path resolution (relative to the directory of the flow file that contains the `run_flow`):
+- `"sso_login"` → `<same dir>/sso_login.md`
+- `"components/sso_login"` → `<same dir>/components/sso_login.md`
+- `"components/sso_login.md"` → `<same dir>/components/sso_login.md`
 
 Sub-flows execute on the same browser page. Max nesting depth: 10. Circular references are detected.
 

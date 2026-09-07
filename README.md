@@ -62,7 +62,7 @@ cp .env.example .env
 uv run pytest
 
 # 5. Run a specific flow file
-uv run pytest flows/home_page.md -v
+uv run pytest tests/wheelsup_site/flows/home_page.md
 ```
 
 ---
@@ -76,7 +76,7 @@ import `Orchestrator` directly.
 
 ```bash
 # Run a flow file
-uv run python main.py run flows/home_page.md
+uv run python main.py run tests/wheelsup_site/flows/home_page.md
 
 # Run inline Markdown
 uv run python main.py run --inline '# Smoke
@@ -86,7 +86,7 @@ uv run python main.py run --inline '# Smoke
 '
 
 # Override the report environment
-uv run python main.py run flows/home_page.md --env qa1
+uv run python main.py run tests/wheelsup_site/flows/home_page.md --env qa1
 ```
 
 ### Exit codes
@@ -107,7 +107,7 @@ for parent agents in a multi-agent system:
 import json, subprocess
 
 proc = subprocess.run(
-    ["uv", "run", "python", "main.py", "run", "flows/home_page.md", "--json"],
+    ["uv", "run", "python", "main.py", "run", "tests/wheelsup_site/flows/home_page.md", "--json"],
     capture_output=True, text=True,
 )
 result = json.loads(proc.stdout)   # FlowResult dict
@@ -135,10 +135,11 @@ and exit is `2`.
 ## Running Flows
 
 ### Auto-discovery (default)
-Drop a `.md` file inside the `flows/` directory — pytest picks it up automatically, no `test_*.py` needed.
+Flows are test assets and live beside the suite for the application they exercise:
+drop a `.md` file under `tests/<app>/flows/` — pytest picks it up automatically, no `test_*.py` needed.
 
 ```bash
-uv run pytest flows/login.md -v
+uv run pytest tests/fms/flows/production_smoke.md
 ```
 
 ### Inline Markdown via `--flow`
@@ -168,7 +169,7 @@ uv run pytest --flow_file path/to/any_flow.md -v
 
 ## Flow File Format
 
-Flow files are plain Markdown. Place them in `flows/`.
+Flow files are plain Markdown. Place them in `tests/<app>/flows/`.
 
 ```markdown
 # Login Flow
@@ -680,15 +681,16 @@ Execute another flow file inline. Enables reuse of common sequences (e.g., login
 2. run_flow: "common/login"
 ```
 
-**Path resolution** — references are resolved relative to the `flows/` directory:
+**Path resolution** — references are resolved relative to the directory of the flow file
+that contains the `run_flow` step. Shared sub-flows go in that app's `components/` folder:
 
-| Reference | Resolves to |
+| Reference (from `tests/fms/flows/production_smoke.md`) | Resolves to |
 |-----------|-------------|
-| `"sso_login"` | `flows/sso_login.md` |
-| `"common/login"` | `flows/common/login.md` |
-| `"common/login.md"` | `flows/common/login.md` |
+| `"sso_login"` | `tests/fms/flows/sso_login.md` |
+| `"components/sso_login"` | `tests/fms/flows/components/sso_login.md` |
+| `"components/sso_login.md"` | `tests/fms/flows/components/sso_login.md` |
 
-**Example — reusable login flow** (`flows/sso_login.md`):
+**Example — reusable login flow** (`tests/fms/flows/components/sso_login.md`):
 
 ```markdown
 # SSO Login Page
@@ -704,13 +706,13 @@ Execute another flow file inline. Enables reuse of common sequences (e.g., login
 - assert_text: "My Tasks"
 ```
 
-**Example — parent flow calling the login** (`flows/dashboard.md`):
+**Example — parent flow calling the login** (`tests/fms/flows/dashboard.md`):
 
 ```markdown
 # Dashboard Page
 
 ## Steps
-- run_flow: "sso_login"
+- run_flow: "components/sso_login"
 - assert_text: "This is my Dashboard"
 - click: "Settings"
 ```
@@ -886,10 +888,23 @@ web-agent/
 │   └── utils/
 │       └── banner.py               # Terminal startup banner (Rich)
 │
-├── flows/                          # Flow definition files (.md)
-│   ├── home_page.md
-│   ├── signature_membership.md
-│   └── charter_up.md
+├── tests/
+│   ├── framework/                  # The runtime's own self-tests (no browser)
+│   ├── wheelsup_site/              # One suite per application under test
+│   │   └── flows/                  # Flow definition files (.md)
+│   │       ├── home_page.md
+│   │       ├── signature_membership.md
+│   │       └── charter_up.md
+│   ├── members_site/
+│   │   └── flows/
+│   │       ├── booking_flow.md
+│   │       └── components/         # Reusable sub-flows for this app
+│   │           └── ms_login.md
+│   └── fms/
+│       └── flows/
+│           ├── production_smoke.md
+│           └── components/
+│               └── sso_login.md
 │
 └── reports/
     └── <ENVIRONMENT>/              # e.g. staging/, qa1/, uat/
@@ -920,7 +935,7 @@ Copy `.env.example` to `.env`:
 ### Multi-environment reports
 
 ```bash
-ENVIRONMENT=qa1 uv run pytest flows/login.md
+ENVIRONMENT=qa1 uv run pytest tests/fms/flows/production_smoke.md
 # → writes to reports/qa1/
 ```
 
