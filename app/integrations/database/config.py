@@ -3,7 +3,7 @@ database/config.py — Database connection configuration.
 
 All values are read from environment variables so credentials are never
 hard-coded.  Load your .env file before importing this module (the project
-conftest.py already calls ``load_dotenv()`` on startup).
+app.config.settings loads ``.env`` on import).
 
 Required env vars (set in .env):
     DB_HOST       — hostname or IP of the database server  (default: localhost)
@@ -18,7 +18,7 @@ Required env vars (set in .env):
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

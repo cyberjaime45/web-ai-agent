@@ -36,8 +36,24 @@ import os
 import sys
 from pathlib import Path
 
-from app.agent.orchestrator import Orchestrator
-from app.schemas.actions import FlowResult
+
+def _preset_environment(argv: list[str]) -> None:
+    """Apply ``--env`` before any ``app.*`` import.
+
+    ENVIRONMENT is read once when ``app.config.settings`` loads (it also loads
+    ``.env``), so the override has to be in place before that import runs.
+    """
+    for i, arg in enumerate(argv):
+        if arg == "--env" and i + 1 < len(argv):
+            os.environ["ENVIRONMENT"] = argv[i + 1]
+        elif arg.startswith("--env="):
+            os.environ["ENVIRONMENT"] = arg.partition("=")[2]
+
+
+_preset_environment(sys.argv[1:])
+
+from app.agent.orchestrator import Orchestrator  # noqa: E402
+from app.schemas.actions import FlowResult  # noqa: E402
 
 
 def _flow_result_to_dict(result: FlowResult) -> dict:
@@ -81,9 +97,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not args.flow_file and args.inline is None:
         print("error: provide a flow file path or --inline <markdown>", file=sys.stderr)
         return 2
-
-    if args.env:
-        os.environ["ENVIRONMENT"] = args.env
 
     _configure_logging(json_mode=args.as_json)
 

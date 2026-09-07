@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import urllib.parse
 
-from playwright.sync_api import Browser, BrowserContext, Playwright
+from playwright.sync_api import Browser, Playwright
 
+from app.config.settings import settings
 from app.utils.build import get_build_name
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ def create_browser(pw: Playwright, test_name: str = "web-agent") -> tuple[Browse
         ValueError:        Unknown RUNNING_MODE value.
         EnvironmentError:  Required env vars are missing for the selected provider.
     """
-    mode = os.getenv("RUNNING_MODE", "local").lower().strip()
+    mode = settings.running_mode
     logger.info("[provider] mode=%r", mode)
 
     if mode == "local":
@@ -74,10 +74,10 @@ def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
     Headless mode: Uses VIEWPORT (default 1920×1080) since there is no OS
                    window to maximize.
     """
-    browser_name = os.getenv("BROWSER", "chromium").lower()
-    headless = os.getenv("HEADLESS", "true").lower() != "false"
-    slow_mo = int(os.getenv("SLOW_MO", "0"))
-    viewport_str = os.getenv("VIEWPORT", "1920x1080")
+    browser_name = settings.browser
+    headless = settings.headless
+    slow_mo = settings.slow_mo
+    viewport_str = settings.viewport
 
     browser_type = getattr(pw, browser_name, None)
     if browser_type is None:
@@ -116,8 +116,6 @@ def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
 # ── LambdaTest ─────────────────────────────────────────────────────────────────
 
 # LambdaTest's Playwright CDP endpoint (different from the Selenium hub URL).
-# is validated below to confirm a complete LambdaTest configuration, but Playwright
-# connects via CDP at the address below.
 _LT_CDP_ENDPOINT = "wss://cdp.lambdatest.com/playwright"
 
 def _lambdatest_browser(pw: Playwright, test_name: str) -> tuple[Browser, dict]:
@@ -131,8 +129,8 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> tuple[Browser, dict]:
       BUILD_NAME    Build label in the LambdaTest dashboard (default: "Web Test Report")
       ENVIRONMENT   Suffixed to the build label (default: staging)
     """
-    username   = os.getenv("LT_USERNAME", "").strip()
-    access_key = os.getenv("LT_ACCESS_KEY", "").strip()
+    username   = settings.lt_username
+    access_key = settings.lt_access_key
 
     missing = [
         name for name, val in (
@@ -153,7 +151,7 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> tuple[Browser, dict]:
         "LT:Options": {
             "username":   username,
             "accessKey":  access_key,
-            "build":      f"{get_build_name()} -> {os.getenv('ENVIRONMENT', 'staging')}",
+            "build":      f"{get_build_name()} -> {settings.environment}",
             "name":       test_name,
             "platform":   "Windows 11",
             "resolution": "1920x1080",

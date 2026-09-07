@@ -31,10 +31,10 @@ class Orchestrator:
 
     def __init__(
         self,
-        artifacts_dir: str | Path = "reports/local/images",
-        flows_dir: str | Path = "flows",
+        artifacts_dir: str | Path | None = None,
+        flows_dir: str | Path = "tests",
     ) -> None:
-        self.artifacts_dir = Path(artifacts_dir)
+        self.artifacts_dir = Path(artifacts_dir) if artifacts_dir else None
         self.flows_dir = Path(flows_dir)
 
     def run_file(self, path: Path) -> FlowResult:

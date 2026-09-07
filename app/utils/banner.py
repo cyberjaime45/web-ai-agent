@@ -18,7 +18,6 @@ from app.utils.build import get_build_name
 # string you like — the layout will center it automatically.
 
 BANNER_CONFIG: dict = {
-    "agent_name": "Web Agent",
     "version":    "1.0",
     "author":     "Cyberjaime45",
 
@@ -40,9 +39,9 @@ BANNER_CONFIG: dict = {
 
 # ── Render ─────────────────────────────────────────────────────────────────
 
-def show_banner(config: dict | None = None) -> None:
+def show_banner() -> None:
     """Print the startup banner to stdout using Rich."""
-    cfg = config or BANNER_CONFIG
+    cfg = BANNER_CONFIG
     console = Console()
 
     title   = Text(cfg["ascii_title"], style=cfg["title_color"], no_wrap=True)

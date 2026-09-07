@@ -20,7 +20,7 @@ class FakePage:
 
 @pytest.fixture
 def runner(tmp_path):
-    return FlowRunner(artifacts_dir=str(tmp_path), flows_dir=tmp_path)
+    return FlowRunner(artifacts_dir=str(tmp_path), flows_dir=tmp_path, provider=None)
 
 
 def _patch_run_step(monkeypatch, fail_raws=()):

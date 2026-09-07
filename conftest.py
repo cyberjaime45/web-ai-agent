@@ -9,21 +9,20 @@ from __future__ import annotations
 
 import datetime
 import logging
-import os
 import time
 import uuid
 from pathlib import Path
 from typing import Generator
 
 import pytest
-from dotenv import load_dotenv
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import sync_playwright
 
-from app.flow.parser import FlowParseError, load_all_flows, FlowDefinition, parse_flow_file, parse_flow_markdown
+from app.flow.parser import FlowParseError, FlowDefinition, parse_flow_file, parse_flow_markdown
 from app.execution.engine import FlowRunner
+from app.layers.providers import ConfigError, get_provider
 from app.schemas.actions import FlowResult
 from app.browser.session import create_browser
-from app.browser.driver import BrowserDriver
+from app.config.settings import settings
 from app.observability.console import (
     FLOW_FILE_PROP, FLOW_NAME_PROP, HEALINGS_PROP,
     execution_summary, install_console_reporter,
@@ -33,11 +32,7 @@ from app.observability.reporter import generate_report
 from app.utils.banner import show_banner
 from app.utils.build import get_build_name
 
-# ── Load .env ──────────────────────────────────────────────────
-
-load_dotenv()
-
-_ENV = os.getenv("ENVIRONMENT", "staging")
+_ENV = settings.environment   # .env is loaded by app.config.settings
 
 # ── Configure logging ───────────────────────────────────────────
 
@@ -48,9 +43,8 @@ logging.basicConfig(
 
 # ── Report paths ───────────────────────────────────────────────
 
-_PROJECT_ROOT = Path(__file__).parent
-_REPORT_DIR   = _PROJECT_ROOT / "reports" / _ENV
-_IMAGES_DIR   = _REPORT_DIR / "images"
+_REPORT_DIR   = settings.report_dir
+_IMAGES_DIR   = settings.images_dir
 _REPORT_PATH  = _REPORT_DIR / "report.html"
 
 
@@ -163,6 +157,12 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     show_banner()
+    # One LLM client for the whole session (L3 is optional). Partial config is
+    # a startup error, not a per-test one.
+    try:
+        session.config._webagent_provider = get_provider()
+    except ConfigError as exc:
+        raise pytest.UsageError(f"{exc} — set AI_PROVIDER, LLM_KEY and LLM_MODEL, or none of them") from exc
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -172,21 +172,13 @@ def pytest_collection(session: pytest.Session) -> None:
     install_console_reporter(session.config)
 
 
-def _environment_label() -> str:
-    mode = "headed" if os.getenv("HEADLESS", "true").lower().strip() == "false" else "headless"
-    label = f"{_ENV} · {os.getenv('BROWSER', 'chromium')} · {mode}"
-    if os.getenv("RUNNING_MODE", "local").lower().strip() == "lambda":
-        label += " · lambda"
-    return label
-
-
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     """Execution summary + report path, after the failure sections."""
     plugin = config.pluginmanager.get_plugin("professional_report")
     started = plugin.session_start if plugin else None
     duration = time.time() - started if started else 0.0
     lines = execution_summary(
-        terminalreporter.stats, duration, _environment_label(), get_build_name()
+        terminalreporter.stats, duration, settings.run_label(), get_build_name()
     )
     if lines:
         terminalreporter.section("Execution summary")
@@ -319,7 +311,7 @@ def pytest_collection_modifyitems(
 
 def _set_lambdatest_status(page, success: bool, error: str = "") -> None:
     """Report test pass/fail to LambdaTest dashboard (no-op for local runs)."""
-    if os.getenv("RUNNING_MODE", "local").lower().strip() != "lambda":
+    if not settings.remote:
         return
     try:
         import json as _json
@@ -368,7 +360,8 @@ class FlowItem(pytest.Item):
             recorder.attach(page)
 
             flows_dir = Path(str(self.fspath)).parent
-            runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=flows_dir)
+            runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=flows_dir,
+                                provider=self.config._webagent_provider)
             result: FlowResult = runner.run(self.flow, page)
             healed = sum(1 for s in result.steps if s.success and (s.layer_used or 1) > 1)
             self.user_properties.append((HEALINGS_PROP, healed))
@@ -463,42 +456,3 @@ def pytest_collect_file(parent, file_path: Path):
             return None
         return FlowFile.from_parent(parent, path=file_path)
 
-
-# ── Fixtures ───────────────────────────────────────────────────
-
-
-@pytest.fixture(scope="session")
-def all_flows() -> dict[str, FlowDefinition]:
-    return load_all_flows(Path(__file__).parent / "tests")
-
-
-@pytest.fixture
-def browser_driver(page: Page, tmp_path: Path) -> BrowserDriver:
-    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    return BrowserDriver(page, artifacts_dir=str(_IMAGES_DIR))
-
-
-@pytest.fixture
-def login_flow(all_flows) -> FlowDefinition:
-    assert "Login" in all_flows, f"Login.md not found. Available: {list(all_flows.keys())}"
-    return all_flows["Login"]
-
-
-@pytest.fixture
-def navigation_flow(all_flows) -> FlowDefinition:
-    assert "Navigation" in all_flows, f"Navigation.md not found. Available: {list(all_flows.keys())}"
-    return all_flows["Navigation"]
-
-
-@pytest.fixture
-def form_validation_flow(all_flows) -> FlowDefinition:
-    assert "FormValidation" in all_flows, f"FormValidation.md not found. Available: {list(all_flows.keys())}"
-    return all_flows["FormValidation"]
-
-
-@pytest.fixture
-def multi_page_journey_flow(all_flows) -> FlowDefinition:
-    assert "MultiPageJourney" in all_flows, (
-        f"MultiPageJourney.md not found. Available: {list(all_flows.keys())}"
-    )
-    return all_flows["MultiPageJourney"]

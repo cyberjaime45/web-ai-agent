@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import Any, Generator, NamedTuple
+from typing import Generator, NamedTuple
 
 from app.integrations.database.config import DatabaseConfig
 

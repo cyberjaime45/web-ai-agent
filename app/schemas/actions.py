@@ -157,18 +157,14 @@ class RunContext:
     """
     history: list[dict[str, str]] = field(default_factory=list)
     data:    dict[str, str] = field(default_factory=dict)
-    current_url:   str = ""
-    current_title: str = ""
-    step_index:    int = 0
 
     def record(
         self,
         action: "FlowAction",
         result: "StepResult",
         url: str,
-        title: str,
     ) -> None:
-        """Append a step to history and update page state."""
+        """Append a step to history."""
         self.history.append({
             "action": action.type.value,
             "target": action.args[0] if action.args else "",
@@ -176,9 +172,6 @@ class RunContext:
             "layer":  str(result.layer_used),
             "url":    url,
         })
-        self.current_url = url
-        self.current_title = title
-        self.step_index += 1
 
     def store(self, key: str, value: str) -> None:
         """Store extracted data for use by subsequent steps."""

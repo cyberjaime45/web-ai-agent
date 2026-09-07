@@ -12,13 +12,15 @@ import logging
 import os
 from pathlib import Path
 from typing import Callable
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
-from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
+
+from playwright.sync_api import Page
+
+from app.config.settings import settings
 from app.layers.locator import FallbackLocator, _is_selector
+from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "images"
 _DISMISS_BLOCKERS = os.getenv("DISMISS_BLOCKERS", "false").strip().lower() == "true"
 
 
@@ -61,11 +63,11 @@ class DeterministicRunner:
     def __init__(
         self,
         page: Page,
-        artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR,
+        artifacts_dir: str | Path | None = None,
         ctx: RunContext | None = None,
     ):
         self.page = page
-        self.artifacts_dir = Path(artifacts_dir)
+        self.artifacts_dir = Path(artifacts_dir) if artifacts_dir else settings.images_dir
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._locator = FallbackLocator()
         self._shot_counter = 0
@@ -189,7 +191,7 @@ class DeterministicRunner:
                 if _DISMISS_BLOCKERS:
                     self._dismiss_blockers()
                 return self._layer1(action)
-            except (PlaywrightTimeout, AssertionError, Exception) as exc:
+            except Exception as exc:
                 last_exc = exc
                 if attempt < self._MAX_L1_RETRIES:
                     logger.debug(

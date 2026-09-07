@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.integrations.database.client import DatabaseClient
-    from app.integrations.database.models import Row, QueryResult
 
 
 # ── Connection health ─────────────────────────────────────────────────────────

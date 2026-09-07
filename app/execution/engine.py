@@ -20,6 +20,7 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
+from app.config.settings import settings
 from app.schemas.actions import (
     AI_ONLY_ACTIONS,
     ActionType,
@@ -31,12 +32,12 @@ from app.schemas.actions import (
 from app.flow.parser import parse_flow_file, resolve_flow_path
 from app.layers.ai_resolver import AIResolver
 from app.layers.deterministic import DeterministicRunner
-from app.layers.providers import get_provider
+from app.layers.providers import LLMProvider, get_provider
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_IMAGES_DIR = Path("reports") / os.getenv("ENVIRONMENT", "staging") / "images"
 _MAX_NESTING_DEPTH = 10
+_RESOLVE_PROVIDER = object()   # sentinel: FlowRunner(provider=...) not given
 
 # ── Environment variable placeholder resolution ─────────────────────────────
 _ENV_PLACEHOLDER_RE = re.compile(r"^<([A-Z_][A-Z0-9_]*)>$")
@@ -104,12 +105,17 @@ def _append_error(result, msg: str) -> None:
 class FlowRunner:
     def __init__(
         self,
-        artifacts_dir: str | Path = _DEFAULT_IMAGES_DIR,
-        flows_dir: str | Path = "flows",
+        artifacts_dir: str | Path | None = None,
+        flows_dir: str | Path = "tests",
+        provider: LLMProvider | None | object = _RESOLVE_PROVIDER,
     ):
-        self.artifacts_dir = Path(artifacts_dir)
+        """*provider*: an LLMProvider to share across runs (one client per
+        session), ``None`` to disable L3, or omitted to resolve from settings."""
+        self.artifacts_dir = Path(artifacts_dir) if artifacts_dir else settings.images_dir
         self.flows_dir = Path(flows_dir)
-        self._ai = AIResolver(provider=get_provider())
+        if provider is _RESOLVE_PROVIDER:
+            provider = get_provider()
+        self._ai = AIResolver(provider=provider)
         self._seen_flows: set[str] = set()
         self._nesting_depth: int = 0
 
@@ -183,7 +189,7 @@ class FlowRunner:
             step_result.started_at = w0
             step_result.ended_at = time.time()
             result.steps.append(step_result)
-            ctx.record(action, step_result, page.url, page.title())
+            ctx.record(action, step_result, page.url)
 
             if step_result.screenshot_path:
                 result.last_screenshot = step_result.screenshot_path
@@ -311,7 +317,7 @@ class FlowRunner:
             results.append(sr)
 
             # Record sub-flow step in short-term memory
-            ctx.record(sub_action, sr, page.url, page.title())
+            ctx.record(sub_action, sr, page.url)
 
             if not sr.success:
                 break

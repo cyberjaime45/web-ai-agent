@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from functools import lru_cache
 
 from markdown_it import MarkdownIt
 
@@ -41,21 +41,17 @@ class FlowParseError(ValueError):
         super().__init__(message)
 
 
+class UnknownActionError(FlowParseError):
+    """The step keyword is not an ActionType (a comment or prose line)."""
+
+
 @dataclass
 class FlowDefinition:
     """Structured representation of a test flow."""
 
-    name:             str
-    url:              str = ""
-    description:      str = ""
-    timeout:          int = 30000
-    credentials:      dict[str, str]   = field(default_factory=dict)
-    steps:            list[str]        = field(default_factory=list)    # raw text (AI compat)
-    actions:          list[FlowAction] = field(default_factory=list)    # parsed (runner)
-    expected_outcome: list[str]        = field(default_factory=list)
-    error_scenarios:  list[str]        = field(default_factory=list)
-    notes:            list[str]        = field(default_factory=list)
-    raw_markdown:     str = ""
+    name:    str
+    timeout: int = 30000
+    actions: list[FlowAction] = field(default_factory=list)
 
 
 # ── Section extraction ────────────────────────────────────────────────────────
@@ -66,24 +62,6 @@ _METADATA_SECTIONS = frozenset({
 })
 
 _H2_RE = re.compile(r"(?:^|\n)##\s+(.+?)\s*(?=\n)", re.MULTILINE)
-
-
-def _section_items(text: str, header: str) -> list[str]:
-    """
-    Extract all list-item texts from a ## section using markdown-it-py.
-    Handles both ordered (1. 2. 3.) and unordered (- *) lists.
-    """
-    # Isolate the section between its ## heading and the next ## heading
-    pattern = re.compile(
-        r"(?:^|\n)##\s+" + re.escape(header) + r"\s*\n(.*?)(?=\n##\s|\Z)",
-        re.IGNORECASE | re.DOTALL,
-    )
-    m = pattern.search(text)
-    if not m:
-        return []
-
-    section_text = m.group(1)
-    return _items_from_section(section_text)
 
 
 def _items_from_section(section_text: str) -> list[str]:
@@ -133,14 +111,19 @@ def _section_lines(text: str, header: str) -> list[str]:
     Return every non-blank line inside a ## section.
     Used for key:value sections (Config, Credentials, Target Application).
     """
-    pattern = re.compile(
-        r"(?:^|\n)##\s+" + re.escape(header) + r"\s*\n(.*?)(?=\n##\s|\Z)",
-        re.IGNORECASE | re.DOTALL,
-    )
-    m = pattern.search(text)
+    m = _section_pattern(header).search(text)
     if not m:
         return []
     return [ln.strip() for ln in m.group(1).splitlines() if ln.strip()]
+
+
+@lru_cache(maxsize=None)
+def _section_pattern(header: str) -> re.Pattern[str]:
+    """Body of ``## <header>`` up to the next ``##`` heading (compiled once)."""
+    return re.compile(
+        r"(?:^|\n)##\s+" + re.escape(header) + r"\s*\n(.*?)(?=\n##\s|\Z)",
+        re.IGNORECASE | re.DOTALL,
+    )
 
 
 # ── 4-stage action parsing pipeline ──────────────────────────────────────────
@@ -184,7 +167,7 @@ def _normalize(
     try:
         action_type = ActionType(keyword)
     except ValueError:
-        raise FlowParseError(f"Unknown action keyword: '{keyword}'")
+        raise UnknownActionError(f"Unknown action keyword: '{keyword}'")
 
     # Parse arguments: split on pipe, strip quotes from each part
     if raw_args:
@@ -246,8 +229,10 @@ def _parse_action(raw: str, step_num: int) -> FlowAction | None:
     """
     Parse a single step line into a FlowAction using the 4-stage pipeline.
 
-    Returns None for blank lines. Falls back to WAIT(0) for unknown keywords
-    so the AI planner can still consume flow.steps[].
+    Returns None for blank lines. An unknown keyword (prose, a comment line)
+    becomes a WAIT(0) placeholder so the step still shows in the report;
+    a known keyword with the wrong argument count raises FlowParseError —
+    silently turning a malformed step into a no-op would make it pass.
     """
     raw = raw.strip()
     if not raw:
@@ -256,14 +241,12 @@ def _parse_action(raw: str, step_num: int) -> FlowAction | None:
     try:
         keyword, raw_args = _tokenize(raw)
         action_type, args = _normalize(keyword, raw_args)
-        _validate(action_type, args, step_num, raw)
-        return _build(action_type, args, raw, step_num)
-    except FlowParseError:
-        # Unknown keyword — keep as a raw WAIT(0) placeholder so the AI planner
-        # can still consume flow.steps[] while the deterministic runner skips it.
+    except UnknownActionError:
         return FlowAction(
             type=ActionType.WAIT, args=["0"], raw=raw, step_num=step_num
         )
+    _validate(action_type, args, step_num, raw)
+    return _build(action_type, args, raw, step_num)
 
 
 # ── Flow path resolution ──────────────────────────────────────────────────────
@@ -303,48 +286,25 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
     present (e.g. ``filepath.stem`` for file-based flows, ``"inline"`` for
     content passed via ``--flow``).
     """
-    flow = FlowDefinition(name=name, raw_markdown=text)
+    flow = FlowDefinition(name=name)
 
     # H1 heading → flow name
     h1 = re.match(r"^#\s+(.+)$", text, re.MULTILINE)
     if h1:
         flow.name = h1.group(1).strip()
 
-    # ── Config (new format) ──────────────────────────────────────
+    # ── Config: only `timeout` is consumed (page default timeout) ──
     for line in _section_lines(text, "Config"):
         m = re.match(r"[-*]?\s*(\w+)\s*:\s*(.+)", line)
-        if m:
-            key, val = m.group(1).lower(), m.group(2).strip()
-            if key == "url":
-                flow.url = val
-            elif key == "timeout":
-                flow.timeout = int(re.sub(r"[^\d]", "", val) or "30000")
-            elif key == "description":
-                flow.description = val
+        if m and m.group(1).lower() == "timeout":
+            flow.timeout = int(re.sub(r"[^\d]", "", m.group(2)) or "30000")
 
-    # ── Credentials ──────────────────────────────────────────────
-    for line in _section_lines(text, "Credentials"):
-        # Bold format:  - **Username**: student
-        m_bold = re.match(r"[-*]\s+\*\*(\w+)\*\*:\s*(.+)", line)
-        # Plain format: - username: student
-        m_plain = re.match(r"[-*]?\s*(\w+)\s*:\s*(.+)", line)
-        if m_bold:
-            flow.credentials[m_bold.group(1).lower()] = m_bold.group(2).strip()
-        elif m_plain:
-            flow.credentials[m_plain.group(1).lower()] = m_plain.group(2).strip()
-
-    # ── Steps — extract from all non-metadata ## sections ──────
-    for section_name, raw in _all_action_sections(text):
-        flow.steps.append(raw)
-        action = _parse_action(raw, step_num=len(flow.steps))
+    # ── Steps — every non-metadata ## section (Credentials, Notes… are skipped) ──
+    for step_num, (section_name, raw) in enumerate(_all_action_sections(text), start=1):
+        action = _parse_action(raw, step_num=step_num)
         if action:
             action.section = section_name
             flow.actions.append(action)
-
-    # ── Expected Outcome / Error Scenarios / Notes ────────────────
-    flow.expected_outcome = _section_items(text, "Expected Outcome")
-    flow.error_scenarios  = _section_items(text, "Error Scenarios")
-    flow.notes            = _section_items(text, "Notes")
 
     return flow
 
@@ -381,7 +341,7 @@ if __name__ == "__main__":
     from rich import print as rprint
 
     all_flows = load_all_flows()
-    for name, f in all_flows.items():
+    for f in all_flows.values():
         rprint(f"\n[bold cyan]{f.name}[/bold cyan]  ({len(f.actions)} actions)")
         for act in f.actions:
             rprint(f"  {act.step_num:>2}. {act.type.value:<20} {act.args}")

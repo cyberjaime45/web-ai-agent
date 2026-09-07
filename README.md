@@ -894,31 +894,23 @@ web-agent/
 │   │       └── resolver.py         # LLM prompt templates
 │   │
 │   ├── browser/
-│   │   ├── session.py              # Browser/context creation (local + LambdaTest)
-│   │   ├── driver.py               # BrowserDriver (navigation + element + utils)
-│   │   ├── navigation.py           # URL navigation, history, wait helpers
-│   │   ├── element.py              # Element extraction and interaction
-│   │   └── screenshot.py           # Screenshot and artifact capture
+│   │   └── session.py              # Browser/context creation (local + LambdaTest)
 │   │
 │   ├── config/
-│   │   └── settings.py             # Typed settings from environment variables
+│   │   └── settings.py             # Typed settings from environment (.env loaded here)
 │   │
 │   ├── integrations/
-│   │   └── database/               # MySQL/MariaDB client, config, models, queries
-│   │
-│   ├── memory/
-│   │   └── session.py              # Agent short-term session memory
+│   │   └── database/               # MySQL/MariaDB client, config, models, queries (optional, unused by flows)
 │   │
 │   ├── observability/
 │   │   ├── assets/                 # Static report shell, CSS, and JS
+│   │   ├── console.py              # Live terminal output + execution summary
 │   │   ├── recorder.py             # Per-test console + network capture
 │   │   └── reporter.py             # HTML + JSON report generator
 │   │
-│   ├── skills/
-│   │   └── base.py                 # Abstract Skill base class
-│   │
 │   └── utils/
-│       └── banner.py               # Terminal startup banner (Rich)
+│       ├── banner.py               # Terminal startup banner (Rich)
+│       └── build.py                # BUILD_NAME resolution + slug
 │
 ├── tests/
 │   ├── framework/                  # The runtime's own self-tests (no browser)

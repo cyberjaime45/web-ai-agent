@@ -42,6 +42,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.config.settings import settings
 from app.utils.build import build_slug, get_build_name
 
 # packaged asset name → (folder under the report root, target name)
@@ -447,8 +448,8 @@ def generate_report(
         "run_id": now.strftime("%Y%m%d_%H%M%S"),
         "created_at": now.isoformat(timespec="milliseconds"),
         "environment": {
-            "browser": os.getenv("BROWSER", "chromium"),
-            "headless": os.getenv("HEADLESS", "true").lower() != "false",
+            "browser": settings.browser,
+            "headless": settings.headless,
             "env": environment,
             "build_name": get_build_name(),
             "os": f"{platform.system()} {platform.release()}",
