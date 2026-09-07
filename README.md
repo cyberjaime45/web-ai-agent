@@ -178,6 +178,7 @@ tests/members_site/flows/booking_flow.md
   ✗ booking_flow.md » One Way Booking  41s                                [100%]
 
 ============================ Execution summary =============================
+Build:         Web Test Report
 Environment:   staging · chromium · headless
 Python tests:  0
 Flows:         2 (in 2 files)
@@ -961,7 +962,7 @@ Copy `.env.example` to `.env`:
 | `AI_PROVIDER` | — | LLM provider for L3: `openai`, `gemini`, or `anthropic` |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider (no default — must be set) |
-| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, and LambdaTest build name |
+| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, console execution summary, and LambdaTest build name |
 | `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network headers/payloads |
 
 ### Multi-environment reports

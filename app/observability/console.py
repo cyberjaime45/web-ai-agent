@@ -180,13 +180,17 @@ def install_console_reporter(config: pytest.Config) -> None:
 
 
 def execution_summary(
-    stats: dict[str, list], duration_s: float, environment: str | None = None
+    stats: dict[str, list],
+    duration_s: float,
+    environment: str | None = None,
+    build_name: str | None = None,
 ) -> list[str]:
     """The end-of-run summary block, from counters pytest already keeps.
 
     One pass over ``TerminalReporter.stats`` — no filesystem or report-file
     access. Returns no lines when nothing ran (collect-only, full deselect).
-    *environment* is a preformatted label (e.g. ``staging · chromium · headless``).
+    *environment* is a preformatted label (e.g. ``staging · chromium · headless``);
+    *build_name* is the run label (BUILD_NAME or its fallback).
     """
     counts = {category: len(stats.get(category, [])) for category in _OUTCOMES}
     total = sum(counts.values())
@@ -211,6 +215,8 @@ def execution_summary(
             timed.append((float(getattr(report, "duration", 0.0) or 0.0), label))
 
     rows: list[tuple[str, str]] = []
+    if build_name:
+        rows.append(("Build", build_name))
     if environment:
         rows.append(("Environment", environment))
     if flows:

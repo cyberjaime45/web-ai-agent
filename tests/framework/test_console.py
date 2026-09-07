@@ -96,6 +96,14 @@ def test_summary_environment_line_uses_the_given_label():
     assert any("qa1 · firefox · headed" in line for line in lines)
 
 
+def test_summary_build_row_leads_when_given():
+    report = {"passed": [_report("tests/x.py::test_a")]}
+    lines = execution_summary(report, 1.0, "qa1 · chromium · headless", "Release 4.2 Smoke")
+    assert lines[0].startswith("Build:") and lines[0].endswith("Release 4.2 Smoke")
+    assert lines[1].startswith("Environment:")
+    assert not any(line.startswith("Build:") for line in execution_summary(report, 1.0))
+
+
 def test_summary_counts_healed_steps_only_when_present():
     healed = {
         "passed": [

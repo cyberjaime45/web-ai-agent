@@ -80,7 +80,7 @@ pip install -r requirements.txt
 | `LLM_KEY` | — | API key for the selected provider (required when L3 is enabled) |
 | `LLM_MODEL` | — | Model id for the selected provider (required when L3 is enabled, no default) |
 | `RUNNING_MODE` | `local` | `local` or `lambda` (LambdaTest cloud) |
-| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, and LambdaTest build name |
+| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, console execution summary, and LambdaTest build name |
 | `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network headers/payloads |
 
 ## Rules

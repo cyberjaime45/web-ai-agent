@@ -31,6 +31,7 @@ from app.observability.console import (
 from app.observability.recorder import PageRecorder
 from app.observability.reporter import generate_report
 from app.utils.banner import show_banner
+from app.utils.build import get_build_name
 
 # ── Load .env ──────────────────────────────────────────────────
 
@@ -183,7 +184,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     plugin = config.pluginmanager.get_plugin("professional_report")
     started = plugin.session_start if plugin else None
     duration = time.time() - started if started else 0.0
-    lines = execution_summary(terminalreporter.stats, duration, _environment_label())
+    lines = execution_summary(
+        terminalreporter.stats, duration, _environment_label(), get_build_name()
+    )
     if lines:
         terminalreporter.section("Execution summary")
         for line in lines:

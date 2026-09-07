@@ -334,7 +334,8 @@ def test_generate_report_counts_section_tests(tmp_path):
 
 # ── generate_report ──────────────────────────────────────────────────────────
 
-def test_generate_report_writes_all_files(tmp_path):
+def test_generate_report_writes_all_files(tmp_path, monkeypatch):
+    monkeypatch.delenv("BUILD_NAME", raising=False)  # payload must carry the fallback
     out = tmp_path / "report.html"
     results = [
         make_result(),
@@ -359,7 +360,7 @@ def test_generate_report_writes_all_files(tmp_path):
     # pass rate excludes skipped: 1 passed of 2 executed
     assert payload["totals"]["pass_rate"] == 50.0
     assert payload["environment"]["env"] == "staging"
-    assert payload["environment"]["build_name"] == "Web Test Report"  # BUILD_NAME unset → fallback
+    assert payload["environment"]["build_name"] == "Web Test Report"
     # report.json mirrors the payload, plus the full inline detail arrays
     full = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert full["totals"] == payload["totals"]

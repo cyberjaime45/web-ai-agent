@@ -95,7 +95,7 @@ When modifying AIResolver:
 - `FlowItem`: individual test item, calls `FlowRunner.run()` in `runtest()`
 - `ProfessionalReportPlugin`: collects results, generates HTML report at session end
 - `pytest_collection` (tryfirst): adopts `WebAgentTerminalReporter` from `app/observability/console.py` — per-file headers, one `✓/✗ file » flow` line per test with duration; only when verbosity is 0 (`-v`/`-q` keep stock output)
-- `pytest_terminal_summary`: prints the *Execution summary* section (counts, healed L2/L3 steps, duration, slowest tests) and the report paths
+- `pytest_terminal_summary`: prints the *Execution summary* section (build name, counts, healed L2/L3 steps, duration, slowest tests) and the report paths
 - `FlowItem.runtest` stamps `webagent_flow_file` / `webagent_flow_name` / `webagent_healings` on `user_properties` for the console reporter
 - `--flow`: inline flow string mode
 - `--flow_file`: explicit path mode
