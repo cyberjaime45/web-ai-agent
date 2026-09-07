@@ -355,6 +355,7 @@ def test_generate_report_writes_all_files(tmp_path, monkeypatch):
     assert out.exists()
     assert (tmp_path / "assets" / "report.css").exists()
     assert (tmp_path / "assets" / "report.js").exists()
+    assert (tmp_path / "assets" / "logo.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"   # binary-safe copy
     data_js = (tmp_path / "assets" / "data.js").read_text(encoding="utf-8")
     assert data_js.startswith("window.__WEBAGENT_DATA__ = {")
     payload = json.loads(data_js[len("window.__WEBAGENT_DATA__ = "):].rstrip().rstrip(";"))
@@ -455,6 +456,7 @@ def test_generate_report_html_references_assets(tmp_path):
     assert "assets/data.js" in html
     assert "assets/report.js" in html
     assert "assets/report.css" in html
+    assert "assets/logo.png" in html
     assert "Web Test Report" in html  # static fallback; BUILD_NAME overrides it at load time
 
 

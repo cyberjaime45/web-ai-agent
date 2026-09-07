@@ -51,6 +51,7 @@ _ASSETS = {
     "report.html": ("", "report.html"),
     "report.css": ("assets", "report.css"),
     "report.js": ("assets", "report.js"),
+    "logo.png": ("assets", "logo.png"),
 }
 
 _RUN_FLOW_RE = re.compile(r"^\s*run_flow\b", re.IGNORECASE)
@@ -482,9 +483,7 @@ def generate_report(
     for source_name, (subdir, target_name) in _ASSETS.items():
         target_dir = report_dir / subdir if subdir else report_dir
         target_dir.mkdir(parents=True, exist_ok=True)
-        (target_dir / target_name).write_text(
-            (packaged / source_name).read_text(encoding="utf-8"), encoding="utf-8"
-        )
+        shutil.copyfile(packaged / source_name, target_dir / target_name)   # text and binary alike
 
     # Per-test detail shards: console/network stay out of the upfront payload
     # and load lazily via <script> injection (fetch() is blocked on file://).
