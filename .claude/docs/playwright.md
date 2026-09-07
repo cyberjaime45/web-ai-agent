@@ -72,15 +72,25 @@ Playwright's action methods (`.click()`, `.fill()`, `.check()`, etc.) perform au
 ## Browser configuration
 
 ```python
-# Env vars (app/browser/session.py):
-# HEADLESS=true/false  (default: true)
-# BROWSER=chromium/firefox/webkit  (default: chromium)
-# VIEWPORT=1920x1080  (default: 1920x1080, WIDTHxHEIGHT format)
-# SLOW_MO=0  (default: 0, milliseconds between actions)
+# All values come from app/config/settings.py (settings.browser, .headless,
+# .viewport, .slow_mo, .running_mode, .lt_username, .lt_access_key).
+# create_browser(pw, test_name) in app/browser/session.py launches locally or
+# connects to LambdaTest over CDP; it returns (browser, context_kwargs).
 
-# Headed mode: --start-maximized + no_viewport: True (chromium only)
-# Headless mode: explicit viewport from VIEWPORT env var
+# Headed Chromium: --start-maximized + no_viewport=True
+# Everything else: explicit viewport from VIEWPORT
 ```
+
+Under pytest the browser is shared by the session (`_SessionBrowser` in
+conftest) and each flow gets `browser.new_context(**context_kwargs)` — never
+launch a browser per test.
+
+## Round trips cost time on the per-step path
+
+`page.title()`, `page.content()`, `loc.count()`, `loc.is_visible()` are each a
+driver round trip (~1–5 ms locally, more remote). `page.url` is a cached
+property. Don't add per-step calls for values nothing reads; batch DOM reads
+(one `page.content()` per fuzzy pass, parsed once).
 
 ## Shadow DOM & iframes
 
@@ -95,14 +105,11 @@ frame.get_by_role("button").click()
 
 ## Screenshot on step failure
 
-```python
-from pathlib import Path
-
-def save_failure_screenshot(page, step_name: str, env: str):
-    path = Path(f"reports/{env}/images/failure-{step_name}.png")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(path), full_page=True)
-```
+One routine: `capture_failure_screenshot(page, directory)` in
+`app/execution/engine.py` (viewport shot, `fail_<uuid>.png` under
+`settings.images_dir`). The engine calls it at the failure site; conftest
+calls it only for the flow-end fallback and then annotates error elements.
+Do not add another capture path.
 
 ## selectolax similarity (L2)
 

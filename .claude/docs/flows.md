@@ -1,170 +1,44 @@
-# Flow File Format
+# Flow Files — parser and runtime facts
 
-## Overview
+User-facing guide: `docs/FLOWS.md`; action reference with examples: `docs/ACTIONS.md`.
+This file records what the parser and runner actually do.
 
-Flows are Markdown files discovered by pytest via `conftest.py`.
-Each flow is a sequence of steps parsed through a 4-stage pipeline:
-`_tokenize` → `_normalize` → `_validate` → `_build` → `FlowAction`
+## Location and discovery
 
-## File location & naming
+`tests/<app>/flows/*.md`, shared sub-flows in `tests/<app>/flows/components/`.
+`pytest_collect_file` collects any `.md` whose path contains a `flows` directory
+(components included — a component file is also a test on its own).
+`--flow_file` runs any `.md` anywhere; `--flow` takes inline Markdown and needs at
+least one `## section` with steps, otherwise pytest exits with code 4.
 
-Flows are test assets: they live beside the suite for the application they exercise, one
-`tests/<app>/` per application under test.
+## What the parser reads (`app/flow/parser.py`)
 
-```
-tests/
-  framework/            ← the runtime's own self-tests (no browser)
-  wheelsup_site/
-    flows/
-      home_page.md
-      charter_up.md
-  members_site/
-    flows/
-      booking_flow.md
-      components/       ← reusable sub-flows for this app
-        ms_login.md
-  fms/
-    flows/
-      production_smoke.md
-      components/
-        sso_login.md
-```
+- `# H1` → flow name (falls back to the file stem, or `inline`).
+- `## Config` → only `timeout` (ms; page default timeout, default 30000). Other keys are ignored.
+- Every other `## heading` **except** the metadata sections `config`, `credentials`,
+  `expected outcome`, `error scenarios`, `notes` is a run of steps. The section name is
+  stored on each `FlowAction.section` and becomes a test of its own in the report.
+- List items (`-`, `*`, `1.`) inside a section are steps; `<!-- comments -->` and prose
+  lines with an unknown keyword become `WAIT(0)` placeholders (still shown in the report).
+- Step pipeline: `_tokenize` (`keyword: rest` or bare keyword) → `_normalize`
+  (`ActionType(keyword)`, split on `|`, unquote) → `_validate` (`ACTION_ARG_SPEC` arity —
+  a known keyword with the wrong count **raises** `FlowParseError`) → `_build`.
+- `FlowDefinition` has exactly `name`, `timeout`, `actions`.
 
-pytest discovers all `.md` files under any `flows/` directory inside `tests/` (`components/` included).
-Use `--flow_file=tests/fms/flows/production_smoke.md` to run a single file explicitly.
+## Runtime semantics
 
-## Step syntax
-
-```markdown
-# Flow Name
-
-## Steps
-- keyword: "arg1"
-- keyword: "arg1" | "arg2"
-- keyword                       ← no-arg actions (reload, back, wait_load)
-```
-
-Arguments are pipe-separated (`|`) and optionally quoted.
-
-### Full example
-
-```markdown
-# SSO Login Page
-
-## Steps
-- goto: "https://example.com/"
-- wait_for_text: "Sign in"
-- click: "Sign in with SSO"
-- fill: "Email" | "user@example.com"
-- click: "Next"
-- fill: "Password" | "secret"
-- click: "Sign in"
-- assert_text: "My Dashboard"
-```
-
-## Supported actions
-
-### Navigation (6)
-`goto`, `reload`, `back`, `wait_load`, `switch_tab`, `scroll`
-
-### Click (5)
-`click`, `click_link_text`, `double_click`, `right_click`, `hover`
-
-### Input (7)
-`fill`, `type`, `clear`, `focus`, `select`, `check`, `uncheck`
-
-### Advanced (2)
-`drag_to`, `upload`
-
-### Table/Data (5)
-`read_row`, `table_click`, `find_row`, `count_elements`, `get_attribute`
-
-### Assertions (8)
-`assert_text`, `assert_not_text`, `assert_visible`, `assert_hidden`, `assert_url`, `assert_enabled`, `assert_disabled`, `assert_checked`
-
-### Waits (4)
-`wait`, `wait_for_element`, `wait_for_text`, `wait_for_url`
-
-### AI-native (4) — L3 only
-`ai_click`, `ai_extract`, `ai_assert`, `ai_summarize`
-
-AI-native steps are skipped gracefully if `OPENAI_API_KEY` is not set.
-
-### Flow Composition (1)
-`run_flow` — execute another flow file inline (see below)
-
-### Utilities (2)
-`screenshot`, `press`
-
-## CSS selectors and XPath
-
-All element-targeting actions support CSS selectors and XPath expressions directly:
-
-```markdown
-- click: "#submit-btn"
-- click: "div[data-testid='cta'] button"
-- click: "//button[@type='submit']"
-- fill: "[data-testid='email-input']" | "user@example.com"
-- check: "input[type='checkbox'][name='agree']"
-```
-
-Detection: `_is_selector()` in `locator.py` identifies CSS (`#`, `.`, `[`, tag-prefixed) and XPath (`//`, `/`).
-
-## Reusable flows — `run_flow`
-
-Call another flow file from within a flow:
-
-```markdown
-# Dashboard Tests
-
-## Steps
-- run_flow: "login/sso_login"
-- assert_text: "My Dashboard"
-- click: "Settings"
-```
-
-Path resolution (relative to the directory of the flow file that contains the `run_flow`):
-- `"sso_login"` → `<same dir>/sso_login.md`
-- `"components/sso_login"` → `<same dir>/components/sso_login.md`
-- `"components/sso_login.md"` → `<same dir>/components/sso_login.md`
-
-Sub-flows execute on the same browser page. Max nesting depth: 10. Circular references are detected.
-
-## Optional sections
-
-```markdown
-## Config
-- url: https://example.com
-- timeout: 30000
-- description: Login flow test
-
-## Credentials
-- username: admin
-- password: secret123
-
-## Expected Outcome
-- User lands on dashboard
-
-## Error Scenarios
-- Invalid credentials show error banner
-
-## Notes
-- Requires VPN access
-```
-
-## Inline flow mode
-
-For quick one-off runs without a file:
-
-```bash
-pytest --flow='click: "Login"'
-```
+- A failed step marks the rest of its section skipped; the next section runs.
+- `<NAME>` arguments resolve from the environment in `_resolve_env_placeholders`
+  (engine.py); unset → step fails naming the variable; names containing
+  PASSWORD/SECRET/KEY/TOKEN are masked as `******` in `raw` (console + report).
+- `run_flow: "ref"` resolves `ref[.md]` relative to the calling file's directory,
+  runs on the same page, nests up to 10 levels, detects cycles.
+- Sub-flow steps carry `sub_flow=<name>` and render nested under the marker step.
 
 ## Writing good flows
 
-- One logical user journey per file
-- Keep files under ~30 steps — split longer journeys
-- Use text-based locators where possible — more resilient
-- Use CSS/XPath for elements that lack accessible names
-- Put reusable sequences (login, setup) in subdirectories and call via `run_flow`
-- Add a `screenshot` step after critical state changes for debugging
+- One journey per file; each `## section` a checkable unit (it is a separate test in the report).
+- Prefer text/role/label targets; use CSS/XPath (`_is_selector`) when there is no accessible name.
+- Secrets only via `<ENV>` placeholders, never literal in the file.
+- Put shared sequences in `components/` and call them with `run_flow`.
+- `screenshot` after critical state changes.

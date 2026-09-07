@@ -11,7 +11,7 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 3. **Check failure screenshot** — `reports/<env>/images/`
 4. **Run with headed browser** — `HEADLESS=false pytest --flow_file=tests/<app>/flows/failing.md`
 5. **Check which layer failed** — step results show `[L1]`, `[L2]`, or `[L3]`
-6. **Reproduce the exact step** — isolate it with `--flow='<single step>'`
+6. **Reproduce the exact step** — isolate it: `pytest --flow=$'# Repro\n## Steps\n- <the step>'`
 
 ## Failure by layer
 
@@ -36,7 +36,9 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Returns None | `OPENAI_API_KEY` not set or LLM error | Check env — expected behavior if key missing |
+| `UsageError: Incomplete LLM configuration` at startup | Some but not all of `AI_PROVIDER`/`LLM_KEY`/`LLM_MODEL` set (often a commented-out provider line in `.env`) | Set all three or none; `LLM_KEY= LLM_MODEL= pytest` forces L3 off for one run |
+| `L3 skipped: no L3 path for this action` | Assertion/wait/press failed — L3 only executes element interactions (`_LOCATOR_ACTIONS`) | Fix the target or the page state; L3 cannot help here by design |
+| Returns None | Suggestion matched nothing, or LLM/JSON error | Check `[L3]` warnings in the log; expected when the provider is unset |
 | Correct element found but wrong action | Prompt missing action type context | Check prompt structure in ai_resolver.py |
 | Inconsistent results across runs | Temperature too high | Lower temperature for action decisions |
 
@@ -48,7 +50,8 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 | pytest can't discover flow | File not under `tests/<app>/flows/` | Check `conftest.py` collection — needs `flows` in path and `tests` in `testpaths` |
 | Sub-flow not found | Wrong `run_flow` reference | Resolved relative to the calling flow's directory: `"components/sso_login"` → `tests/fms/flows/components/sso_login.md` |
 | Circular flow reference | Flow A calls B which calls A | Break the cycle; restructure shared steps |
-| Report not generated | `ENVIRONMENT` not set / write permission | Set env var; check `reports/` dir exists |
+| Report not generated | Nothing ran (`--collect-only`, all deselected) — previous report is kept on purpose | Run at least one test |
+| Screenshots missing from the report | Paths outside `settings.report_dir` (custom `artifacts_dir`) | Keep artifacts under `reports/<env>/images` |
 
 ## Checklist before marking fixed
 
@@ -57,7 +60,7 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 - [ ] Root cause found (not just symptom)
 - [ ] Fix is minimal — only touches what's broken
 - [ ] `pytest --flow_file=tests/<app>/flows/failing.md` passes
-- [ ] Full `pytest` run passes (no regressions)
-- [ ] Report generates cleanly
-- [ ] No `time.sleep()` introduced
-- [ ] L3 still skips gracefully without `OPENAI_API_KEY`
+- [ ] `pytest tests/framework` passes; `ruff check app conftest.py main.py tests` clean
+- [ ] Report generates and opens with no console errors
+- [ ] No `time.sleep()` introduced; no new per-step round trips
+- [ ] L3 still skips gracefully with `LLM_KEY= LLM_MODEL=`

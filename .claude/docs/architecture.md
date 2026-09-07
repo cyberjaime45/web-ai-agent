@@ -4,115 +4,82 @@
 
 ```
 conftest.py
-  pytest_collect_file()
-    → FlowFile (collection node)
-      → FlowItem.runtest()
-        → FlowDefinition (parsed Markdown)
-          → FlowRunner.run(flow, page)
-            → for each action:
-                if RUN_FLOW:
-                  → resolve_flow_path() → parse sub-flow
-                  → execute sub-flow actions recursively (same page)
-                  → tag StepResults with sub_flow name
-                else if AI_ONLY:
-                  → L3: AIResolver.resolve_ai_action()
-                else:
-                  → L1: DeterministicRunner.execute(action)
-                    → success: next step
-                    → fail (any exception):
-                  → L2: FallbackLocator.resolve_*() via _layer2()
-                    → success: next step
-                    → fail (RuntimeError):
-                  → L3: AIResolver.resolve()   [if OPENAI_API_KEY set]
-                    → success: next step
-                    → fail: mark step failed, stop flow
+  pytest_sessionstart  → banner, images dir, get_provider() once (UsageError on partial AI config),
+                         _SessionBrowser (Playwright driver + browser shared by the session)
+  pytest_collect_file  → FlowFile (.md under any flows/ dir) → FlowItem
+  FlowItem.runtest()   → _SessionBrowser.page(): fresh BrowserContext + Page (own grid session under lambda)
+                       → PageRecorder.attach(page)
+                       → FlowRunner(provider=<session provider>).run(flow, page)
+                            for each action (grouped by ## section; a failure skips the rest of that section):
+                              RUN_FLOW  → resolve_flow_path (relative to the calling file) → parse → recurse, same page
+                              AI_ONLY   → L3 AIResolver.resolve_ai_action()
+                              else      → _execute_one(): <ENV> placeholders → _run_step → timing → ctx.record
+                                            L1 DeterministicRunner.execute()   (raises on failure)
+                                            L2 _layer2() → FallbackLocator     (RuntimeError when exhausted)
+                                            L3 only if provider set AND AIResolver.supports(action.type):
+                                               resolve(), then one re-prompt with page URL/title, then fail
+                       finally → record steps/error/capture for the report, LambdaTest status, close context
+  pytest_sessionfinish → generate_report() (skipped on --collect-only / nothing ran), close session browser
+  pytest_terminal_summary → Execution summary + report paths
 ```
 
 ## Layer contracts
 
-Each layer signals failure via standard exceptions. FlowRunner catches exceptions to trigger the next layer.
-
 | Layer | Success | Failure signal |
-|-------|---------|---------------|
-| L1 DeterministicRunner | Returns `StepResult` | Raises `PlaywrightTimeout`, `AssertionError`, or `Exception` |
-| L2 FallbackLocator | Returns `StepResult` (via L2 handler) | Raises `RuntimeError` (all strategies exhausted) |
-| L3 AIResolver | Returns `StepResult` | Returns `None` (missing API key or LLM error) |
+|-------|---------|----------------|
+| L1 `DeterministicRunner.execute` | `StepResult(layer_used=1)` | raises (any exception) after `_MAX_L1_RETRIES` attempts, each capped at `_L1_TIMEOUT` |
+| L2 `_layer2` → `FallbackLocator` | `StepResult(layer_used=2)` | L2 handler returns `None` → `RuntimeError("Layers 1+2 could not resolve …")` |
+| L3 `AIResolver.resolve` | `StepResult(layer_used=3)` | returns `None` (no locator match, LLM/parse error); engine re-prompts once, then marks the step failed |
+
+The engine never catches inside a layer's own retry; it catches at the boundary and moves down the chain.
 
 ## L1 — DeterministicRunner
 
-- Dispatch-table driven: `ActionType` → handler function
-- Uses exact Playwright role/label/placeholder locators
-- Supports CSS selectors and XPath directly via `_is_selector()` (shared function in `locator.py`)
-- `_L1_TIMEOUT = 5000ms` — caps Playwright's auto-wait on action calls (click, fill, etc.) for fast failover to L2
-- The page's `default_timeout` (30s) is preserved for explicit waits and assertions
-- Handles ~80% of steps in a healthy flow
+- Dispatch tables `_l1_handlers` / `_l2_handlers` keyed by `ActionType`.
+- Exact Playwright locators; CSS/XPath go straight to `page.locator()` via `_is_selector()` (in `locator.py`).
+- Shared resolvers: `_resolve_clickable_l1` (button → link → exact text), `_resolve_input_l1` (label → placeholder), `_resolve_text_target`, `_assert_disabled_state`. Add a new handler on top of these, not beside them.
+- `_L1_TIMEOUT = 5000` caps action auto-wait; `_MAX_L1_RETRIES = 1` (a second identical window rarely changes the outcome and doubled failover latency).
+- `_DISMISS_BLOCKERS` (env, default off) runs the cookie/modal dismisser before each attempt.
 
 Adding a new action type:
-1. Add enum value in `app/schemas/actions.py`
-2. Add arg spec in `ACTION_ARG_SPEC`
-3. Add L1 handler function in `deterministic.py`
-4. Register in `_l1_handlers` dispatch table
-5. Add L2 handler if fuzzy fallback makes sense
-6. Update README.md
+1. Enum value in `app/schemas/actions.py` + entry in `ACTION_ARG_SPEC` (arity is validated at parse time; a wrong count raises `FlowParseError`).
+2. L1 handler in `deterministic.py`, registered in `_l1_handlers`.
+3. L2 handler in `_l2_handlers` if a fuzzy fallback makes sense.
+4. If L3 can perform it with a locator, add it to `_LOCATOR_ACTIONS` in `ai_resolver.py`; otherwise it never reaches L3.
+5. Document it in `docs/ACTIONS.md` (group counts must still add up to the enum size).
 
 ## L2 — FallbackLocator
 
-- Activated only when L1 fails
-- Resolution methods (current strategy counts):
-  - `resolve_clickable`: 5 strategies (fuzzy role, text exact/partial, selectolax)
-  - `resolve_input`: 5 strategies (label, placeholder, textbox role, selectolax)
-  - `resolve_checkbox`: 3 strategies (label, checkbox role, radio role)
-- Uses selectolax for DOM similarity matching (threshold ≥ 0.6, hardcoded)
-- CSS/XPath selectors shortcut at the top of `resolve_clickable` and `resolve_input`
-
-When adding a new fuzzy strategy:
-- Add it at the END of the strategy list (least disruptive)
-- Document why it's needed and what L1/L2 gaps it fills
+- `resolve_clickable` / `resolve_input`: four looser Playwright strategies polled every 200 ms for up to 5 s (`_resolve_with_poll`), **then** one selectolax pass (`_best_fuzzy`, similarity ≥ `_FUZZY_MIN` = 0.6). The fuzzy pass serialises and parses the whole DOM, which is why it is outside the poll loop — keep it there.
+- `resolve_checkbox`: label → checkbox role → radio role, polled.
+- Selector-looking targets short-circuit to `page.locator()`.
+- L2 assertion handlers check `page.content()` once per call.
 
 ## L3 — AIResolver
 
-- Activated only when L1 + L2 both fail
-- Optional: skipped automatically if `OPENAI_API_KEY` not set
-- Also handles AI-native actions directly (`ai_click`, `ai_extract`, `ai_assert`, `ai_summarize`)
-- Must never be required for a flow to pass — flows must degrade gracefully without it
-
-When modifying AIResolver:
-- Keep the prompt structure stable — changes here affect all flows
-- Test with `OPENAI_API_KEY` unset to confirm graceful skip
+- Constructed with an `LLMProvider` or `None`; `available` reflects that. The provider is built once per session in conftest and injected (`FlowRunner(provider=…)`); the CLI resolves it from settings.
+- `supports(action_type)`: only `_LOCATOR_ACTIONS` (click, fill, select, check…) are sent to L3. Assertions, waits, key presses and navigation have no L3 path and fail at L2.
+- Prompts live in `app/agent/prompts/resolver.py`; keep their structure stable.
+- Test with `LLM_KEY= LLM_MODEL=` (empty overrides beat `.env`) to confirm graceful skip.
 
 ## FlowRunner — `app/execution/engine.py`
 
-- Orchestrates the L1 → L2 → L3 fallback chain
-- Handles `run_flow` actions: resolves flow path, parses sub-flow, executes recursively on the same page
-- Circular dependency detection (`_seen_flows` set)
-- Max nesting depth: 10 levels (`_MAX_NESTING_DEPTH`)
-- Sub-flow `StepResult` objects are tagged with `sub_flow` name for report grouping
+- `_execute_one` is the one place a step is resolved, timed and recorded — top-level and sub-flow loops both use it.
+- `capture_failure_screenshot(page, dir)` is the single capture routine (conftest reuses it for the flow-end fallback). The engine shoots at the failure site; skipped steps never get a screenshot.
+- `run_flow`: `_seen_flows` (circular detection), `_MAX_NESTING_DEPTH = 10`, sub-flow `StepResult`s tagged with `sub_flow`.
+- `RunContext.history` feeds the L3 prompt; `RunContext.data` holds values from `read_row` / `count_elements` / `get_attribute` / `ai_extract`.
 
 ## conftest.py — pytest plugin
 
-- `pytest_collect_file`: hooks into pytest collection, returns `FlowFile` for `.md` files in `flows/` directories (`tests/<app>/flows/`)
-- `FlowFile`: collection node, parses Markdown into `FlowDefinition`
-- `FlowItem`: individual test item, calls `FlowRunner.run()` in `runtest()`
-- `ProfessionalReportPlugin`: collects results, generates HTML report at session end
-- `pytest_collection` (tryfirst): adopts `WebAgentTerminalReporter` from `app/observability/console.py` — per-file headers, one `✓/✗ file » flow` line per test with duration; only when verbosity is 0 (`-v`/`-q` keep stock output)
-- `pytest_terminal_summary`: prints the *Execution summary* section (build name, counts, healed L2/L3 steps, duration, slowest tests) and the report paths
-- `FlowItem.runtest` stamps `webagent_flow_file` / `webagent_flow_name` / `webagent_healings` on `user_properties` for the console reporter
-- `--flow`: inline flow string mode
-- `--flow_file`: explicit path mode
+- `ProfessionalReportPlugin`: collects `TestReport`s, per-nodeid steps/errors/captures, calls `generate_report` at session end, remembers `report_path`/`json_path` for the summary.
+- `_SessionBrowser.page(test_name)`: context manager yielding a page; local mode shares one browser, lambda mode opens a browser per call.
+- `FlowItem.runtest` stamps `webagent_flow_file` / `webagent_flow_name` / `webagent_healings` on `user_properties` for the console reporter; `_backfill_failure_screenshot` only when the engine could not shoot.
+- `--flow` / `--flow_file` items are appended in `pytest_collection_modifyitems`, parented to the session (no file part in the console line).
+- Thin integration layer only — no business logic here.
 
-Do not add business logic to conftest.py — it's a thin integration layer only.
+## Reporting — `app/observability/`
 
-## Reporting
-
-Reports written to `reports/<ENVIRONMENT>/`:
-- `report.html` — self-contained HTML shell with inline data
-- `report_<build>.json` — machine-readable data; `<build>` is the BUILD_NAME slug, stale ones removed on regeneration
-- `assets/report.css` — all CSS
-- `assets/report.js` — all JavaScript
-- `images/` — captured page screenshots
-
-Report sections: Result Distribution, Code Coverage, Pass Rate Trend, Test Results table.
-Sub-flow steps appear grouped with collapsible accordion UI and accent-colored left border.
-
-`ENVIRONMENT` defaults to `staging` if not set.
-Never write reports outside this directory structure.
+- `recorder.py`: console (error/warn vs info caps), network (cap 1500, rich headers/bodies for xhr/fetch/document, redaction), request-start map bounded at 2× the network cap. Everything here runs per browser event.
+- `reporter.py`: `_build_tests` splits a flow into one test per `## section` when timestamps allow, routes console/network events to sections and steps (`_attribute_steps`, bisect), then writes `report.html`, `assets/{report.css,report.js,data.js}`, one shard per test under `assets/data/`, and `report_<build slug>.json` (older `report*.json` removed).
+- Report UI tabs: Overview (result donut, duration histogram with total, healed locators, failures, slowest, suites), Tests (file groups, status chips, search), Timeline (lanes), Console and Network (execution-level, load all shards on first open), Summary. Per-test drawer: steps tree with failure screenshot, related activity, healed locators, Console/Network panes.
+- Never write outside `reports/<ENVIRONMENT>/` (`settings.report_dir`, project-root anchored).
