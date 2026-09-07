@@ -11,8 +11,7 @@ Thumbs.db
 claude-*.log
 tasks/todo.md
 tasks/lessons.md
-docs/
-docs
+docs/superpowers/
 
 # External tool builders
 *.vscode

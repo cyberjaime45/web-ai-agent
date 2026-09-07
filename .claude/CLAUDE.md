@@ -111,5 +111,6 @@ Read only when relevant — do not load all upfront.
 | @.claude/docs/architecture.md | Touching FlowRunner, layers, or conftest |
 | @.claude/docs/playwright.md | Writing or debugging Playwright/locator code |
 | @.claude/docs/flows.md | Writing or parsing Markdown flow files |
+| @docs/ACTIONS.md, @docs/FLOWS.md | User-facing action reference and flow guide — keep in sync when adding actions |
 | @.claude/docs/bugs.md | Given a bug report or failing flow |
 | @tasks/lessons.md | Session start, and after any correction |
