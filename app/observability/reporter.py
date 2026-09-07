@@ -31,6 +31,7 @@ WebAgent-specific data maps onto the shared report schema:
 
 from __future__ import annotations
 
+import bisect
 import datetime
 import importlib.metadata
 import json
@@ -104,7 +105,7 @@ def _group_status(children: list[dict]) -> str:
 
 def _leaf(s: dict, started_at: str, depth: int) -> dict:
     rec: dict[str, Any] = {
-        "name": s.get("name") or s.get("label", ""),
+        "name": s.get("name") or "",
         "status": _step_status(s),
         "started_at": started_at,
         "duration_ms": round((s.get("duration") or 0.0) * 1000, 1),
@@ -139,7 +140,7 @@ def _nest_sub_flows(steps: list[dict], started_at: str, depth: int) -> list[dict
         s = steps[i]
         sub = s.get("sub_flow") or ""
         if not sub:
-            is_marker = _RUN_FLOW_RE.match(s.get("name") or s.get("label", ""))
+            is_marker = _RUN_FLOW_RE.match(s.get("name") or "")
             next_sub = steps[i + 1].get("sub_flow") if i + 1 < len(steps) else ""
             if is_marker and next_sub:
                 # The engine's marker step becomes the group node.
@@ -148,7 +149,7 @@ def _nest_sub_flows(steps: list[dict], started_at: str, depth: int) -> list[dict
                 while j < len(steps) and steps[j].get("sub_flow") == next_sub:
                     children.append(_leaf(steps[j], started_at, depth + 1))
                     j += 1
-                out.append(_group(s.get("name") or s.get("label", ""),
+                out.append(_group(s.get("name") or "",
                                   children, started_at, depth))
                 out.extend(children)
                 i = j
@@ -185,12 +186,28 @@ def _section_runs(flow_steps: list[dict]) -> list[tuple[str, list[dict]]]:
     return runs
 
 
-def _build_steps(flow_steps: list[dict], started_at: str) -> list[dict]:
+def _healings(steps: list[dict]) -> list[dict]:
+    """Steps that L1 could not resolve and L2/L3 recovered."""
+    return [
+        {
+            "description": s.get("name") or "",
+            "original": None,
+            "healed_by": "L3 (AI)" if s.get("layer") == 3 else "L2 (fuzzy match)",
+            "resolved": s.get("msg") or "resolved at runtime",
+            "layer": s.get("layer"),
+        }
+        for s in steps if (s.get("layer") or 1) > 1 and s.get("passed")
+    ]
+
+
+def _build_steps(flow_steps: list[dict], started_at: str,
+                 sections: list[tuple[str, list[dict]]] | None = None) -> list[dict]:
     """Serialized StepResults → flat depth-annotated step records (Astra tree)."""
     if not flow_steps:
         return []
 
-    sections = _section_runs(flow_steps)
+    if sections is None:
+        sections = _section_runs(flow_steps)
     distinct = {name for name, _ in sections if name}
     show_sections = len(distinct) > 1 or (len(distinct) == 1 and "Steps" not in distinct)
 
@@ -217,18 +234,24 @@ def _splittable(runs: list[tuple[str, list[dict]]]) -> bool:
 
 
 def _attribute_steps(entries: list[dict], steps: list[dict]) -> None:
-    """Best-effort: label each entry with the step active at its start."""
-    windows = [(round(s["ts_start"] * 1000), round(s["ts_end"] * 1000),
-                s.get("name") or s.get("label", ""))
-               for s in steps if s.get("ts_start")]
+    """Best-effort: label each entry with the step active at its start.
+
+    Steps run sequentially, so their windows are ordered and disjoint: one
+    bisect per entry instead of a scan over every step (entries × steps).
+    """
+    windows = sorted((round(s["ts_start"] * 1000), round(s["ts_end"] * 1000),
+                      s.get("name") or "")
+                     for s in steps if s.get("ts_start"))
+    if not windows:
+        return
+    starts = [lo for lo, _, _ in windows]
     for e in entries:
         ts = e.get("ts")
         if ts is None:
             continue
-        for lo, hi, name in windows:
-            if lo <= ts <= hi:
-                e["step"] = name
-                break
+        i = bisect.bisect_right(starts, ts) - 1
+        if i >= 0 and ts <= windows[i][1]:
+            e["step"] = windows[i][2]
 
 
 def _route_events(entries: list[dict], starts: list[tuple[int, int]],
@@ -261,7 +284,7 @@ def _route_events(entries: list[dict], starts: list[tuple[int, int]],
 _STATUS_MAP = {"passed": "passed", "failed": "failed", "error": "error", "skipped": "skipped"}
 
 
-def _build_test(r: dict) -> dict:
+def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> dict:
     nodeid = r.get("nodeid", "")
     file = nodeid.split("::")[0] if "::" in nodeid else nodeid
     name = r.get("name") or (nodeid.split("::")[-1] if nodeid else "")
@@ -279,24 +302,14 @@ def _build_test(r: dict) -> dict:
         "started_at": started_at,
         "duration_ms": round((r.get("duration") or 0.0) * 1000, 1),
         "retries": 0,
-        "steps": _build_steps(flow_steps, started_at),
+        "steps": _build_steps(flow_steps, started_at, runs),
         "console": r.get("console") or [],
         "network": r.get("network") or [],
         "artifacts": {
             "screenshot": _failure_screenshot(flow_steps),
             "screenshots": [],
         },
-        "healings": [
-            {
-                "description": s.get("name") or s.get("label", ""),
-                "original": None,
-                "healed_by": "L3 (AI)" if s.get("layer") == 3 else "L2 (fuzzy match)",
-                "resolved": s.get("msg") or "resolved at runtime",
-                "layer": s.get("layer"),
-            }
-            for s in flow_steps
-            if (s.get("layer") or 1) > 1 and s.get("passed")
-        ],
+        "healings": _healings(flow_steps),
     }
 
     stamped = [s for s in flow_steps if s.get("ts_start")]
@@ -352,16 +365,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "console": [],
         "network": [],
         "artifacts": {"screenshot": None, "screenshots": []},
-        "healings": [
-            {
-                "description": s.get("name") or s.get("label", ""),
-                "original": None,
-                "healed_by": "L3 (AI)" if s.get("layer") == 3 else "L2 (fuzzy match)",
-                "resolved": s.get("msg") or "resolved at runtime",
-                "layer": s.get("layer"),
-            }
-            for s in steps if (s.get("layer") or 1) > 1 and s.get("passed")
-        ],
+        "healings": _healings(steps),
     }
     if failed:
         test["error"] = {
@@ -378,7 +382,7 @@ def _build_tests(r: dict) -> list[dict]:
     flow_steps = r.get("flow_steps") or []
     runs = _section_runs(flow_steps)
     if not _splittable(runs):
-        return [_build_test(r)]
+        return [_build_test(r, runs)]
 
     tests = [_build_section_test(r, i + 1, name or "Steps", steps)
              for i, (name, steps) in enumerate(runs)]
@@ -430,9 +434,12 @@ def generate_report(
 
     tests = []
     for r in results:
-        r = dict(r)
-        for s in r.get("flow_steps") or []:
-            s["screenshot"] = _screenshot_rel_path(s.get("screenshot"), report_dir) or ""
+        # Copy the step dicts too: rewriting screenshot paths on the caller's
+        # data would make a second generate_report() call lose every image.
+        r = dict(r, flow_steps=[
+            dict(s, screenshot=_screenshot_rel_path(s.get("screenshot"), report_dir) or "")
+            for s in r.get("flow_steps") or []
+        ])
         tests.extend(_build_tests(r))
 
     total = len(tests)
@@ -512,8 +519,8 @@ def generate_report(
     # overwritten every run, so a JSON from a previous build name would be
     # orphaned — remove it (and the legacy unsuffixed report.json).
     json_path = report_dir / json_report_name(payload["environment"]["build_name"])
-    for stale in report_dir.glob("report*.json"):
-        if stale != json_path:
+    for stale in [*report_dir.glob("report_*.json"), report_dir / "report.json"]:
+        if stale != json_path and stale.exists():
             stale.unlink()
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return json_path

@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime
 import logging
 import time
-import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
@@ -18,7 +18,7 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from app.flow.parser import FlowParseError, FlowDefinition, parse_flow_file, parse_flow_markdown
-from app.execution.engine import FlowRunner
+from app.execution.engine import FlowRunner, capture_failure_screenshot
 from app.layers.providers import ConfigError, get_provider
 from app.schemas.actions import FlowResult
 from app.browser.session import create_browser
@@ -112,6 +112,10 @@ class ProfessionalReportPlugin:
             )
 
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
+        # Nothing ran (collect-only, everything deselected): keep the previous
+        # report instead of overwriting it with an empty one.
+        if session.config.option.collectonly or not self.results:
+            return
         for r in self.results:
             nodeid = r["nodeid"]
             r["error"] = self.flow_errors.get(nodeid, "")
@@ -155,8 +159,59 @@ def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(plugin, "professional_report")
 
 
+class _SessionBrowser:
+    """One Playwright driver + browser for the whole session (local mode).
+
+    Each flow gets a fresh BrowserContext — that is where isolation (cookies,
+    storage, viewport) comes from; the browser process itself is the expensive
+    part (~1.5-3 s per launch) and is shared. Under RUNNING_MODE=lambda every
+    flow still opens its own grid session, because the LambdaTest dashboard
+    names and grades tests per session.
+    """
+
+    def __init__(self) -> None:
+        self._pw = None
+        self._browser = None
+        self._ctx_opts: dict = {}
+
+    @contextmanager
+    def page(self, test_name: str):
+        if settings.remote:
+            pw = sync_playwright().start()
+            try:
+                browser, opts = create_browser(pw, test_name=test_name)
+                try:
+                    yield from self._new_page(browser, opts)
+                finally:
+                    browser.close()
+            finally:
+                pw.stop()
+            return
+        if self._browser is None or not self._browser.is_connected():
+            self._pw = self._pw or sync_playwright().start()
+            self._browser, self._ctx_opts = create_browser(self._pw, test_name=test_name)
+        yield from self._new_page(self._browser, self._ctx_opts)
+
+    @staticmethod
+    def _new_page(browser, opts: dict):
+        ctx = browser.new_context(**opts)
+        try:
+            yield ctx.new_page()
+        finally:
+            ctx.close()
+
+    def close(self) -> None:
+        if self._browser is not None:
+            self._browser.close()
+        if self._pw is not None:
+            self._pw.stop()
+        self._browser = self._pw = None
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     show_banner()
+    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    session.config._webagent_browser = _SessionBrowser()
     # One LLM client for the whole session (L3 is optional). Partial config is
     # a startup error, not a per-test one.
     try:
@@ -170,6 +225,12 @@ def pytest_collection(session: pytest.Session) -> None:
     # By collection time the standard TerminalReporter exists regardless of
     # plugin registration order — the earliest safe moment to adopt it.
     install_console_reporter(session.config)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    browser = getattr(session.config, "_webagent_browser", None)
+    if browser is not None:
+        browser.close()
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
@@ -220,6 +281,9 @@ def _annotate_failure_screenshot(shot_path: str, page) -> None:
             }
         """)
 
+        if not rects:
+            return  # No identifiable error elements — keep screenshot clean
+
         img = Image.open(shot_path).convert("RGB")
         draw = ImageDraw.Draw(img)
 
@@ -238,9 +302,6 @@ def _annotate_failure_screenshot(shot_path: str, page) -> None:
                             [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
                             outline=(220, 38, 38),
                         )
-
-        if not rects:
-            return  # No identifiable error elements — keep screenshot clean
 
         img.save(shot_path)
     except Exception:
@@ -322,8 +383,8 @@ def _set_lambdatest_status(page, success: bool, error: str = "") -> None:
             "arguments": {"status": status, "remark": remark},
         })
         page.evaluate("_ => {}", f"lambdatest_action: {action_payload}")
-    except Exception:
-        pass  # best-effort; don't block test reporting
+    except Exception as exc:
+        logging.getLogger(__name__).debug("LambdaTest status not sent: %s", exc)
 
 
 class _FlowFailure(Exception):
@@ -340,8 +401,7 @@ class FlowItem(pytest.Item):
     def __init__(self, name: str, parent, flow: FlowDefinition) -> None:
         super().__init__(name, parent)
         self.flow = flow
-        self._artifacts = _IMAGES_DIR
-        self._artifacts.mkdir(parents=True, exist_ok=True)
+        self._artifacts = _IMAGES_DIR   # created once in pytest_sessionstart
 
     def runtest(self) -> None:
         # Console reporting reads these off the TestReport. Inline/--flow_file
@@ -349,60 +409,56 @@ class FlowItem(pytest.Item):
         file_part = self.path.name if self.path.is_file() else ""
         self.user_properties.append((FLOW_FILE_PROP, file_part))
         self.user_properties.append((FLOW_NAME_PROP, self.flow.name))
-        with sync_playwright() as pw:
-            browser, ctx_opts = create_browser(pw, test_name=self.flow.name)
-            ctx = browser.new_context(**ctx_opts)
-            page = ctx.new_page()
+        plugin = self.config.pluginmanager.get_plugin("professional_report")
+        result: FlowResult | None = None
+
+        with self.config._webagent_browser.page(self.flow.name) as page:
             page.set_default_timeout(self.flow.timeout)
-
-            # Capture console errors/warnings + network traffic for the report.
-            recorder = PageRecorder()
+            recorder = PageRecorder()   # console errors/warnings + network, for the report
             recorder.attach(page)
-
-            flows_dir = Path(str(self.fspath)).parent
-            runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=flows_dir,
+            runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=self.path.parent,
                                 provider=self.config._webagent_provider)
-            result: FlowResult = runner.run(self.flow, page)
-            healed = sum(1 for s in result.steps if s.success and (s.layer_used or 1) > 1)
-            self.user_properties.append((HEALINGS_PROP, healed))
-
-            # Record steps for the report (both pass and fail)
-            plugin = self.config.pluginmanager.get_plugin("professional_report")
-
-            # Failure screenshots live on the failing step — single path.
-            # The engine captures one at the failure site; only when that was
-            # impossible (page navigating, crash) capture the flow-end state
-            # here instead. Skipped steps never get a screenshot.
-            if not result.success:
-                failed_steps = [s for s in result.steps
-                                if not s.success and not getattr(s, "skipped", False)]
-                last_failed = failed_steps[-1] if failed_steps else None
-                if last_failed is not None and not last_failed.screenshot_path:
-                    try:
-                        shot_path = str(self._artifacts / f"{uuid.uuid4()}.png")
-                        page.screenshot(path=shot_path)
-                        _annotate_failure_screenshot(shot_path, page)
-                        last_failed.screenshot_path = shot_path
-                        result.last_screenshot = shot_path
-                    except Exception:
-                        pass  # best-effort; don't block test reporting
-
-            if plugin:
-                if result.steps:
-                    plugin.record_steps(self.nodeid, result.steps)
+            try:
+                result = runner.run(self.flow, page)
+                healed = sum(1 for s in result.steps if s.success and (s.layer_used or 1) > 1)
+                self.user_properties.append((HEALINGS_PROP, healed))
                 if not result.success:
-                    plugin.record_error(self.nodeid, result.error)
-                plugin.record_capture(self.nodeid, recorder.console,
-                                      recorder.network, recorder.dropped)
-
-            # Report pass/fail status to LambdaTest
-            _set_lambdatest_status(page, result.success, result.error)
-
-            ctx.close()
-            browser.close()
+                    self._backfill_failure_screenshot(result, page)
+            finally:
+                # Whatever happened inside the flow, the report and the remote
+                # dashboard still get what was captured.
+                if plugin:
+                    if result is not None and result.steps:
+                        plugin.record_steps(self.nodeid, result.steps)
+                    if result is not None and not result.success:
+                        plugin.record_error(self.nodeid, result.error)
+                    plugin.record_capture(self.nodeid, recorder.console,
+                                          recorder.network, recorder.dropped)
+                _set_lambdatest_status(
+                    page,
+                    result.success if result is not None else False,
+                    result.error if result is not None else "flow crashed before completing",
+                )
 
         if not result.success:
             raise _FlowFailure(result)
+
+    def _backfill_failure_screenshot(self, result: FlowResult, page) -> None:
+        """Failure screenshots live on the failing step — single path.
+
+        The engine captures one at the failure site; only when that was
+        impossible (page navigating, crash) capture the flow-end state here.
+        Skipped steps never get a screenshot.
+        """
+        failed_steps = [s for s in result.steps
+                        if not s.success and not getattr(s, "skipped", False)]
+        if not failed_steps or failed_steps[-1].screenshot_path:
+            return
+        shot_path = capture_failure_screenshot(page, self._artifacts)
+        if shot_path:
+            _annotate_failure_screenshot(shot_path, page)
+            failed_steps[-1].screenshot_path = shot_path
+            result.last_screenshot = shot_path
 
     def repr_failure(self, excinfo) -> str:
         if isinstance(excinfo.value, FlowParseError):
@@ -430,7 +486,7 @@ class FlowItem(pytest.Item):
         return str(excinfo.value)
 
     def reportinfo(self):
-        return self.fspath, 0, f"flow: {self.flow.name}"
+        return self.path, 0, f"flow: {self.flow.name}"
 
 
 class FlowFile(pytest.File):

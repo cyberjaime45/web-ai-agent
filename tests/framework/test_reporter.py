@@ -456,3 +456,29 @@ def test_generate_report_html_references_assets(tmp_path):
     assert "assets/report.js" in html
     assert "assets/report.css" in html
     assert "Web Test Report" in html  # static fallback; BUILD_NAME overrides it at load time
+
+
+def test_generate_report_does_not_mutate_results_and_is_idempotent(tmp_path):
+    shot = tmp_path / "images" / "fail.png"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(b"png")
+    step = make_step(label="click: \"x\"", passed=False, msg="boom", screenshot=str(shot))
+    results = [make_result(outcome="failed", error="boom", flow_steps=[step])]
+    out = tmp_path / "report.html"
+    generate_report(results, time.time(), out, "qa1")
+    assert step["screenshot"] == str(shot)          # caller's data untouched
+    generate_report(results, time.time(), out, "qa1")
+    payload = json.loads(_json_report(tmp_path).read_text(encoding="utf-8"))
+    assert payload["tests"][0]["steps"][0]["attachment"] == "images/fail.png"
+
+
+def test_attribute_steps_uses_step_windows():
+    from app.observability.reporter import _attribute_steps
+    steps = [
+        {"name": "a", "ts_start": 10.0, "ts_end": 10.5},
+        {"name": "b", "ts_start": 10.5, "ts_end": 11.0},
+        {"name": "c", "ts_start": 11.0, "ts_end": 11.5},
+    ]
+    entries = [{"ts": 10_200}, {"ts": 10_900}, {"ts": 11_400}, {"ts": 20_000}, {"ts": None}]
+    _attribute_steps(entries, steps)
+    assert [e.get("step") for e in entries] == ["a", "b", "c", None, None]

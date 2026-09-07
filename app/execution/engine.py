@@ -98,6 +98,22 @@ def _resolve_env_placeholders(action: FlowAction) -> FlowAction:
     )
 
 
+def capture_failure_screenshot(page: Page, directory: Path) -> str | None:
+    """Viewport screenshot into *directory* (must exist). Path or None on error.
+
+    The single capture routine for failures — the engine shoots at the failure
+    site, conftest uses it for the flow-end fallback when that was impossible.
+    """
+    try:
+        path = str(directory / f"fail_{uuid.uuid4().hex[:12]}.png")
+        page.screenshot(path=path, full_page=False)
+        logger.debug("[Screenshot] Captured failure screenshot: %s", path)
+        return path
+    except Exception as exc:
+        logger.warning("[Screenshot] Failed to capture screenshot: %s", exc)
+        return None
+
+
 def _append_error(result, msg: str) -> None:
     result.error = f"{result.error}\n{msg}" if result.error else msg
 
@@ -188,15 +204,7 @@ class FlowRunner:
     # ── Failure screenshot ─────────────────────────────────────────
 
     def _capture_failure_screenshot(self, page: Page) -> str | None:
-        """Take a screenshot on step failure. Returns the file path or None."""
-        try:
-            path = str(self._artifacts_abs / f"fail_{uuid.uuid4().hex[:12]}.png")
-            page.screenshot(path=path, full_page=False)
-            logger.debug("[Screenshot] Captured failure screenshot: %s", path)
-            return path
-        except Exception as exc:
-            logger.warning("[Screenshot] Failed to capture screenshot: %s", exc)
-            return None
+        return capture_failure_screenshot(page, self._artifacts_abs)
 
     # ── Sub-flow handling ──────────────────────────────────────────
 

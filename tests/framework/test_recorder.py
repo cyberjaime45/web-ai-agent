@@ -199,3 +199,13 @@ def test_redact_extra_keys_from_env(monkeypatch):
     import app.observability.recorder as r
     monkeypatch.setattr(r, "_extra_keys", lambda: ("wu-member",))
     assert redact_headers({"WU-Member-Id": "7"})["WU-Member-Id"] == REDACTED
+
+
+def test_inflight_request_map_is_bounded(rec_page):
+    import app.observability.recorder as r
+    rec, page = rec_page
+    reqs = [make_request(url=f"https://x.test/{i}") for i in range(r._MAX_INFLIGHT + 50)]
+    for req in reqs:            # kept alive: the map is keyed by id(request)
+        page.emit("request", req)
+    assert len(rec._starts) == r._MAX_INFLIGHT
+    assert id(reqs[0]) not in rec._starts and id(reqs[-1]) in rec._starts   # oldest evicted

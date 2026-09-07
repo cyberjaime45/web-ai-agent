@@ -24,6 +24,7 @@ import itertools
 import json
 import re
 import time
+from functools import lru_cache
 from typing import Any
 
 from app.config.settings import settings
@@ -35,6 +36,7 @@ MAX_RESPONSE_BODY = 2_000    # excerpt kept for bodies
 MAX_POST_DATA = 1_000
 MAX_JSON_BODY_SIZE = 50_000  # don't read successful bodies larger than this
 RICH_TYPES = {"xhr", "fetch", "document"}   # rows that carry headers/payloads
+_MAX_INFLIGHT = 2 * MAX_NETWORK_ENTRIES      # request-start timestamps kept
 
 REDACTED = "«redacted»"
 _BUILTIN_SENSITIVE = (
@@ -46,7 +48,9 @@ _LEVELS = {"error": "error", "warning": "warning", "info": "info",
            "log": "info", "debug": "debug", "trace": "debug"}
 
 
+@lru_cache(maxsize=1)
 def _extra_keys() -> tuple[str, ...]:
+    """REPORT_REDACT parsed once — _sensitive runs per header/param/JSON key."""
     return tuple(k.strip().lower()
                  for k in settings.report_redact.split(",") if k.strip())
 
@@ -54,6 +58,12 @@ def _extra_keys() -> tuple[str, ...]:
 def _sensitive(name: str) -> bool:
     n = name.lower()
     return any(k in n for k in _BUILTIN_SENSITIVE + _extra_keys())
+
+
+@lru_cache(maxsize=4)
+def _form_pattern(keys: tuple[str, ...]) -> re.Pattern[str]:
+    alts = "|".join(re.escape(k) for k in keys)
+    return re.compile(rf"(?i)([^&=\s]*(?:{alts})[^&=\s]*)=([^&\s]*)")
 
 
 def redact_headers(headers: dict) -> dict:
@@ -77,9 +87,8 @@ def redact_text(text: str) -> str:
     try:
         data = json.loads(text)
     except Exception:
-        keys = "|".join(re.escape(k) for k in _BUILTIN_SENSITIVE + _extra_keys())
-        return re.sub(rf"(?i)([^&=\s]*(?:{keys})[^&=\s]*)=([^&\s]*)",
-                      rf"\1={REDACTED}", text)
+        return _form_pattern(_BUILTIN_SENSITIVE + _extra_keys()).sub(
+            rf"\1={REDACTED}", text)
 
     def walk(v: Any) -> Any:
         if isinstance(v, dict):
@@ -147,6 +156,10 @@ class PageRecorder:
     # ── Network ──────────────────────────────────────────────────────────
 
     def _on_request(self, request: Any) -> None:
+        # Requests cancelled by a navigation never get a response/failed event;
+        # bound the map so a long flow cannot grow it without limit.
+        if len(self._starts) >= _MAX_INFLIGHT:
+            self._starts.pop(next(iter(self._starts)))
         self._starts[id(request)] = time.time()
 
     def _finish(self, request: Any) -> tuple[int, float | None]:
