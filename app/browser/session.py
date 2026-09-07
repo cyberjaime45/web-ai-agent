@@ -20,6 +20,8 @@ import urllib.parse
 
 from playwright.sync_api import Browser, BrowserContext, Playwright
 
+from app.utils.build import get_build_name
+
 logger = logging.getLogger(__name__)
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -126,7 +128,8 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> tuple[Browser, dict]:
       LT_ACCESS_KEY LambdaTest access key
 
     Optional env vars (shared with local mode):
-      ENVIRONMENT   Sets the build name in the LambdaTest dashboard (default: staging)
+      BUILD_NAME    Build label in the LambdaTest dashboard (default: "Web Test Report")
+      ENVIRONMENT   Suffixed to the build label (default: staging)
     """
     username   = os.getenv("LT_USERNAME", "").strip()
     access_key = os.getenv("LT_ACCESS_KEY", "").strip()
@@ -150,7 +153,7 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> tuple[Browser, dict]:
         "LT:Options": {
             "username":   username,
             "accessKey":  access_key,
-            "build":      f"QA Web Agent -> {os.getenv('ENVIRONMENT', 'staging')}",
+            "build":      f"{get_build_name()} -> {os.getenv('ENVIRONMENT', 'staging')}",
             "name":       test_name,
             "platform":   "Windows 11",
             "resolution": "1920x1080",

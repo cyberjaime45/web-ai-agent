@@ -41,6 +41,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.utils.build import get_build_name
+
 # packaged asset name → (folder under the report root, target name)
 _ASSETS = {
     "report.html": ("", "report.html"),
@@ -439,6 +441,7 @@ def generate_report(
             "browser": os.getenv("BROWSER", "chromium"),
             "headless": os.getenv("HEADLESS", "true").lower() != "false",
             "env": environment,
+            "build_name": get_build_name(),
             "os": f"{platform.system()} {platform.release()}",
             "python": platform.python_version(),
             "playwright": _pkg_version("playwright"),

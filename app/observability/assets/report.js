@@ -71,6 +71,7 @@ pill.textContent = failing ? `✕ ${failing} Failing` : '✓ All Tests Passed';
 const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 const triggeredBy = ENV.ci ? 'CI Pipeline' : 'Local run';
 document.getElementById('envchip').textContent = ENV.env;
+if (ENV.build_name){ document.getElementById('htitle').textContent = ENV.build_name; document.title = ENV.build_name; }
 document.getElementById('hdate').textContent = new Date(DATA.created_at).toLocaleString();
 document.getElementById('hrunid').textContent = DATA.run_id;
 document.getElementById('htrigger').textContent = triggeredBy;
@@ -114,8 +115,8 @@ if (DATA.ai_summary){
   const N = 12, buckets = Array(N).fill(0);
   durs.forEach(d => buckets[Math.min(N-1, Math.floor(d/max*N))]++);
   const bmax = Math.max(...buckets, 1);
-  document.getElementById('histo').innerHTML =
   document.getElementById('totaldur').textContent = `Total ${fmtMs(TOT.duration_ms)}`;
+  document.getElementById('histo').innerHTML =
     `<div class="histo">${buckets.map(b => `<div style="height:${b/bmax*100}%" title="${b} tests"></div>`).join('')}</div>
      <div class="axis"><span>0</span><span>${fmtMs(max)}</span></div>`;
 })();
@@ -174,6 +175,7 @@ if (DATA.ai_summary){
     ].map(row).join('');
   document.getElementById('sum-env').innerHTML =
     lead('Environment', esc(ENV.env)) + [
+      ['⬒', 'Build', esc(ENV.build_name || 'Web Test Report')],
       ['◍', 'Browser', esc(cap(ENV.browser) + (ENV.headless ? ' · headless' : ''))],
       ['⌗', 'OS', esc(ENV.os)],
       ['⚙', 'Run type', `<span class="vchip ${ENV.ci ? 'green' : 'blue'}">${ENV.ci ? 'Automated' : 'Local'}</span>`]

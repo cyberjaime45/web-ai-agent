@@ -961,6 +961,7 @@ Copy `.env.example` to `.env`:
 | `AI_PROVIDER` | — | LLM provider for L3: `openai`, `gemini`, or `anthropic` |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider (no default — must be set) |
+| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, and LambdaTest build name |
 | `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network headers/payloads |
 
 ### Multi-environment reports

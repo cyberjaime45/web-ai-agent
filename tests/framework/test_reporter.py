@@ -359,6 +359,7 @@ def test_generate_report_writes_all_files(tmp_path):
     # pass rate excludes skipped: 1 passed of 2 executed
     assert payload["totals"]["pass_rate"] == 50.0
     assert payload["environment"]["env"] == "staging"
+    assert payload["environment"]["build_name"] == "Web Test Report"  # BUILD_NAME unset → fallback
     # report.json mirrors the payload, plus the full inline detail arrays
     full = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     assert full["totals"] == payload["totals"]
@@ -434,4 +435,4 @@ def test_generate_report_html_references_assets(tmp_path):
     assert "assets/data.js" in html
     assert "assets/report.js" in html
     assert "assets/report.css" in html
-    assert "Web Agent Test Report" in html
+    assert "Web Test Report" in html  # static fallback; BUILD_NAME overrides it at load time
