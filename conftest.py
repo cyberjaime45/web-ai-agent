@@ -24,6 +24,10 @@ from app.execution.engine import FlowRunner
 from app.schemas.actions import FlowResult
 from app.browser.session import create_browser
 from app.browser.driver import BrowserDriver
+from app.observability.console import (
+    FLOW_FILE_PROP, FLOW_NAME_PROP, HEALINGS_PROP,
+    execution_summary, install_console_reporter,
+)
 from app.observability.recorder import PageRecorder
 from app.observability.reporter import generate_report
 from app.utils.banner import show_banner
@@ -61,6 +65,7 @@ class ProfessionalReportPlugin:
         self.flow_errors: dict[str, str] = {}
         self.captures: dict[str, dict] = {}
         self.session_start = time.time()
+        self.report_path: Path | None = None
 
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
@@ -126,7 +131,7 @@ class ProfessionalReportPlugin:
             output_path=_REPORT_PATH,
             environment=_ENV,
         )
-        print(f"\n📊 Report: {_REPORT_PATH}")
+        self.report_path = _REPORT_PATH
 
 
 # ── CLI options ─────────────────────────────────────────────────
@@ -156,6 +161,37 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     show_banner()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection(session: pytest.Session) -> None:
+    # By collection time the standard TerminalReporter exists regardless of
+    # plugin registration order — the earliest safe moment to adopt it.
+    install_console_reporter(session.config)
+
+
+def _environment_label() -> str:
+    mode = "headed" if os.getenv("HEADLESS", "true").lower().strip() == "false" else "headless"
+    label = f"{_ENV} · {os.getenv('BROWSER', 'chromium')} · {mode}"
+    if os.getenv("RUNNING_MODE", "local").lower().strip() == "lambda":
+        label += " · lambda"
+    return label
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    """Execution summary + report path, after the failure sections."""
+    plugin = config.pluginmanager.get_plugin("professional_report")
+    started = plugin.session_start if plugin else None
+    duration = time.time() - started if started else 0.0
+    lines = execution_summary(terminalreporter.stats, duration, _environment_label())
+    if lines:
+        terminalreporter.section("Execution summary")
+        for line in lines:
+            terminalreporter.write_line(line)
+    if plugin and plugin.report_path:
+        terminalreporter.section("Report")
+        terminalreporter.write_line(f"HTML : {plugin.report_path}")
+        terminalreporter.write_line(f"JSON : {plugin.report_path.with_suffix('.json')}")
 
 
 # ── Screenshot annotation — draw red rectangles around error elements ──────────
@@ -312,6 +348,11 @@ class FlowItem(pytest.Item):
         self._artifacts.mkdir(parents=True, exist_ok=True)
 
     def runtest(self) -> None:
+        # Console reporting reads these off the TestReport. Inline/--flow_file
+        # items are parented to the session (path = rootdir), so no file part.
+        file_part = self.path.name if self.path.is_file() else ""
+        self.user_properties.append((FLOW_FILE_PROP, file_part))
+        self.user_properties.append((FLOW_NAME_PROP, self.flow.name))
         with sync_playwright() as pw:
             browser, ctx_opts = create_browser(pw, test_name=self.flow.name)
             ctx = browser.new_context(**ctx_opts)
@@ -325,6 +366,8 @@ class FlowItem(pytest.Item):
             flows_dir = Path(str(self.fspath)).parent
             runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=flows_dir)
             result: FlowResult = runner.run(self.flow, page)
+            healed = sum(1 for s in result.steps if s.success and (s.layer_used or 1) > 1)
+            self.user_properties.append((HEALINGS_PROP, healed))
 
             # Record steps for the report (both pass and fail)
             plugin = self.config.pluginmanager.get_plugin("professional_report")

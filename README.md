@@ -160,10 +160,41 @@ uv run pytest --flow "# My Flow
 Point to any `.md` file regardless of its location:
 
 ```bash
-uv run pytest --flow_file path/to/any_flow.md -v
+uv run pytest --flow_file path/to/any_flow.md
 ```
 
 > `--flow` and `--flow_file` are mutually exclusive.
+
+### Console output
+
+Every finished test prints one named line under its file, and the run ends
+with an execution summary and the report paths:
+
+```
+tests/fms/flows/production_smoke.md
+  ✓ production_smoke.md » FMS MVC Smoke Tests  3m00s                     [ 50%]
+
+tests/members_site/flows/booking_flow.md
+  ✗ booking_flow.md » One Way Booking  41s                                [100%]
+
+============================ Execution summary =============================
+Environment:   staging · chromium · headless
+Python tests:  0
+Flows:         2 (in 2 files)
+Passed:        1
+Failed:        1
+Skipped:       0
+Healed steps:  3 (resolved by L2/L3)
+Duration:      3m41s
+Slowest:       production_smoke.md » FMS MVC Smoke Tests  3m00s
+               booking_flow.md » One Way Booking  41s
+================================= Report ==================================
+HTML : .../reports/staging/report.html
+JSON : .../reports/staging/report.json
+```
+
+*Healed steps* counts steps that L1 could not resolve and L2/L3 recovered.
+Pass `-v` or `-q` to get pytest's stock output instead.
 
 ---
 

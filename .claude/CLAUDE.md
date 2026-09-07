@@ -62,6 +62,7 @@ pip install -r requirements.txt
 | `app/schemas/actions.py` | ActionType enum (42 types), FlowAction, StepResult, FlowResult |
 | `app/browser/session.py` | Browser factory — local (Playwright) or LambdaTest |
 | `app/observability/reporter.py` | HTML/JSON report generation |
+| `app/observability/console.py` | Live terminal output — one named line per test, execution summary (skipped under `-v`/`-q`) |
 | `tests/<app>/flows/` | Flow files per application under test (`wheelsup_site`, `members_site`, `fms`); shared sub-flows in `components/` |
 | `tests/framework/` | The runtime's own self-tests (no browser) |
 | `reports/` | Output per environment: report.html, report.json, assets/, images/ |
