@@ -65,7 +65,7 @@ pip install -r requirements.txt
 | `app/observability/console.py` | Live terminal output — one named line per test, execution summary (skipped under `-v`/`-q`) |
 | `tests/<app>/flows/` | Flow files per application under test (`wheelsup_site`, `members_site`, `fms`); shared sub-flows in `components/` |
 | `tests/framework/` | The runtime's own self-tests (no browser) |
-| `reports/` | Output per environment: report.html, report.json, assets/, images/ |
+| `reports/` | Output per environment: report.html, report_<build>.json, assets/, images/ |
 
 ## Environment Variables
 
@@ -80,7 +80,7 @@ pip install -r requirements.txt
 | `LLM_KEY` | — | API key for the selected provider (required when L3 is enabled) |
 | `LLM_MODEL` | — | Model id for the selected provider (required when L3 is enabled, no default) |
 | `RUNNING_MODE` | `local` | `local` or `lambda` (LambdaTest cloud) |
-| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, console execution summary, and LambdaTest build name |
+| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, console execution summary, startup banner, JSON report filename (`report_<slug>.json`), and LambdaTest build name |
 | `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network headers/payloads |
 
 ## Rules

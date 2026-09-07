@@ -5,7 +5,8 @@ the whole environment folder is portable):
 
     reports/<env>/
     ├── report.html         static shell
-    ├── report.json         this run's full payload as plain JSON
+    ├── report_<build>.json this run's full payload as plain JSON; <build> is the
+    │                       BUILD_NAME slug — one JSON per folder, stale ones removed
     ├── assets/report.css   static styles
     ├── assets/report.js    static rendering code
     ├── assets/data.js      slim payload (window.__WEBAGENT_DATA__): run meta +
@@ -41,7 +42,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.utils.build import get_build_name
+from app.utils.build import build_slug, get_build_name
 
 # packaged asset name → (folder under the report root, target name)
 _ASSETS = {
@@ -408,13 +409,21 @@ def _js_json(obj: Any) -> str:
     return data.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
+def json_report_name(build_name: str | None = None) -> str:
+    """``report_<build slug>.json`` — e.g. ``report_web_test_report.json``."""
+    return f"report_{build_slug(build_name)}.json"
+
+
 def generate_report(
     results: list[dict],
     session_start: float,
     output_path: Path,   # e.g. reports/staging/report.html
     environment: str = "staging",
-) -> None:
-    """Write report.html, report.json, assets/{report.css,report.js,data.js}."""
+) -> Path:
+    """Write report.html, report_<build>.json, assets/{report.css,report.js,data.js}.
+
+    Returns the path of the JSON report.
+    """
     report_dir = output_path.parent
     report_dir.mkdir(parents=True, exist_ok=True)
 
@@ -498,6 +507,12 @@ def generate_report(
         f"window.__WEBAGENT_DATA__ = {_js_json(dict(payload, tests=slim_tests))};\n",
         encoding="utf-8",
     )
-    (report_dir / "report.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    # One JSON per environment folder, named for the build. report.html is
+    # overwritten every run, so a JSON from a previous build name would be
+    # orphaned — remove it (and the legacy unsuffixed report.json).
+    json_path = report_dir / json_report_name(payload["environment"]["build_name"])
+    for stale in report_dir.glob("report*.json"):
+        if stale != json_path:
+            stale.unlink()
+    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return json_path

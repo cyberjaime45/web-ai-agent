@@ -40,7 +40,7 @@ A Markdown-driven web automation agent that executes flows through a 3-layer det
                           │
                           ▼
              reports/<ENVIRONMENT>/
-               report.html  report.json
+               report.html  report_<build>.json
                assets/      images/
 ```
 
@@ -191,7 +191,7 @@ Slowest:       production_smoke.md » FMS MVC Smoke Tests  3m00s
                booking_flow.md » One Way Booking  41s
 ================================= Report ==================================
 HTML : .../reports/staging/report.html
-JSON : .../reports/staging/report.json
+JSON : .../reports/staging/report_web_test_report.json
 ```
 
 *Healed steps* counts steps that L1 could not resolve and L2/L3 recovered.
@@ -941,7 +941,7 @@ web-agent/
 └── reports/
     └── <ENVIRONMENT>/              # e.g. staging/, qa1/, uat/
         ├── report.html
-        ├── report.json
+        ├── report_<build>.json     # named for BUILD_NAME (slug)
         ├── assets/                 # CSS + JS for the HTML report
         └── images/                 # Screenshots from test runs
 ```
@@ -962,7 +962,7 @@ Copy `.env.example` to `.env`:
 | `AI_PROVIDER` | — | LLM provider for L3: `openai`, `gemini`, or `anthropic` |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider (no default — must be set) |
-| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, console execution summary, and LambdaTest build name |
+| `BUILD_NAME` | `Web Test Report` | Run label: report title, browser tab, Summary tab, console execution summary, startup banner, JSON report filename (`report_<slug>.json`), and LambdaTest build name |
 | `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network headers/payloads |
 
 ### Multi-environment reports
@@ -989,7 +989,7 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 ```
 reports/staging/
 ├── report.html     # Interactive UI (overview, tests, timeline, console, network)
-├── report.json     # Raw structured data, full detail inline (for CI/tooling)
+├── report_<build>.json  # Raw structured data, full detail inline (for CI/tooling); <build> = BUILD_NAME slug, e.g. report_web_test_report.json
 ├── assets/
 │   ├── report.css
 │   ├── report.js

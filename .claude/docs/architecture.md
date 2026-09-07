@@ -106,7 +106,7 @@ Do not add business logic to conftest.py — it's a thin integration layer only.
 
 Reports written to `reports/<ENVIRONMENT>/`:
 - `report.html` — self-contained HTML shell with inline data
-- `report.json` — machine-readable data
+- `report_<build>.json` — machine-readable data; `<build>` is the BUILD_NAME slug, stale ones removed on regeneration
 - `assets/report.css` — all CSS
 - `assets/report.js` — all JavaScript
 - `images/` — captured page screenshots

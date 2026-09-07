@@ -67,6 +67,7 @@ class ProfessionalReportPlugin:
         self.captures: dict[str, dict] = {}
         self.session_start = time.time()
         self.report_path: Path | None = None
+        self.json_path: Path | None = None
 
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
@@ -126,7 +127,7 @@ class ProfessionalReportPlugin:
             r["network"] = capture.get("network", [])
             r["capture_dropped"] = capture.get("dropped", {})
 
-        generate_report(
+        self.json_path = generate_report(
             results=self.results,
             session_start=self.session_start,
             output_path=_REPORT_PATH,
@@ -194,7 +195,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     if plugin and plugin.report_path:
         terminalreporter.section("Report")
         terminalreporter.write_line(f"HTML : {plugin.report_path}")
-        terminalreporter.write_line(f"JSON : {plugin.report_path.with_suffix('.json')}")
+        terminalreporter.write_line(f"JSON : {plugin.json_path}")
 
 
 # ── Screenshot annotation — draw red rectangles around error elements ──────────
