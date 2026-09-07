@@ -69,18 +69,6 @@ a{color:var(--accent)}
    content (error lines, test names) inflates the column and the last
    panel overflows the wrap */
 .grid .panel{margin-bottom:0;min-width:0}
-/* stat cards */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:14px;margin-bottom:18px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:14px 16px;display:flex;align-items:center;gap:12px}
-.card .ico{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:15px;font-weight:700;flex:none;background:var(--accent-bg);color:var(--accent)}
-.card.pass .ico{background:var(--pass-bg);color:var(--pass)}
-.card.fail .ico{background:var(--fail-bg);color:var(--fail)}
-.card.flaky .ico{background:var(--skip-bg);color:#d99a11}
-.card.skip .ico{background:var(--border2);color:var(--muted)}
-.card .lbl{color:var(--muted);font:600 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
-.card .num{font:700 23px var(--mono);margin-top:3px}
-.card.pass .num{color:var(--pass)} .card.fail .num{color:var(--fail)}
-.card.flaky .num{color:#d99a11} .card.skip .num{color:var(--muted)}
 /* empty states — icon circle + headline + subtext */
 .estate{text-align:center;padding:26px 0 20px}
 .estate .ecirc{width:56px;height:56px;border-radius:50%;margin:0 auto 12px;display:grid;place-items:center;font-size:22px;background:var(--pass-bg);color:var(--pass)}

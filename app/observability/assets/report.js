@@ -96,13 +96,6 @@ if (DATA.ai_summary){
   document.getElementById('aibanner').style.display = 'block';
   document.getElementById('aisummary').textContent = DATA.ai_summary;
 }
-document.getElementById('cards').innerHTML = [
-  ['Total tests', TOT.total, '', '▦'], ['Passed', TOT.passed, 'pass', '✓'],
-  ['Failed', failing, failing ? 'fail' : '', '✕'], ['Flaky', flakyCount, flakyCount ? 'flaky' : '', '↻'],
-  ['Skipped', TOT.skipped, 'skip', '»'], ['Pass rate', TOT.pass_rate + '%', '', '%'],
-  ['Duration', fmtMs(TOT.duration_ms), '', '◷']
-].map(([l,v,c,ico]) => `<div class="card ${c}"><div class="ico">${ico}</div><div><div class="lbl">${l}</div><div class="num">${v}</div></div></div>`).join('');
-
 (function donut(){
   const segs = [[TOT.passed,'var(--pass)','Passed'], [failing,'var(--fail)','Failed'],
                 [flakyCount,'#d99a11','Flaky'], [TOT.skipped,'#b7bcc2','Skipped']];
@@ -122,6 +115,7 @@ document.getElementById('cards').innerHTML = [
   durs.forEach(d => buckets[Math.min(N-1, Math.floor(d/max*N))]++);
   const bmax = Math.max(...buckets, 1);
   document.getElementById('histo').innerHTML =
+  document.getElementById('totaldur').textContent = `Total ${fmtMs(TOT.duration_ms)}`;
     `<div class="histo">${buckets.map(b => `<div style="height:${b/bmax*100}%" title="${b} tests"></div>`).join('')}</div>
      <div class="axis"><span>0</span><span>${fmtMs(max)}</span></div>`;
 })();
