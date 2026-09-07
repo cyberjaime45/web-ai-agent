@@ -40,7 +40,6 @@
 
 <div class="wrap">
   <div class="pane active" id="pane-overview">
-    <div class="ai-banner" id="aibanner" style="display:none"><span class="tag">✦ AI run summary</span><p id="aisummary"></p></div>
     <div class="grid g3">
       <div class="panel"><div class="ptitle">Result distribution</div><div class="donutrow" id="donut"></div></div>
       <div class="panel"><div class="ptitle">Duration distribution<span class="right" id="totaldur"></span></div><div id="histo"></div></div>
@@ -96,7 +95,7 @@
 </div>
 
 <div id="overlay"></div>
-<div id="drawer"></div>
+<div id="drawer" role="dialog" aria-modal="true" aria-labelledby="dtitle"></div>
 
 <script src="assets/data.js"></script>
 <script src="assets/report.js"></script>

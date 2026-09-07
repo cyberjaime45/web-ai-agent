@@ -1,5 +1,4 @@
 const DATA = window.__WEBAGENT_DATA__;
-const ART = p => p;  // artifact paths are relative to the report root
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtMs = ms => ms >= 60000 ? Math.floor(ms/60000)+'m '+Math.round(ms%60000/1000)+'s' : ms >= 1000 ? (ms/1000).toFixed(1)+'s' : Math.round(ms)+'ms';
 const failedLike = s => s === 'failed' || s === 'error';
@@ -10,28 +9,31 @@ const lvlOf = c => c.level === 'pageerror' ? 'error' : c.level === 'log' ? 'info
 const fmtBytes = b => b == null ? '' : b >= 1048576 ? (b/1048576).toFixed(1)+' MB' : b >= 1024 ? (b/1024).toFixed(1)+' KB' : b+' B';
 const relTime = (ts, t0) => (ts != null && t0 != null) ? '+' + fmtMs(ts - t0) : '';
 const NET_CATS = [['','All'], ['bad','Failed'], ['xhr','XHR'], ['doc','Doc'], ['js','JS'], ['css','CSS'], ['img','Img'], ['other','Other']];
+const CON_LEVELS = [['error','Errors'], ['warning','Warnings'], ['info','Info'], ['debug','Debug']];
 function catOf(n){
   const rt = n.resource_type || '';
   return rt === 'xhr' || rt === 'fetch' ? 'xhr' : rt === 'document' ? 'doc' :
     rt === 'script' ? 'js' : rt === 'stylesheet' ? 'css' :
     rt === 'image' || rt === 'media' || rt === 'font' ? 'img' : 'other';
 }
+const debounce = (fn, ms = 150) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
 const T = DATA.tests, TOT = DATA.totals, ENV = DATA.environment;
+// Per-test values every renderer needs — computed once, not per row per keystroke.
+T.forEach((t, i) => {
+  t._i = i;
+  t._title = esc(t.title || t.name);
+  t._hay = [t.title, t.name, t.file, t.error && t.error.message, ...(t.markers||[])].join(' ').toLowerCase();
+  t._startMs = t.started_at ? new Date(t.started_at).getTime() : null;
+});
+const titleOf = t => t._title;
 const flakyCount = T.filter(isFlaky).length;
 const healCount = T.reduce((n,t) => n + (t.healings||[]).length, 0);
-const byStart = T.map((t,i)=>i).sort((a,b) => (T[a].started_at||'').localeCompare(T[b].started_at||''));
+// ISO-8601 strings order correctly with plain comparison — no collator needed.
+const byStart = T.map((t,i)=>i).sort((a,b) => { const x = T[a].started_at||'', y = T[b].started_at||''; return x < y ? -1 : x > y ? 1 : 0; });
 
 /* ── lazy per-test detail (console/network live in assets/data/t-<i>.js) ──
-   Shards are JSONP-style scripts because fetch() is blocked on file://.
-   Legacy payloads carry the arrays inline; those short-circuit the loader. */
+   Shards are JSONP-style scripts because fetch() is blocked on file://. */
 const hasDetail = t => t.console !== undefined;
-const nCounts = t => t.counts || {          // legacy payloads: derive from inline arrays
-  console: (t.console || []).length,
-  con_err: (t.console || []).filter(c => lvlOf(c) === 'error').length,
-  con_warn: (t.console || []).filter(c => lvlOf(c) === 'warning').length,
-  network: (t.network || []).length,
-  net_bad: (t.network || []).filter(n => !n.ok).length,
-};
 const DETAIL_CB = {}, DETAIL_P = {};
 window.__WEBAGENT_DETAIL__ = (i, d) => {
   if (!T[i]) return;
@@ -81,8 +83,10 @@ document.getElementById('copyrun').onclick = function(){
   try { navigator.clipboard.writeText(DATA.run_id).then(done.bind(this), () => {}); } catch(e){}
 };
 document.getElementById('tcount').textContent = TOT.total;
-document.getElementById('pulse').innerHTML = byStart.map(i =>
-  `<div class="px ${effStatus(T[i])}" title="${esc(T[i].title || T[i].name)} · ${effStatus(T[i])}" onclick="openTest(${i})"></div>`).join('');
+document.getElementById('pulse').innerHTML = byStart.map(i => {
+  const t = T[i], st = effStatus(t);
+  return `<div class="px ${st}" title="${titleOf(t)} · ${st}" onclick="openTest(${i})"></div>`;
+}).join('');
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function showTab(name){
   document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name));
@@ -93,10 +97,6 @@ document.getElementById('foot').textContent =
   `Generated on ${new Date(DATA.created_at).toLocaleString()} · Web Agent ${ENV.framework}`;
 
 /* ── overview ── */
-if (DATA.ai_summary){
-  document.getElementById('aibanner').style.display = 'block';
-  document.getElementById('aisummary').textContent = DATA.ai_summary;
-}
 (function donut(){
   const segs = [[TOT.passed,'var(--pass)','Passed'], [failing,'var(--fail)','Failed'],
                 [flakyCount,'#d99a11','Flaky'], [TOT.skipped,'#b7bcc2','Skipped']];
@@ -111,9 +111,10 @@ if (DATA.ai_summary){
 })();
 
 (function histo(){
-  const durs = T.map(t => t.duration_ms), max = Math.max(...durs, 1);
+  let max = 1;
+  T.forEach(t => { if (t.duration_ms > max) max = t.duration_ms; });
   const N = 12, buckets = Array(N).fill(0);
-  durs.forEach(d => buckets[Math.min(N-1, Math.floor(d/max*N))]++);
+  T.forEach(t => buckets[Math.min(N-1, Math.floor(t.duration_ms/max*N))]++);
   const bmax = Math.max(...buckets, 1);
   document.getElementById('totaldur').textContent = `Total ${fmtMs(TOT.duration_ms)}`;
   document.getElementById('histo').innerHTML =
@@ -124,12 +125,10 @@ if (DATA.ai_summary){
 (function healsum(){
   const healed = T.filter(t => (t.healings||[]).length);
   document.getElementById('healsum').innerHTML = healed.length
-    ? healed.map(t => {
-        const i = T.indexOf(t);
-        return `<div class="rowline"><span class="sdot ${effStatus(t)}"></span>
-          <span class="nm" onclick="openTest(${i})">${esc(t.title || t.name)}</span>
-          <span class="val" style="color:var(--skip)">🩹 ${t.healings.length} L${Math.max(...t.healings.map(h=>h.layer))}</span></div>`;
-      }).join('') + `<div class="axis" style="margin-top:10px"><span>${healCount} heal${healCount===1?'':'s'} — update these page objects</span></div>`
+    ? healed.map(t => `<div class="rowline"><span class="sdot ${effStatus(t)}"></span>
+          <span class="nm" onclick="openTest(${t._i})">${titleOf(t)}</span>
+          <span class="val" style="color:var(--skip)">🩹 ${t.healings.length} L${Math.max(...t.healings.map(h=>h.layer))}</span></div>`
+      ).join('') + `<div class="axis" style="margin-top:10px"><span>${healCount} heal${healCount===1?'':'s'} — update these page objects</span></div>`
     : `<div class="estate"><div class="ecirc">✓</div>
        <div class="ehead">No locators needed healing 🎉</div>
        <div class="esub">Great job! No unstable locators detected.</div></div>`;
@@ -138,8 +137,8 @@ if (DATA.ai_summary){
 (function failures(){
   const fails = T.filter(t => failedLike(t.status));
   document.getElementById('failures').innerHTML = fails.length
-    ? fails.map(t => `<div class="failcard" onclick="openTest(${T.indexOf(t)})">
-        <div class="fname">${esc(t.title || t.name)} ${(t.markers||[]).map(m=>`<span class="chiplet">${esc(m)}</span>`).join(' ')}</div>
+    ? fails.map(t => `<div class="failcard" onclick="openTest(${t._i})">
+        <div class="fname">${titleOf(t)} ${(t.markers||[]).map(m=>`<span class="chiplet">${esc(m)}</span>`).join(' ')}</div>
         <div class="ferr">${esc((t.error && t.error.message || '').split('\n')[0])}</div>
         <div class="ffile">${esc(t.file)}</div></div>`).join('')
     : `<div class="estate"><div class="ecirc">🛡</div>
@@ -152,7 +151,7 @@ if (DATA.ai_summary){
   const max = Math.max(...top.map(t => t.duration_ms), 1);
   document.getElementById('slowest').innerHTML = top.map(t => `
     <div class="rowline" style="border-bottom:none;padding-bottom:2px">
-      <span class="nm" onclick="openTest(${T.indexOf(t)})">${esc(t.title || t.name)}</span>
+      <span class="nm" onclick="openTest(${t._i})">${titleOf(t)}</span>
       <span class="val">${fmtMs(t.duration_ms)}</span></div>
     <div class="meterwrap"><div class="meter" style="width:${t.duration_ms/max*100}%;background:${failedLike(t.status)?'var(--fail)':'var(--bar)'}"></div></div>`).join('');
 })();
@@ -206,32 +205,34 @@ if (DATA.ai_summary){
 let statusFilter = '';
 const FILTERS = [['passed','var(--pass)',TOT.passed], ['failed','var(--fail)',failing],
                  ['flaky','#d99a11',flakyCount], ['skipped','#b7bcc2',TOT.skipped]];
-document.getElementById('fchips').outerHTML = FILTERS.map(([s,c,n]) =>
+document.getElementById('fchips').innerHTML = FILTERS.map(([s,c,n]) =>
   `<div class="fchip" data-f="${s}"><span class="sw" style="background:${c}"></span>${s[0].toUpperCase()+s.slice(1)}<span class="n">${n}</span></div>`).join('');
-document.querySelectorAll('.fchip').forEach(ch => ch.onclick = () => {
+document.querySelectorAll('.fchip[data-f]').forEach(ch => ch.onclick = () => {
   statusFilter = statusFilter === ch.dataset.f ? '' : ch.dataset.f;
-  document.querySelectorAll('.fchip').forEach(x => x.classList.toggle('on', x.dataset.f === statusFilter));
+  document.querySelectorAll('.fchip[data-f]').forEach(x => x.classList.toggle('on', x.dataset.f === statusFilter));
   renderTests();
 });
 const markers = [...new Set(T.flatMap(t => t.markers || []))].sort();
-document.getElementById('marker').innerHTML += markers.map(m => `<option>${esc(m)}</option>`).join('');
+const markerSel = document.getElementById('marker');
+markerSel.innerHTML += markers.map(m => `<option>${esc(m)}</option>`).join('');
+markerSel.hidden = !markers.length;   // nothing to pick from — don't show an empty control
 const suiteNames = [...new Set(T.map(suiteOf))].sort();
 document.getElementById('suite').innerHTML += suiteNames.map(s => `<option>${esc(s)}</option>`).join('');
-['search','marker','suite'].forEach(id => document.getElementById(id).addEventListener(id==='search'?'input':'change', renderTests));
+document.getElementById('search').addEventListener('input', debounce(renderTests));
+['marker','suite'].forEach(id => document.getElementById(id).addEventListener('change', renderTests));
 document.addEventListener('keydown', e => {
   if (e.key === '/' && !e.target.matches('input,select')) { e.preventDefault(); showTab('tests'); document.getElementById('search').focus(); }
   if (e.key === 'Escape') closeDrawer();
 });
 
 function chips(t){
-  const {con_err: cerr, con_warn: cwarn, net_bad: nbad} = nCounts(t);
+  const {con_err: cerr, con_warn: cwarn, net_bad: nbad} = t.counts;
   return [
     cerr ? `<span class="chiplet cbad" title="console errors">⚠ ${cerr}</span>` : '',
     cwarn ? `<span class="chiplet cwarn" title="console warnings">⚠ ${cwarn}</span>` : '',
     nbad ? `<span class="chiplet cbad" title="failed requests">⇅ ${nbad}</span>` : '',
     t.retries ? `<span class="chiplet" style="color:var(--skip)" title="reruns">↻ ${t.retries}</span>` : '',
     (t.healings||[]).length ? `<span class="chiplet" style="color:var(--skip)" title="healed locators">🩹 ${t.healings.length}</span>` : '',
-    t.ai ? '<span class="chiplet" style="color:var(--accent)">✦ AI</span>' : '',
     ...(t.markers||[]).map(m => `<span class="chiplet">${esc(m)}</span>`)
   ].join('');
 }
@@ -245,11 +246,7 @@ function renderTests(){
         (statusFilter && t.status !== statusFilter)) return false;
     if (mk && !(t.markers||[]).includes(mk)) return false;
     if (su && suiteOf(t) !== su) return false;
-    if (q){
-      const hay = [t.title, t.name, t.file, t.error && t.error.message, ...(t.markers||[])].join(' ').toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
+    return !q || t._hay.includes(q);
   });
   const groups = {};
   keep.forEach(t => (groups[t.file] ||= []).push(t));
@@ -262,9 +259,9 @@ function renderTests(){
         <span class="sum"><span class="ok">✓ ${ok}</span>${ko ? `<span class="ko">✕ ${ko}</span>` : ''}<span class="t">${fmtMs(time)}</span></span>
       </div>
       <div class="trows">${ts.map(t => `
-        <div class="trow" onclick="openTest(${T.indexOf(t)})">
+        <div class="trow" onclick="openTest(${t._i})">
           <span class="sdot ${effStatus(t)}"></span>
-          <span class="tt">${esc(t.title || t.name)}${t.title && t.title !== t.name ? `<span class="fn">${esc(t.name)}</span>` : ''}</span>
+          <span class="tt">${titleOf(t)}${t.title && t.title !== t.name ? `<span class="fn">${esc(t.name)}</span>` : ''}</span>
           <span class="right">${chips(t)}<span class="dur">${fmtMs(t.duration_ms)}</span></span>
         </div>`).join('')}</div>
     </div>`;
@@ -285,8 +282,9 @@ function stepTree(steps){
   return root.children;
 }
 function shotThumb(s){
+  // attachment is a report-relative path; escape it like any other attribute value
   return s.attachment
-    ? `<a href="${ART(s.attachment)}" target="_blank"><img class="sthumb" src="${ART(s.attachment)}" loading="lazy"></a>`
+    ? `<a href="${esc(s.attachment)}" target="_blank"><img class="sthumb" src="${esc(s.attachment)}" alt="Screenshot at failing step" loading="lazy"></a>`
     : '';
 }
 function failedStep(t){
@@ -334,15 +332,8 @@ function errCard(e, instep){
   // headline without the class prefix when the kind chip already shows it
   let headline = (e.message || '').split('\n')[0];
   if (e.kind && headline.startsWith(e.kind + ':')) headline = headline.slice(e.kind.length + 1).trim();
-  const kv = [['Expected', e.expected], ['Actual', e.actual],
-              ['Timeout', e.timeout_ms ? e.timeout_ms + 'ms' : null]]
-    .filter(([,v]) => v != null && v !== '')
-    .map(([k,v]) => `<div class="kv"><span class="k">${k}</span><code>${esc(v)}</code></div>`).join('');
-  const log = (e.call_log || []).join('\n');
   return `<div class="errcard${instep ? ' instep' : ''}">
     <div class="errhead">${e.kind ? `<span class="ekind">${esc(e.kind)}</span>` : ''}<span class="msg">${esc(headline)}</span></div>
-    ${kv ? `<div class="kvs">${kv}</div>` : ''}
-    ${log ? `<div class="sublbl">Call log</div><pre class="codebox">${esc(log)}</pre>` : ''}
     ${e.traceback ? `<details class="fullout"><summary>Full output</summary><pre class="codebox tall">${esc(e.traceback)}</pre></details>` : ''}
   </div>`;
 }
@@ -352,26 +343,15 @@ function errorHtml(t){
   if (!t.error || failedStep(t)) return '';
   return `<div class="sec"><h3>Error</h3>${errCard(t.error, false)}</div>`;
 }
-function aiHtml(a){
-  if (!a) return '';
-  const sugg = (a.locator_suggestions || []).map(s =>
-    `<li>${s.original ? `<code>${esc(s.original)}</code> → ` : ''}<code>${esc(s.suggestion)}</code> — ${esc(s.reason)}</li>`).join('');
-  const recs = (a.recommendations || []).map(r => `<li>${esc(r)}</li>`).join('');
-  return `<div class="sec"><h3>✦ AI analysis</h3><div class="aibox">
-    <span class="cat">${esc(a.category)}</span><span class="conf">confidence ${(a.confidence*100).toFixed(0)}% · ${esc(a.provider)}/${esc(a.model)}</span>
-    <p>${esc(a.summary)}</p><p><b>Root cause:</b> ${esc(a.root_cause)}</p>
-    ${sugg ? `<p><b>Locator suggestions:</b></p><ul>${sugg}</ul>` : ''}
-    ${recs ? `<p><b>Recommendations:</b></p><ul>${recs}</ul>` : ''}</div></div>`;
-}
 function healHtml(t){
   const h = t.healings || [];
   if (!h.length) return '';
   return `<div class="sec"><h3>🩹 Healed locators</h3><div class="healbox">
     Resolved by the fallback chain at runtime — update the page object.
     <ul>${h.map(e => `<li><span class="layer">L${e.layer}</span>'${esc(e.description)}'
-      ${e.original ? `<br>stale: <code>${esc(e.original)}</code>` : ''}
       <br>healed by <code>${esc(e.healed_by)}</code> → <code>${esc(e.resolved)}</code></li>`).join('')}</ul></div></div>`;
 }
+
 /* ── console & network row renderers (shared by drawer + execution tabs) ── */
 function groupConsole(logs){
   const map = new Map(), out = [];
@@ -387,7 +367,7 @@ function conRowHtml(c, t0, ti){
   const lines = String(c.text ?? '').split('\n');
   const main = `<span class="ctime">${relTime(c.ts, t0)}</span><span class="clvl ${lvl}">${esc(c.level)}</span>
     <span class="ctext">${esc(lines[0])}${c.count > 1 ? `<span class="cxn">×${c.count}</span>` : ''}</span>
-    ${ti != null ? `<span class="cfrom" onclick="openTest(${ti})">${esc(T[ti].title || T[ti].name)}</span>` : ''}
+    ${ti != null ? `<span class="cfrom" onclick="event.preventDefault();openTest(${ti})">${titleOf(T[ti])}</span>` : ''}
     ${c.step ? `<span class="cstep" title="active step">${esc(c.step)}</span>` : ''}
     ${c.location ? `<span class="cloc" title="${esc(c.location)}">${esc(c.location.replace(/^https?:\/\/[^/]*/, ''))}</span>` : ''}`;
   return lines.length > 1
@@ -399,14 +379,17 @@ function curlOf(n){
   const h = Object.entries(n.request_headers || {}).map(([k, v]) => ` -H ${q(k + ': ' + v)}`).join('');
   return `curl -X ${n.method} ${q(n.url)}${h}${n.post_data ? ` --data ${q(n.post_data)}` : ''}`;
 }
-let NET_CTX = [];   // entries behind the currently rendered network rows
-window.copyIdx = (kind, i, btn) => {
-  const n = NET_CTX[i]; if (!n) return;
+// Entries behind the rendered rows of each network list, keyed by view, so
+// the drawer and the execution-level list never clobber each other's copy
+// buttons (both can be on screen once the drawer has been opened and closed).
+const NET_CTX = {};
+window.copyIdx = (kind, ctx, i, btn) => {
+  const n = (NET_CTX[ctx] || [])[i]; if (!n) return;
   const txt = kind === 'curl' ? curlOf(n) : n.url;
   try { navigator.clipboard.writeText(txt).then(() => { btn.textContent = '✓'; setTimeout(() => btn.textContent = kind === 'curl' ? 'Copy cURL' : 'Copy URL', 900); }, () => {}); } catch(e) {}
 };
 const fmtKv = o => Object.entries(o || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
-function netRowHtml(n, t0, idx, ti){
+function netRowHtml(n, t0, ctx, idx, ti){
   let host = '', path = n.url;
   try { const u = new URL(n.url); host = u.host; path = u.pathname + u.search; } catch(e) {}
   const status = n.status != null
@@ -415,7 +398,7 @@ function netRowHtml(n, t0, idx, ti){
   const slow = (n.duration_ms || 0) > 2000;
   const summary = `<span class="nmethod">${esc(n.method)}</span>${status}
     <span class="nurl" title="${esc(n.url)}"><span class="nhost">${esc(host)}</span>${esc(path)}${n.failure ? ` <span class="nfailure">${esc(n.failure)}</span>` : ''}</span>
-    ${ti != null ? `<span class="cfrom" onclick="event.preventDefault();openTest(${ti})">${esc(T[ti].title || T[ti].name)}</span>` : ''}
+    ${ti != null ? `<span class="cfrom" onclick="event.preventDefault();openTest(${ti})">${titleOf(T[ti])}</span>` : ''}
     <span class="ntime">${relTime(n.ts, t0)}</span>
     <span class="ndur${slow ? ' slow' : ''}"${slow ? ' title="slow request (>2s)"' : ''}>${n.duration_ms != null ? fmtMs(n.duration_ms) : ''}</span>
     <span class="nsize">${fmtBytes(n.size)}</span>
@@ -424,8 +407,8 @@ function netRowHtml(n, t0, idx, ti){
   try { qp = [...new URL(n.url).searchParams].map(([k, v]) => `${k} = ${v}`).join('\n'); } catch(e) {}
   const detail = `<div class="ndetail">
     <div class="nbtns">
-      <button class="minibtn" onclick="copyIdx('curl',${idx},this)">Copy cURL</button>
-      <button class="minibtn" onclick="copyIdx('url',${idx},this)">Copy URL</button>
+      <button class="minibtn" onclick="copyIdx('curl','${ctx}',${idx},this)">Copy cURL</button>
+      <button class="minibtn" onclick="copyIdx('url','${ctx}',${idx},this)">Copy URL</button>
       ${n.step ? `<span class="cstep" title="active step">during: ${esc(n.step)}</span>` : ''}
     </div>
     ${qp ? `<div class="sublbl">Query parameters</div><pre class="codebox">${esc(qp)}</pre>` : ''}
@@ -439,93 +422,111 @@ function netRowHtml(n, t0, idx, ti){
 const netHeadHtml = withTest =>
   `<div class="nethead"><span>Method</span><span>Status</span><span>Name</span>${withTest ? '<span>Test</span>' : ''}<span class="num">Offset</span><span class="num">Duration</span><span class="num">Size</span><span>Type</span><span></span></div>`;
 function netSummaryHtml(net){
-  const failed = net.filter(n => !n.ok).length;
-  const bytes = net.reduce((s, n) => s + (n.size || 0), 0);
-  const withD = net.filter(n => n.duration_ms != null);
-  const slowest = withD.length ? Math.max(...withD.map(n => n.duration_ms)) : null;
-  const withT = net.filter(n => n.ts != null);
-  const span = withT.length ? Math.max(...withT.map(n => n.ts + (n.duration_ms || 0))) - Math.min(...withT.map(n => n.ts)) : null;
+  // One pass; Math.max(...arr) would overflow the call stack on a large
+  // execution-level list (hundreds of tests × up to 1500 requests).
+  let failed = 0, bytes = 0, slowest = null, first = null, last = null;
+  for (const n of net){
+    if (!n.ok) failed++;
+    bytes += n.size || 0;
+    if (n.duration_ms != null && (slowest == null || n.duration_ms > slowest)) slowest = n.duration_ms;
+    if (n.ts != null){
+      const end = n.ts + (n.duration_ms || 0);
+      if (first == null || n.ts < first) first = n.ts;
+      if (last == null || end > last) last = end;
+    }
+  }
   return `<div class="netsum">
     <span><b>${net.length}</b> requests</span>
     <span class="${failed ? 'ko' : ''}"><b>${failed}</b> failed</span>
     <span><b>${fmtBytes(bytes) || '0 B'}</b> transferred</span>
     ${slowest != null ? `<span>slowest <b>${fmtMs(slowest)}</b></span>` : ''}
-    ${span != null ? `<span>span <b>${fmtMs(span)}</b></span>` : ''}</div>`;
+    ${first != null ? `<span>span <b>${fmtMs(last - first)}</b></span>` : ''}</div>`;
+}
+
+/* ── one console view and one network view, used by the drawer and the
+   execution-level tabs. Items are {e, t0, i?}: the entry, the owning test's
+   t0 for offsets, and (aggregated views only) the test index. ── */
+const chipHtml = (cls, key, label, n, on) =>
+  `<span class="fchip ${cls}${on ? ' on' : ''}" data-k="${key}">${label}<span class="n">${n}</span></span>`;
+function wireChips(host, cls, onPick, toggle){
+  host.querySelectorAll('.' + cls).forEach(ch => ch.onclick = () => {
+    const picked = onPick(ch.dataset.k, toggle);
+    host.querySelectorAll('.' + cls).forEach(x => x.classList.toggle('on', x.dataset.k === picked));
+  });
+}
+function showMore(list, id, hidden, onClick){
+  if (hidden <= 0) return;
+  list.insertAdjacentHTML('beforeend', `<button class="showmore" id="${id}">Show more (${hidden} hidden)</button>`);
+  document.getElementById(id).onclick = onClick;
+}
+function consoleView({items, list, chipsHost, search, group, pageSize, cls}){
+  // group: collapse identical messages (drawer); aggregated view keeps every row
+  const t0 = items.length ? items[0].t0 : null;
+  const rows = group ? groupConsole(items.map(x => x.e)).map(e => ({e, t0})) : items;
+  rows.forEach(x => { x.q = (x.e.text + ' ' + (x.e.location || '')).toLowerCase(); });
+  const tally = {};
+  rows.forEach(x => { const l = lvlOf(x.e); tally[l] = (tally[l] || 0) + 1; });
+  chipsHost.innerHTML = CON_LEVELS.map(([l, lbl]) => chipHtml(cls, l, lbl, tally[l] || 0, false)).join('');
+  let lvl = '', q = '', shown = pageSize;
+  const render = () => {
+    const keep = rows.filter(x => (!lvl || lvlOf(x.e) === lvl) && (!q || x.q.includes(q)));
+    list.innerHTML = keep.slice(0, shown).map(x => conRowHtml(x.e, x.t0, x.i)).join('') ||
+      '<div class="empty" style="padding:10px 0">No matching messages.</div>';
+    showMore(list, list.id + '-more', keep.length - shown, () => { shown += 2 * pageSize; render(); });
+  };
+  wireChips(chipsHost, cls, k => { lvl = lvl === k ? '' : k; render(); return lvl; });
+  search.addEventListener('input', debounce(e => { q = e.target.value.toLowerCase(); shown = pageSize; render(); }));
+  render();
+}
+function networkView({items, list, chipsHost, search, sortSel, ctx, pageSize, withTest, cls}){
+  items.forEach(x => { x.q = x.e.url.toLowerCase(); x.c = catOf(x.e); });
+  const tally = {'': items.length, bad: 0};
+  items.forEach(x => { if (!x.e.ok) tally.bad++; tally[x.c] = (tally[x.c] || 0) + 1; });
+  chipsHost.innerHTML = NET_CATS.filter(([c]) => tally[c]).map(([c, lbl]) => chipHtml(cls, c, lbl, tally[c], c === '')).join('');
+  let cat = '', q = '', sort = 'time', shown = pageSize;
+  const render = () => {
+    const keep = items.filter(x => (cat === '' || (cat === 'bad' ? !x.e.ok : x.c === cat)) && (!q || x.q.includes(q)));
+    if (sort === 'dur') keep.sort((a, b) => (b.e.duration_ms || 0) - (a.e.duration_ms || 0));
+    else if (sort === 'status') keep.sort((a, b) => (b.e.status || 999) - (a.e.status || 999));
+    else if (sort === 'size') keep.sort((a, b) => (b.e.size || 0) - (a.e.size || 0));
+    NET_CTX[ctx] = keep.map(x => x.e);
+    const rows = keep.slice(0, shown).map((x, i) => netRowHtml(x.e, x.t0, ctx, i, withTest ? x.i : undefined)).join('');
+    list.innerHTML = rows ? netHeadHtml(withTest) + rows : '<div class="empty" style="padding:10px 0">No matching requests.</div>';
+    showMore(list, list.id + '-more', keep.length - shown, () => { shown += 2 * pageSize; render(); });
+  };
+  wireChips(chipsHost, cls, k => { cat = k; render(); return cat; });
+  search.addEventListener('input', debounce(e => { q = e.target.value.toLowerCase(); shown = pageSize; render(); }));
+  if (sortSel) sortSel.addEventListener('change', e => { sort = e.target.value; render(); });
+  render();
 }
 
 /* ── drawer panes ── */
 function consolePaneHtml(t){
-  const logs = t.console || [];
-  if (!logs.length && !t.console_dropped)
+  if (!(t.console || []).length && !t.console_dropped)
     return '<div class="empty" style="padding:14px 0">No console messages captured.</div>';
-  const n = l => logs.filter(c => lvlOf(c) === l).length;
-  const chips = [['error','Errors'], ['warning','Warnings'], ['info','Info'], ['debug','Debug']]
-    .map(([l, lbl]) => `<span class="fchip cf" data-cf="${l}">${lbl}<span class="n">${n(l)}</span></span>`).join('');
-  return `<div class="minibar"><input class="minisearch" id="consearch" placeholder="Search messages…">${chips}</div>
+  return `<div class="minibar"><input class="minisearch" id="consearch" placeholder="Search messages…"><span id="conchips"></span></div>
     <div class="loglist" id="conlist"></div>
     ${t.console_dropped ? `<div class="dropnote">${t.console_dropped} more entries were not captured (flow limit).</div>` : ''}`;
-}
-function wireConsolePane(t){
-  const list = document.getElementById('conlist');
-  if (!list) return;
-  const groups = groupConsole(t.console || []);
-  let lvl = '', q = '';
-  const render = () => {
-    const keep = groups.filter(c => (!lvl || lvlOf(c) === lvl) &&
-      (!q || (c.text + ' ' + (c.location || '')).toLowerCase().includes(q)));
-    list.innerHTML = keep.map(c => conRowHtml(c, t.t0)).join('') ||
-      '<div class="empty" style="padding:10px 0">No matching messages.</div>';
-  };
-  document.querySelectorAll('.cf').forEach(ch => ch.onclick = () => {
-    lvl = lvl === ch.dataset.cf ? '' : ch.dataset.cf;
-    document.querySelectorAll('.cf').forEach(x => x.classList.toggle('on', x.dataset.cf === lvl));
-    render();
-  });
-  document.getElementById('consearch').addEventListener('input', e => { q = e.target.value.toLowerCase(); render(); });
-  render();
 }
 function netPaneHtml(t){
   const net = t.network || [];
   if (!net.length && !t.network_dropped)
     return '<div class="empty" style="padding:14px 0">No network activity recorded.</div>';
-  const cnt = c => c === '' ? net.length : c === 'bad' ? net.filter(n => !n.ok).length : net.filter(n => catOf(n) === c).length;
-  const chips = NET_CATS.filter(([c]) => cnt(c)).map(([c, lbl]) =>
-    `<span class="fchip nf${c === '' ? ' on' : ''}" data-nf="${c}">${lbl}<span class="n">${cnt(c)}</span></span>`).join('');
   return `${netSummaryHtml(net)}
     <div class="minibar"><input class="minisearch" id="netsearch" placeholder="Search URL or endpoint…">
       <select class="minisel" id="netsort"><option value="time">By time</option><option value="dur">By duration</option><option value="status">By status</option><option value="size">By size</option></select>
-      ${chips}</div>
+      <span id="netchips"></span></div>
     <div class="netlist" id="netlist"></div>
     ${t.network_dropped ? `<div class="dropnote">${t.network_dropped} more requests were not captured (flow limit).</div>` : ''}`;
 }
-function wireNetPane(t){
-  const list = document.getElementById('netlist');
-  if (!list) return;
-  const net = t.network || [];
-  let cat = '', q = '', sort = 'time', shown = 100;
-  const render = () => {
-    let keep = net.filter(n => (cat === '' || (cat === 'bad' ? !n.ok : catOf(n) === cat)) &&
-      (!q || n.url.toLowerCase().includes(q)));
-    if (sort === 'dur') keep = [...keep].sort((a, b) => (b.duration_ms || 0) - (a.duration_ms || 0));
-    else if (sort === 'status') keep = [...keep].sort((a, b) => (b.status || 999) - (a.status || 999));
-    else if (sort === 'size') keep = [...keep].sort((a, b) => (b.size || 0) - (a.size || 0));
-    NET_CTX = keep;
-    const rows = keep.slice(0, shown).map((n, i) => netRowHtml(n, t.t0, i)).join('');
-    list.innerHTML = rows ? netHeadHtml() + rows :
-      '<div class="empty" style="padding:10px 0">No matching requests.</div>';
-    if (keep.length > shown)
-      list.innerHTML += `<button class="showmore" id="netmore">Show more (${keep.length - shown} hidden)</button>`;
-    const more = document.getElementById('netmore');
-    if (more) more.onclick = () => { shown += 200; render(); };
-  };
-  document.querySelectorAll('.nf').forEach(ch => ch.onclick = () => {
-    cat = ch.dataset.nf;
-    document.querySelectorAll('.nf').forEach(x => x.classList.toggle('on', x === ch));
-    render();
-  });
-  document.getElementById('netsearch').addEventListener('input', e => { q = e.target.value.toLowerCase(); shown = 100; render(); });
-  document.getElementById('netsort').addEventListener('change', e => { sort = e.target.value; render(); });
-  render();
+function wireDrawerPanes(t){
+  const $ = id => document.getElementById(id);
+  if ($('conlist')) consoleView({
+    items: (t.console || []).map(e => ({e, t0: t.t0})), list: $('conlist'), chipsHost: $('conchips'),
+    search: $('consearch'), group: true, pageSize: 200, cls: 'cf'});
+  if ($('netlist')) networkView({
+    items: (t.network || []).map(e => ({e, t0: t.t0})), list: $('netlist'), chipsHost: $('netchips'),
+    search: $('netsearch'), sortSel: $('netsort'), ctx: 'drawer', pageSize: 100, withTest: false, cls: 'nf'});
 }
 function relatedHtml(t){
   if (!failedLike(t.status)) return '';
@@ -537,22 +538,26 @@ function relatedHtml(t){
   const cons = (t.console || []).filter(c => lvlOf(c) === 'error' && c.ts >= from && c.ts <= end).slice(-5);
   const net = (t.network || []).filter(n => !n.ok && n.ts >= from && n.ts <= end).slice(-5);
   if (!cons.length && !net.length) return '';
+  // failed requests reuse the console row shape: level "net", text = request + outcome
+  const netRows = net.map(n => ({level: 'error', ts: n.ts,
+    text: `${n.method} ${n.url} — ${n.failure ? n.failure : 'HTTP ' + n.status}`}));
   return `<div class="sec"><h3>Likely related activity</h3><div class="relbox">
     <div class="relnote">Browser activity near the failure — troubleshooting hints, not a confirmed root cause.</div>
     ${cons.map(c => conRowHtml(c, t.t0)).join('')}
-    ${net.map(n => `<div class="crow error"><span class="ctime">${relTime(n.ts, t.t0)}</span><span class="clvl error">net</span><span class="ctext">${esc(n.method)} ${esc(n.url)} — ${n.failure ? esc(n.failure) : 'HTTP ' + n.status}</span></div>`).join('')}
+    ${netRows.map(c => conRowHtml(c, t.t0).replace('>error<', '>net<')).join('')}
   </div></div>`;
 }
 let lastDtab = 'd-con';
 let drawerSeq = 0;   // ignore shard arrivals for a test the user has left
 function openTest(i){
   const t = T[i];
-  const counts = nCounts(t);
+  const counts = t.counts;
   const loading = '<div class="empty" style="padding:14px 0">Loading detail data…</div>';
-  document.getElementById('drawer').innerHTML = `
+  const drawer = document.getElementById('drawer');
+  drawer.innerHTML = `
     <div class="dhead">
-      <div class="dtitle"><span class="badge ${effStatus(t)}">${effStatus(t)}</span><h2>${esc(t.title || t.name)}</h2>
-        <button class="iconbtn" onclick="closeDrawer()">✕</button></div>
+      <div class="dtitle"><span class="badge ${effStatus(t)}">${effStatus(t)}</span><h2 id="dtitle">${titleOf(t)}</h2>
+        <button class="iconbtn" onclick="closeDrawer()" aria-label="Close details">✕</button></div>
       <div class="dmeta">
         <div><span>file </span><b>${esc(t.file)}</b></div>
         ${t.flow ? `<div><span>flow </span><b>${esc(t.flow)}</b></div>` : `<div><span>test </span><b>${esc(t.name)}</b></div>`}
@@ -565,36 +570,39 @@ function openTest(i){
     <div class="dbody">
       ${errorHtml(t)}
       <div id="d-rel">${hasDetail(t) ? relatedHtml(t) : ''}</div>
-      ${aiHtml(t.ai)}${healHtml(t)}
+      ${healHtml(t)}
       <div class="sec"><h3>Steps</h3>${stepsHtml(t)}</div>
       <div class="sec">
-        <div class="dtabs">
-          <span class="dtab" data-t="d-con">Console (${counts.console})</span>
-          <span class="dtab" data-t="d-net">Network (${counts.network})</span>
+        <div class="dtabs" role="tablist">
+          <span class="dtab" role="tab" tabindex="0" data-t="d-con">Console (${counts.console})</span>
+          <span class="dtab" role="tab" tabindex="0" data-t="d-net">Network (${counts.network})</span>
         </div>
         <div class="dpane" id="d-con">${hasDetail(t) ? consolePaneHtml(t) : loading}</div>
         <div class="dpane" id="d-net">${hasDetail(t) ? netPaneHtml(t) : loading}</div>
       </div>
     </div>`;
-  const tabs = [...document.querySelectorAll('.dtab')];
+  const tabs = [...drawer.querySelectorAll('.dtab')];
   const activate = tab => {
-    tabs.forEach(x => x.classList.toggle('active', x === tab));
-    document.querySelectorAll('.dpane').forEach(x => x.classList.toggle('active', x.id === tab.dataset.t));
+    tabs.forEach(x => { x.classList.toggle('active', x === tab); x.setAttribute('aria-selected', x === tab); });
+    drawer.querySelectorAll('.dpane').forEach(x => x.classList.toggle('active', x.id === tab.dataset.t));
     lastDtab = tab.dataset.t;   // keep the selected tab across tests
   };
   activate(tabs.find(x => x.dataset.t === lastDtab) || tabs[0]);
-  tabs.forEach(tab => tab.onclick = () => activate(tab));
-  const fillDetail = () => {
-    document.getElementById('d-rel').innerHTML = relatedHtml(t);
-    document.getElementById('d-con').innerHTML = consolePaneHtml(t);
-    document.getElementById('d-net').innerHTML = netPaneHtml(t);
-    wireConsolePane(t); wireNetPane(t);
-  };
-  if (hasDetail(t)) { wireConsolePane(t); wireNetPane(t); }
+  tabs.forEach(tab => {
+    tab.onclick = () => activate(tab);
+    tab.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tab); } };
+  });
+  if (hasDetail(t)) wireDrawerPanes(t);
   else {
     const seq = ++drawerSeq;
     loadDetail(i).then(
-      () => { if (seq === drawerSeq) fillDetail(); },
+      () => {
+        if (seq !== drawerSeq) return;
+        document.getElementById('d-rel').innerHTML = relatedHtml(t);
+        document.getElementById('d-con').innerHTML = consolePaneHtml(t);
+        document.getElementById('d-net').innerHTML = netPaneHtml(t);
+        wireDrawerPanes(t);
+      },
       () => {
         if (seq !== drawerSeq) return;
         const miss = '<div class="empty" style="padding:14px 0">Detail data unavailable — this test\'s shard is missing from assets/data/.</div>';
@@ -602,8 +610,9 @@ function openTest(i){
         document.getElementById('d-net').innerHTML = miss;
       });
   }
-  document.getElementById('drawer').classList.add('show');
+  drawer.classList.add('show');
   document.getElementById('overlay').classList.add('show');
+  drawer.querySelector('.iconbtn').focus();
 }
 function closeDrawer(){
   document.getElementById('drawer').classList.remove('show');
@@ -613,11 +622,12 @@ document.getElementById('overlay').onclick = closeDrawer;
 
 /* ── timeline ── */
 (function timeline(){
-  const withT = byStart.filter(i => T[i].started_at);
+  const withT = byStart.filter(i => T[i]._startMs != null);
   if (!withT.length){ document.getElementById('lanes').innerHTML = '<div class="empty">No timing data.</div>'; return; }
-  const start = i => new Date(T[i].started_at).getTime();
+  const start = i => T[i]._startMs;
   const end = i => start(i) + T[i].duration_ms;
-  const t0 = Math.min(...withT.map(start)), t1 = Math.max(...withT.map(end));
+  let t0 = Infinity, t1 = -Infinity;
+  withT.forEach(i => { t0 = Math.min(t0, start(i)); t1 = Math.max(t1, end(i)); });
   const span = Math.max(t1 - t0, 1);
   const lanes = [];  // greedy interval assignment ≈ xdist workers
   withT.forEach(i => {
@@ -629,7 +639,7 @@ document.getElementById('overlay').onclick = closeDrawer;
   document.getElementById('lanes').innerHTML = lanes.map((l, n) => `
     <div class="lane"><span class="lb">w${n}</span><div class="track">${l.items.map(i => `
       <div class="tbar ${effStatus(T[i])}" onclick="openTest(${i})"
-        title="${esc(T[i].title || T[i].name)} · ${fmtMs(T[i].duration_ms)}"
+        title="${titleOf(T[i])} · ${fmtMs(T[i].duration_ms)}"
         style="left:${(start(i)-t0)/span*100}%;width:${Math.max(T[i].duration_ms/span*100, .4)}%"></div>`).join('')}</div></div>`).join('');
   document.getElementById('ticks').innerHTML =
     [0,.25,.5,.75,1].map(f => `<span>${fmtMs(span*f)}</span>`).join('');
@@ -637,13 +647,10 @@ document.getElementById('overlay').onclick = closeDrawer;
 
 /* ── execution-level console & network (secondary, aggregated) ──
    Tab badges come from the precomputed counts; the entries themselves load
-   on first open of either tab (all detail shards, rendered together).
-   NET_CTX is shared with the drawer's network pane; whichever list rendered
-   last owns the copy buttons — only one list is interactable at a time, and
-   every render (filter/search/open) refreshes it. */
+   on first open of either tab (all detail shards, rendered together). */
 (function globalBadges(){
   let c = 0, n = 0;
-  T.forEach(t => { const k = nCounts(t); c += k.console; n += k.network; });
+  T.forEach(t => { c += t.counts.console; n += t.counts.network; });
   document.getElementById('ccount').textContent = c;
   document.getElementById('ncount').textContent = n;
   document.getElementById('gconlist').innerHTML = '<div class="empty">Loading detail data…</div>';
@@ -656,65 +663,18 @@ function ensureGlobalViews(){
     .then(fails => initGlobalViews(fails.reduce((a, b) => a + b, 0)));
 }
 function initGlobalViews(missing){
+  const $ = id => document.getElementById(id);
   if (missing){
     const note = `<div class="dropnote">Detail for ${missing} test(s) could not be loaded (missing shard files).</div>`;
-    document.getElementById('gconlist').insertAdjacentHTML('beforebegin', note);
-    document.getElementById('gnetlist').insertAdjacentHTML('beforebegin', note);
+    $('gconlist').insertAdjacentHTML('beforebegin', note);
+    $('gnetlist').insertAdjacentHTML('beforebegin', note);
   }
   const bySeq = (a, b) => (a.e.ts ?? 0) - (b.e.ts ?? 0) || (a.e.seq ?? 0) - (b.e.seq ?? 0);
   const CON = T.flatMap((t, i) => (t.console || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
   const NET = T.flatMap((t, i) => (t.network || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
-
-  /* console */
-  const n = l => CON.filter(x => lvlOf(x.e) === l).length;
-  document.getElementById('gconchips').innerHTML =
-    [['error','Errors'], ['warning','Warnings'], ['info','Info'], ['debug','Debug']]
-      .map(([l, lbl]) => `<span class="fchip gcf" data-cf="${l}">${lbl}<span class="n">${n(l)}</span></span>`).join('');
-  let clvl = '', cq = '', cshown = 200;
-  const renderCon = () => {
-    const keep = CON.filter(x => (!clvl || lvlOf(x.e) === clvl) &&
-      (!cq || (x.e.text + ' ' + (x.e.location || '')).toLowerCase().includes(cq)));
-    document.getElementById('gconlist').innerHTML =
-      keep.slice(0, cshown).map(x => conRowHtml(x.e, x.t0, x.i)).join('') ||
-      '<div class="empty">No matching console entries.</div>';
-    if (keep.length > cshown)
-      document.getElementById('gconlist').innerHTML +=
-        `<button class="showmore" id="gconmore">Show more (${keep.length - cshown} hidden)</button>`;
-    const more = document.getElementById('gconmore');
-    if (more) more.onclick = () => { cshown += 400; renderCon(); };
-  };
-  document.querySelectorAll('.gcf').forEach(ch => ch.onclick = () => {
-    clvl = clvl === ch.dataset.cf ? '' : ch.dataset.cf;
-    document.querySelectorAll('.gcf').forEach(x => x.classList.toggle('on', x.dataset.cf === clvl));
-    renderCon();
-  });
-  document.getElementById('gconsearch').addEventListener('input', e => { cq = e.target.value.toLowerCase(); cshown = 200; renderCon(); });
-  renderCon();
-
-  /* network */
-  document.getElementById('gnetsum').innerHTML = netSummaryHtml(NET.map(x => x.e));
-  const cnt = c => c === '' ? NET.length : c === 'bad' ? NET.filter(x => !x.e.ok).length : NET.filter(x => catOf(x.e) === c).length;
-  document.getElementById('gnetchips').innerHTML = NET_CATS.filter(([c]) => cnt(c)).map(([c, lbl]) =>
-    `<span class="fchip gnf${c === '' ? ' on' : ''}" data-nf="${c}">${lbl}<span class="n">${cnt(c)}</span></span>`).join('');
-  let ncat = '', nq = '', nshown = 150;
-  const renderNet = () => {
-    const keep = NET.filter(x => (ncat === '' || (ncat === 'bad' ? !x.e.ok : catOf(x.e) === ncat)) &&
-      (!nq || x.e.url.toLowerCase().includes(nq)));
-    NET_CTX = keep.map(x => x.e);
-    const rows = keep.slice(0, nshown).map((x, i) => netRowHtml(x.e, x.t0, i, x.i)).join('');
-    document.getElementById('gnetlist').innerHTML =
-      rows ? netHeadHtml(true) + rows : '<div class="empty">No matching requests.</div>';
-    if (keep.length > nshown)
-      document.getElementById('gnetlist').innerHTML +=
-        `<button class="showmore" id="gnetmore">Show more (${keep.length - nshown} hidden)</button>`;
-    const more = document.getElementById('gnetmore');
-    if (more) more.onclick = () => { nshown += 400; renderNet(); };
-  };
-  document.querySelectorAll('.gnf').forEach(ch => ch.onclick = () => {
-    ncat = ch.dataset.nf;
-    document.querySelectorAll('.gnf').forEach(x => x.classList.toggle('on', x === ch));
-    renderNet();
-  });
-  document.getElementById('gnetsearch').addEventListener('input', e => { nq = e.target.value.toLowerCase(); nshown = 150; renderNet(); });
-  renderNet();
+  consoleView({items: CON, list: $('gconlist'), chipsHost: $('gconchips'), search: $('gconsearch'),
+               group: false, pageSize: 200, cls: 'gcf'});
+  $('gnetsum').innerHTML = netSummaryHtml(NET.map(x => x.e));
+  networkView({items: NET, list: $('gnetlist'), chipsHost: $('gnetchips'), search: $('gnetsearch'),
+               sortSel: null, ctx: 'global', pageSize: 150, withTest: true, cls: 'gnf'});
 }
