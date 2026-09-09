@@ -9,6 +9,7 @@ Thumbs.db
 
 # Claude
 claude-*.log
+.claude/
 docs/superpowers/
 
 # External tool builders
