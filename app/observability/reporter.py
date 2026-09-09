@@ -120,6 +120,16 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
         rec["error"] = s["msg"]
     if s.get("screenshot") and rec["status"] != "skipped":
         rec["attachment"] = s["screenshot"]
+    # Verb + argument text for the drawer. The argument comes from the raw
+    # step text (already secret-masked by the engine), never from the
+    # resolved action args.
+    if action := s.get("action"):
+        rec["action"] = action
+        raw = rec["name"]
+        if raw.lower().startswith(action.lower()):
+            rec["args"] = raw[len(action):].lstrip(" :").strip()
+    if (layer := s.get("layer")) and rec["status"] != "skipped":
+        rec["layer"] = int(layer)
     return rec
 
 
@@ -285,6 +295,15 @@ def _route_events(entries: list[dict], starts: list[tuple[int, int]],
 _STATUS_MAP = {"passed": "passed", "failed": "failed", "error": "error", "skipped": "skipped"}
 
 
+def _markers(r: dict, section: str | None) -> list[str]:
+    """File-wide markers plus the ones declared under *section*, de-duplicated."""
+    names = list(r.get("flow_markers") or [])
+    for name in (r.get("section_markers") or {}).get(section or "", []):
+        if name not in names:
+            names.append(name)
+    return names
+
+
 def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> dict:
     nodeid = r.get("nodeid", "")
     file = nodeid.split("::")[0] if "::" in nodeid else nodeid
@@ -292,13 +311,23 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
     status = _STATUS_MAP.get(r.get("outcome", ""), "failed")
     started_at = r.get("started_at") or ""
     flow_steps = r.get("flow_steps") or []
+    if runs is None:
+        runs = _section_runs(flow_steps)
+    # A file with a single named ## section is one test: the heading is the
+    # test, the # title is the suite — so the two never repeat each other.
+    # The generic "Steps" heading carries no meaning; keep the flow name.
+    sections = {sec for sec, _ in runs if sec}
+    section = next(iter(sections)) if len(sections) == 1 else None
+    if section and section.lower() != "steps":
+        name = section
 
     test: dict[str, Any] = {
         "id": nodeid,
         "name": name,
         "title": name,
         "file": file,
-        "markers": [],
+        "file_title": r.get("flow_title") or None,
+        "markers": _markers(r, section),
         "status": status,
         "started_at": started_at,
         "duration_ms": round((r.get("duration") or 0.0) * 1000, 1),
@@ -355,8 +384,8 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "name": name,
         "title": name,
         "file": file,
-        "flow": r.get("name") or "",
-        "markers": [],
+        "file_title": r.get("flow_title") or None,
+        "markers": _markers(r, name),
         "status": status,
         "started_at": started_iso,
         "t0": t0,

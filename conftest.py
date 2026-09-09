@@ -1,8 +1,9 @@
 """
 Shared pytest fixtures and hooks for the Web AI Agent runtime.
 
-Auto-discovery: .md flow files under tests/<app>/flows/ are collected automatically
-by pytest_collect_file — no test_*.py files needed.
+Auto-discovery: every .md file pytest traverses (testpaths, or any path given
+on the command line) is collected as a flow by pytest_collect_file — no
+test_*.py files needed. tests/<app>/flows/ is the convention, not a rule.
 """
 
 from __future__ import annotations
@@ -56,12 +57,21 @@ class ProfessionalReportPlugin:
 
     def __init__(self) -> None:
         self.results: list[dict] = []
+        self.flow_meta: dict[str, dict] = {}
         self.flow_steps: dict[str, list[dict]] = {}
         self.flow_errors: dict[str, str] = {}
         self.captures: dict[str, dict] = {}
         self.session_start = time.time()
         self.report_path: Path | None = None
         self.json_path: Path | None = None
+
+    def record_flow(self, nodeid: str, flow: FlowDefinition) -> None:
+        """Suite-level facts the report needs: the file's # title and markers."""
+        self.flow_meta[nodeid] = {
+            "flow_title": flow.title,
+            "flow_markers": list(flow.markers),
+            "section_markers": {k: list(v) for k, v in flow.section_markers.items()},
+        }
 
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
@@ -77,6 +87,7 @@ class ProfessionalReportPlugin:
         self.flow_steps[nodeid] = [
             {
                 "name": s.action.raw,
+                "action": s.action.type.value,
                 "passed": s.success,
                 "skipped": getattr(s, "skipped", False),
                 "msg": "" if s.success else s.message,
@@ -118,6 +129,7 @@ class ProfessionalReportPlugin:
             return
         for r in self.results:
             nodeid = r["nodeid"]
+            r.update(self.flow_meta.get(nodeid, {}))
             r["error"] = self.flow_errors.get(nodeid, "")
             r["flow_steps"] = self.flow_steps.get(nodeid, [])
             capture = self.captures.get(nodeid, {})
@@ -217,7 +229,9 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     try:
         session.config._webagent_provider = get_provider()
     except ConfigError as exc:
-        raise pytest.UsageError(f"{exc} — set AI_PROVIDER, LLM_KEY and LLM_MODEL, or none of them") from exc
+        raise pytest.UsageError(
+            f"{exc} — set them alongside AI_PROVIDER, or leave AI_PROVIDER empty to disable L3"
+        ) from exc
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -363,11 +377,12 @@ def pytest_collection_modifyitems(
 
 # ── .md flow auto-discovery ────────────────────────────────────
 #
-# pytest_collect_file is called for every file pytest traverses.
-# When it finds a .md file inside a "flows" directory it creates a
-# FlowFile node, which in turn yields one FlowItem per flow file.
-# FlowItem.runtest() launches its own Playwright browser so no
-# test_*.py file is needed — just drop a .md file in tests/<app>/flows/.
+# pytest_collect_file is called for every file pytest traverses. Every
+# .md file becomes a FlowFile node, which yields one FlowItem per flow
+# file. Where the file lives does not matter: plain `pytest` walks
+# `testpaths` (tests/), and `pytest path/to/any.md` collects that file
+# from anywhere. FlowItem.runtest() drives the session browser, so no
+# test_*.py file is needed.
 
 
 def _set_lambdatest_status(page, success: bool, error: str = "") -> None:
@@ -410,6 +425,8 @@ class FlowItem(pytest.Item):
         self.user_properties.append((FLOW_FILE_PROP, file_part))
         self.user_properties.append((FLOW_NAME_PROP, self.flow.name))
         plugin = self.config.pluginmanager.get_plugin("professional_report")
+        if plugin:
+            plugin.record_flow(self.nodeid, self.flow)
         result: FlowResult | None = None
 
         with self.config._webagent_browser.page(self.flow.name) as page:
@@ -503,8 +520,8 @@ class FlowFile(pytest.File):
 
 
 def pytest_collect_file(parent, file_path: Path):
-    """Hook: turn every .md file in a flows/ directory (tests/<app>/flows/) into a test."""
-    if file_path.suffix == ".md" and "flows" in file_path.parts:
+    """Hook: turn every .md file pytest traverses into a flow test, wherever it lives."""
+    if file_path.suffix.lower() == ".md":
         # Skip auto-discovery when --flow_file explicitly targets this file —
         # the injection in pytest_collection_modifyitems will handle it.
         explicit = parent.config.getoption("--flow_file", default=None)

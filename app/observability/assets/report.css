@@ -134,7 +134,9 @@ select{background:var(--card);border:1px solid var(--border);border-radius:9px;p
 .filehead:hover{background:var(--card2)}
 .filehead .arrow{color:var(--muted);font-size:10px;transition:transform .12s}
 .filegrp.closed .arrow{transform:rotate(-90deg)}
-.filehead .fp{font:600 12.5px var(--mono)}
+.filehead .fp{font:600 13.5px var(--sans);min-width:0}
+.filehead .fp.path{font:600 12.5px var(--mono)}
+.filehead .fpsub{display:block;font:400 10.5px var(--mono);color:var(--muted);margin-top:1px}
 .filehead .sum{margin-left:auto;display:flex;gap:12px;font:12px var(--mono)}
 .filehead .sum .ok{color:var(--pass)} .filehead .sum .ko{color:var(--fail)} .filehead .sum .t{color:var(--muted)}
 .filegrp.closed .trows{display:none}
@@ -178,6 +180,9 @@ select{background:var(--card);border:1px solid var(--border);border-radius:9px;p
 .slabel{font-weight:700;font-size:12.5px;margin-right:6px;white-space:nowrap}
 .srow.failed .slabel,.srow.failed .sname{color:var(--fail)}
 .hook{color:var(--muted);margin-right:5px}
+.sverb{font-weight:600} .sargs{color:var(--muted);font:12.5px var(--mono);margin-left:7px;word-break:break-all}
+.srow.failed .sargs{color:var(--fail)}
+.slayer{font:700 10px var(--mono);color:var(--accent);background:var(--accent-bg);border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle}
 .sdur{color:var(--muted);font:11.5px var(--mono);margin-left:8px;white-space:nowrap}
 .sthumb{width:120px;max-height:90px;object-fit:cover;border:1px solid var(--border);border-radius:6px;display:block;margin-top:6px}
 .sgroup{margin:2px 0}

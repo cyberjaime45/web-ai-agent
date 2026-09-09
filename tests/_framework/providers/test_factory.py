@@ -51,14 +51,38 @@ def test_factory_raises_on_missing_model():
             get_provider()
 
 
-def test_factory_raises_on_missing_provider():
-    from app.layers.providers import ConfigError, get_provider
+@pytest.mark.parametrize("provider", ["", "   ", None])
+def test_factory_disables_l3_when_provider_is_blank_even_with_key_and_model(provider):
+    """AI_PROVIDER is the switch: a leftover key/model must not block startup."""
+    from app.layers.providers import get_provider
     with patch(
         "app.layers.providers.settings",
-        _stub_settings(key="k", model="m"),
+        _stub_settings(provider=provider, key="k", model="m"),
     ):
-        with pytest.raises(ConfigError, match="AI_PROVIDER"):
-            get_provider()
+        assert get_provider() is None
+
+
+def test_factory_names_every_missing_var_once_provider_is_set():
+    from app.layers.providers import ConfigError, get_provider
+    with (
+        patch("app.layers.providers.settings", _stub_settings(provider="openai")),
+        pytest.raises(
+            ConfigError, match=r"AI_PROVIDER is configured but missing: LLM_KEY, LLM_MODEL$"
+        ),
+    ):
+        get_provider()
+
+
+def test_factory_treats_whitespace_key_and_model_as_missing():
+    from app.layers.providers import ConfigError, get_provider
+    with (
+        patch(
+            "app.layers.providers.settings",
+            _stub_settings(provider="openai", key="  ", model="\t"),
+        ),
+        pytest.raises(ConfigError, match="missing: LLM_KEY, LLM_MODEL"),
+    ):
+        get_provider()
 
 
 def test_factory_raises_on_invalid_provider_name():

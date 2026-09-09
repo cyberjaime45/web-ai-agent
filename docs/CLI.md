@@ -10,7 +10,7 @@ browser, LambdaTest and AI configuration.
 
 ```bash
 # Run a flow file
-uv run python main.py run tests/wheelsup_site/flows/home_page.md
+uv run python main.py run tests/marketing_site/flows/home_page.md
 
 # Run inline Markdown
 uv run python main.py run --inline '# Smoke
@@ -20,7 +20,7 @@ uv run python main.py run --inline '# Smoke
 '
 
 # Override the report environment (screenshots go to reports/qa1/images)
-uv run python main.py run tests/wheelsup_site/flows/home_page.md --env qa1
+uv run python main.py run tests/marketing_site/flows/home_page.md --env qa1
 ```
 
 ## Exit codes
@@ -41,7 +41,7 @@ for parent agents in a multi-agent system:
 import json, subprocess
 
 proc = subprocess.run(
-    ["uv", "run", "python", "main.py", "run", "tests/wheelsup_site/flows/home_page.md", "--json"],
+    ["uv", "run", "python", "main.py", "run", "tests/marketing_site/flows/home_page.md", "--json"],
     capture_output=True, text=True,
 )
 result = json.loads(proc.stdout)   # FlowResult dict

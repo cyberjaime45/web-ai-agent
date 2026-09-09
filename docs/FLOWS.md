@@ -1,9 +1,10 @@
 # Writing Flows
 
-Flow files are plain Markdown. They live beside the suite for the application
-they exercise: `tests/<app>/flows/*.md`, with shared sub-flows in that app's
-`components/` folder. pytest collects every `.md` under a `flows/` directory —
-no `test_*.py` needed.
+Flow files are plain Markdown. By convention they live beside the suite for
+the application they exercise: `tests/<app>/flows/*.md`, with shared sub-flows
+in that app's `components/` folder. The location is not enforced: pytest
+collects every `.md` it traverses — everything under `tests/` on a plain
+`pytest`, or any file you pass by path — no `test_*.py` needed.
 
 For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
 
@@ -30,12 +31,18 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
 - Page displays "Welcome back"
 ```
 
-- **`# Title`** — the flow name shown in the console and the report.
+- **`# Title`** — the suite name: the console shows it, and the report groups
+  the file's tests under it with the path as secondary text. Without an H1
+  the file name is used.
 - **`## Config`** — `timeout` (ms) sets the page's default timeout for waits and assertions. Default 30000.
 - **Every other `## section`** is a run of steps. Section names are free-form
   (`## Login`, `## Home Page`, `## Steps`); each section becomes its own test
   in the report, and a failure stops the rest of that section only — execution
   resumes at the next section.
+- **`markers: smoke, regression`** — a plain line (not a list item) tagging
+  tests for the report's marker filter and drawer. Before the first `##` it
+  applies to every test in the file; under a `##` heading it applies to that
+  test only. Markers are report metadata: they do not drive `pytest -m`.
 - **`## Credentials`, `## Expected Outcome`, `## Error Scenarios`, `## Notes`**
   are metadata sections kept for humans; the runner does not execute them.
   Put real secrets in `.env` and reference them with `<NAME>` placeholders,
@@ -164,7 +171,7 @@ parent step in the report, and nesting may go ten levels deep.
 
 ```bash
 uv run pytest tests/fms/flows/production_smoke.md      # by path
-uv run pytest --flow_file path/to/any_flow.md           # any .md, anywhere
+uv run pytest --flow_file=path/to/any_flow.md           # any .md, even outside the repo
 uv run pytest --flow "# Smoke
 ## Steps
 1. goto: \"https://example.com\"

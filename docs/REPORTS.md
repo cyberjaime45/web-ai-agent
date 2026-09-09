@@ -2,10 +2,20 @@
 
 ## Console output
 
-Every finished test prints one named line under its file, and the run ends
-with an execution summary and the report paths:
+The session opens with the banner — version, author, build name, and the
+environment label — then pytest's own header. Every finished test prints one
+named line under its file with its duration and the running completion
+percentage on the right, and the run ends with an execution summary and the
+report paths:
 
 ```
+                     Version: 1.0.0
+                 Created by: Cyberjaime45
+                 Build: Web Test Report
+              staging · chromium · headless
+
+============================ test session starts ===========================
+...
 tests/fms/flows/production_smoke.md
   ✓ production_smoke.md » FMS MVC Smoke Tests  3m00s                     [ 50%]
 
@@ -62,8 +72,17 @@ zip it and it opens anywhere.
 
 The report includes:
 
-- Each `## section` of a flow file shown as its own test with status, duration, and steps
-- A right-side drawer per test with Console and Network tabs
+- A flow file shown as a suite named by its `# H1` (`Home Page`), with the
+  source path underneath as secondary text; a file without an H1 is labelled
+  by its path. Each `## section` is its own test row under that header, with
+  status, markers, duration, and steps — totals count these tests, not files
+- A right-side drawer per test: status, then suite, file, test, duration,
+  start time, reruns, and markers, then the steps in order — action verb and
+  argument, L2/L3 chip when the fallback chain resolved the step, duration,
+  the error card at the failing step, and a clickable screenshot thumbnail —
+  followed by Console and Network tabs. Clicking another test updates the
+  same drawer; `✕`, `Esc`, or the backdrop closes it, and search/filter state
+  is untouched
 - Console messages (all levels) with level filters, search, repeat grouping, and source locations
 - Network requests with method/status/type/duration/size, filters (Failed/XHR/Doc/JS/CSS/Img), search, sorting, expandable headers/payloads, and Copy cURL/URL actions
 - Console errors and network activity routed to the section and step where they occurred

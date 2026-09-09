@@ -47,11 +47,21 @@ class UnknownActionError(FlowParseError):
 
 @dataclass
 class FlowDefinition:
-    """Structured representation of a test flow."""
+    """Structured representation of a test flow.
+
+    One file is a suite: ``title`` is its ``# H1`` (None when the file has
+    none — ``name`` then falls back to the file stem), and every non-metadata
+    ``## section`` is a test of its own in the report. ``markers`` are the
+    file-wide ``markers:`` tags; ``section_markers`` the ones declared under
+    a specific ``##`` heading.
+    """
 
     name:    str
     timeout: int = 30000
     actions: list[FlowAction] = field(default_factory=list)
+    title:   str | None = None
+    markers: list[str] = field(default_factory=list)
+    section_markers: dict[str, list[str]] = field(default_factory=dict)
 
 
 # ── Section extraction ────────────────────────────────────────────────────────
@@ -62,6 +72,8 @@ _METADATA_SECTIONS = frozenset({
 })
 
 _H2_RE = re.compile(r"(?:^|\n)##\s+(.+?)\s*(?=\n)", re.MULTILINE)
+# `markers: smoke, regression` — a tag line, not a step (never a list item).
+_MARKERS_RE = re.compile(r"^\s*markers?\s*:\s*(?P<names>[\w\s,-]+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def _items_from_section(section_text: str) -> list[str]:
@@ -81,6 +93,23 @@ def _items_from_section(section_text: str) -> list[str]:
     return items
 
 
+def _sections(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """Split a flow into ``(preamble, [(heading, body), ...])`` by ``##`` heading.
+
+    The preamble is everything before the first ``##`` (title, prose,
+    file-wide ``markers:``). Bodies run up to the next heading or EOF.
+    """
+    headers = [(m.start(), m.group(1).strip()) for m in _H2_RE.finditer(text)]
+    if not headers:
+        return text, []
+    sections: list[tuple[str, str]] = []
+    for idx, (start, heading) in enumerate(headers):
+        content_start = text.index("\n", start) + 1
+        content_end = headers[idx + 1][0] if idx + 1 < len(headers) else len(text)
+        sections.append((heading, text[content_start:content_end]))
+    return text[:headers[0][0]], sections
+
+
 def _all_action_sections(text: str) -> list[tuple[str, str]]:
     """Return ``(section_name, item_text)`` pairs from all non-metadata sections.
 
@@ -88,22 +117,23 @@ def _all_action_sections(text: str) -> list[tuple[str, str]]:
     an action section.  This allows flow authors to use descriptive section
     names like ``## Login``, ``## FMS MCV Page``, or ``## Steps``.
     """
-    headers = [(m.start(), m.group(1).strip()) for m in _H2_RE.finditer(text)]
-    if not headers:
-        return []
+    return [
+        (heading, item)
+        for heading, body in _sections(text)[1]
+        if heading.lower() not in _METADATA_SECTIONS
+        for item in _items_from_section(body)
+    ]
 
-    items: list[tuple[str, str]] = []
-    for idx, (start, heading) in enumerate(headers):
-        if heading.lower() in _METADATA_SECTIONS:
-            continue
-        # Extract content between this heading and the next (or EOF)
-        content_start = text.index("\n", start) + 1
-        content_end = headers[idx + 1][0] if idx + 1 < len(headers) else len(text)
-        section_text = text[content_start:content_end]
-        for item in _items_from_section(section_text):
-            items.append((heading, item))
 
-    return items
+def _marker_names(block: str) -> list[str]:
+    """Every tag from the ``markers:`` lines in a block, in order, de-duplicated."""
+    names: list[str] = []
+    for m in _MARKERS_RE.finditer(block):
+        for name in m.group("names").split(","):
+            name = name.strip()
+            if name and name not in names:
+                names.append(name)
+    return names
 
 
 def _section_lines(text: str, header: str) -> list[str]:
@@ -288,10 +318,19 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
     """
     flow = FlowDefinition(name=name)
 
-    # H1 heading → flow name
+    # H1 heading → suite title and flow name (name keeps the fallback otherwise)
     h1 = re.match(r"^#\s+(.+)$", text, re.MULTILINE)
     if h1:
-        flow.name = h1.group(1).strip()
+        flow.title = flow.name = h1.group(1).strip()
+
+    # ── markers: file-wide before the first ##, per test under its heading ──
+    preamble, sections = _sections(text)
+    flow.markers = _marker_names(preamble)
+    for heading, body in sections:
+        if heading.lower() in _METADATA_SECTIONS:
+            continue
+        if names := _marker_names(body):
+            flow.section_markers[heading] = names
 
     # ── Config: only `timeout` is consumed (page default timeout) ──
     for line in _section_lines(text, "Config"):
@@ -338,10 +377,8 @@ def load_all_flows(flows_dir: Path | str = "tests") -> dict[str, FlowDefinition]
 
 
 if __name__ == "__main__":
-    from rich import print as rprint
-
     all_flows = load_all_flows()
     for f in all_flows.values():
-        rprint(f"\n[bold cyan]{f.name}[/bold cyan]  ({len(f.actions)} actions)")
+        print(f"\n{f.name}  ({len(f.actions)} actions)")
         for act in f.actions:
-            rprint(f"  {act.step_num:>2}. {act.type.value:<20} {act.args}")
+            print(f"  {act.step_num:>2}. {act.type.value:<20} {act.args}")

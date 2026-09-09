@@ -22,7 +22,7 @@ const T = DATA.tests, TOT = DATA.totals, ENV = DATA.environment;
 T.forEach((t, i) => {
   t._i = i;
   t._title = esc(t.title || t.name);
-  t._hay = [t.title, t.name, t.file, t.error && t.error.message, ...(t.markers||[])].join(' ').toLowerCase();
+  t._hay = [t.title, t.name, t.file, t.file_title, t.error && t.error.message, ...(t.markers||[])].join(' ').toLowerCase();
   t._startMs = t.started_at ? new Date(t.started_at).getTime() : null;
 });
 const titleOf = t => t._title;
@@ -140,7 +140,7 @@ document.getElementById('foot').textContent =
     ? fails.map(t => `<div class="failcard" onclick="openTest(${t._i})">
         <div class="fname">${titleOf(t)} ${(t.markers||[]).map(m=>`<span class="chiplet">${esc(m)}</span>`).join(' ')}</div>
         <div class="ferr">${esc((t.error && t.error.message || '').split('\n')[0])}</div>
-        <div class="ffile">${esc(t.file)}</div></div>`).join('')
+        <div class="ffile">${t.file_title ? `${esc(t.file_title)} · ` : ''}${esc(t.file)}</div></div>`).join('')
     : `<div class="estate"><div class="ecirc">🛡</div>
        <div class="ehead">No failures 🎉</div>
        <div class="esub">All tests passed successfully.</div></div>`;
@@ -253,9 +253,15 @@ function renderTests(){
   document.getElementById('tests').innerHTML = keep.length ? Object.entries(groups).map(([file, ts]) => {
     const ok = ts.filter(t => !failedLike(t.status)).length, ko = ts.length - ok;
     const time = ts.reduce((n,t) => n + t.duration_ms, 0);
+    // A flow file is a suite: its # title leads and the path is secondary.
+    // Files without a title (or non-flow tests) keep the path as the label.
+    const ftitle = (ts.find(t => t.file_title) || {}).file_title;
+    const flabel = ftitle
+      ? `<span class="fp">${esc(ftitle)}<span class="fpsub">${esc(file)}</span></span>`
+      : `<span class="fp path">${esc(file)}</span>`;
     return `<div class="filegrp">
       <div class="filehead" onclick="this.parentElement.classList.toggle('closed')">
-        <span class="arrow">▼</span><span class="fp">${esc(file)}</span>
+        <span class="arrow">▼</span>${flabel}
         <span class="sum"><span class="ok">✓ ${ok}</span>${ko ? `<span class="ko">✕ ${ko}</span>` : ''}<span class="t">${fmtMs(time)}</span></span>
       </div>
       <div class="trows">${ts.map(t => `
@@ -303,6 +309,13 @@ function stepErr(t, n, errStep){
 function stepIcon(status){
   return status === 'failed' ? '✕' : status === 'skipped' ? '»' : '✓';
 }
+function stepName(s){
+  // Flow steps carry the action verb and its (secret-masked) argument text;
+  // anything else (groups, legacy data) shows its raw name.
+  const layer = s.layer > 1 ? `<span class="slayer" title="resolved by layer ${s.layer}">L${s.layer}</span>` : '';
+  if (!s.action) return `<span class="sname">${esc(s.name)}</span>${layer}`;
+  return `<span class="sname"><span class="sverb">${esc(s.action)}</span>${s.args ? `<span class="sargs">${esc(s.args)}</span>` : ''}</span>${layer}`;
+}
 function stepNodes(t, nodes, nested, errStep){
   return nodes.map((n, i) => {
     const s = n.step;
@@ -320,7 +333,7 @@ function stepNodes(t, nodes, nested, errStep){
     }
     return `<div class="srow ${s.status}">
       <span class="sicon ${s.status}">${stepIcon(s.status)}</span>
-      <div class="smain">${label}${nested ? '<span class="hook">↳</span>' : ''}<span class="sname">${esc(s.name)}</span>${dur}${shotThumb(s)}${err}</div>
+      <div class="smain">${label}${nested ? '<span class="hook">↳</span>' : ''}${stepName(s)}${dur}${shotThumb(s)}${err}</div>
     </div>`;
   }).join('');
 }
@@ -559,8 +572,9 @@ function openTest(i){
       <div class="dtitle"><span class="badge ${effStatus(t)}">${effStatus(t)}</span><h2 id="dtitle">${titleOf(t)}</h2>
         <button class="iconbtn" onclick="closeDrawer()" aria-label="Close details">✕</button></div>
       <div class="dmeta">
+        ${t.file_title ? `<div><span>suite </span><b>${esc(t.file_title)}</b></div>` : ''}
         <div><span>file </span><b>${esc(t.file)}</b></div>
-        ${t.flow ? `<div><span>flow </span><b>${esc(t.flow)}</b></div>` : `<div><span>test </span><b>${esc(t.name)}</b></div>`}
+        <div><span>test </span><b>${esc(t.name)}</b></div>
         <div><span>duration </span><b>${fmtMs(t.duration_ms)}</b></div>
         <div><span>started </span><b>${t.started_at ? new Date(t.started_at).toLocaleTimeString() : '—'}</b></div>
         ${t.retries ? `<div><span>reruns </span><b>${t.retries}</b></div>` : ''}

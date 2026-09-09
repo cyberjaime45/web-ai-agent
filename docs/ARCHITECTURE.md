@@ -56,8 +56,8 @@ or dynamic pages, and the exclusive runtime for AI-native actions
 
 `app/config/settings.py` loads `.env` and is the only place environment
 variables are read; pytest and the CLI therefore see identical configuration.
-Partial L3 configuration (one or two of the three AI variables) is a startup
-error, not a per-test one.
+L3 is switched on by `AI_PROVIDER` alone: empty or missing disables it, and a
+named provider without `LLM_KEY`/`LLM_MODEL` is a startup error, not a per-test one.
 
 Under pytest, one Playwright driver and browser serve the whole session and
 each flow gets a fresh `BrowserContext` — that is where cookie and storage
@@ -119,12 +119,12 @@ web-agent/
 │   │   ├── recorder.py             # Per-test console + network capture
 │   │   └── reporter.py             # HTML + JSON report generator
 │   └── utils/
-│       ├── banner.py               # Terminal startup banner (Rich)
+│       ├── banner.py               # Terminal startup banner (plain text, green on a TTY)
 │       └── build.py                # BUILD_NAME resolution + slug
 │
 ├── tests/
 │   ├── framework/                  # The runtime's own self-tests (no browser)
-│   ├── wheelsup_site/flows/        # One suite per application under test
+│   ├── marketing_site/flows/        # One suite per application under test
 │   ├── members_site/flows/         #   … with shared sub-flows in components/
 │   └── fms/flows/
 │
@@ -138,15 +138,11 @@ engine.
 
 ## Terminal banner
 
-Displayed at the start of every pytest session, including the build name.
-Customise in `app/utils/banner.py`:
-
-```python
-BANNER_CONFIG = {
-    "version":     "1.0",
-    "author":      "Cyberjaime45",
-    "ascii_title": "...",      # any multi-line ASCII art string
-    "title_color": "dark_cyan",
-    "meta_color":  "dark_cyan",
-}
-```
+Displayed once at the start of every pytest session, before pytest's own
+`test session starts` header. Same renderer as Astra: the art plus four
+lines — `Version`, `Created by`, `Build` (the `BUILD_NAME` label), and the
+environment label `env · browser · mode[ · lambda]` — centered to the
+terminal width and green when stdout is a TTY. No Rich or other rendering
+dependency. Change the art, `APP_VERSION`, or `CREATED_BY` in
+`app/utils/banner.py`; the build and environment lines come from
+`BUILD_NAME` and `Settings.run_label()`.

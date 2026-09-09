@@ -4,7 +4,7 @@ Replaces pytest's dot-per-test progress with output that names what just ran:
 
     tests/fms/flows/production_smoke.md
       ✓ production_smoke.md » FMS MVC Smoke Tests  3m00s
-    tests/framework/test_reporter.py
+    tests/_framework/test_reporter.py
       ✓ test_generate_report_html_references_assets  0.0s
 
 Everything is derived from data pytest already carries through its lifecycle

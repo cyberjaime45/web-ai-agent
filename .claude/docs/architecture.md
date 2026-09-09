@@ -4,9 +4,9 @@
 
 ```
 conftest.py
-  pytest_sessionstart  → banner, images dir, get_provider() once (UsageError on partial AI config),
+  pytest_sessionstart  → banner, images dir, get_provider() once (UsageError when AI_PROVIDER is set without key/model),
                          _SessionBrowser (Playwright driver + browser shared by the session)
-  pytest_collect_file  → FlowFile (.md under any flows/ dir) → FlowItem
+  pytest_collect_file  → FlowFile (any .md pytest traverses) → FlowItem
   FlowItem.runtest()   → _SessionBrowser.page(): fresh BrowserContext + Page (own grid session under lambda)
                        → PageRecorder.attach(page)
                        → FlowRunner(provider=<session provider>).run(flow, page)

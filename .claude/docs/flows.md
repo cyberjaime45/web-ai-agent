@@ -5,15 +5,19 @@ This file records what the parser and runner actually do.
 
 ## Location and discovery
 
-`tests/<app>/flows/*.md`, shared sub-flows in `tests/<app>/flows/components/`.
-`pytest_collect_file` collects any `.md` whose path contains a `flows` directory
-(components included — a component file is also a test on its own).
+`tests/<app>/flows/*.md` by convention, shared sub-flows in `tests/<app>/flows/components/`.
+`pytest_collect_file` collects any `.md` pytest traverses — everything under `testpaths`
+(`tests/`) or any path given on the command line (components included — a component
+file is also a test on its own).
 `--flow_file` runs any `.md` anywhere; `--flow` takes inline Markdown and needs at
 least one `## section` with steps, otherwise pytest exits with code 4.
 
 ## What the parser reads (`app/flow/parser.py`)
 
-- `# H1` → flow name (falls back to the file stem, or `inline`).
+- `# H1` → `title` (None without one) and flow `name` (falls back to the file stem, or `inline`).
+  The report uses `title` as the suite header (`file_title`) and the path as secondary text.
+- `markers:` / `marker:` lines (not list items) → `markers` (before the first `##`) and
+  `section_markers[heading]`; report-only metadata, merged per test by the reporter.
 - `## Config` → only `timeout` (ms; page default timeout, default 30000). Other keys are ignored.
 - Every other `## heading` **except** the metadata sections `config`, `credentials`,
   `expected outcome`, `error scenarios`, `notes` is a run of steps. The section name is
@@ -23,7 +27,7 @@ least one `## section` with steps, otherwise pytest exits with code 4.
 - Step pipeline: `_tokenize` (`keyword: rest` or bare keyword) → `_normalize`
   (`ActionType(keyword)`, split on `|`, unquote) → `_validate` (`ACTION_ARG_SPEC` arity —
   a known keyword with the wrong count **raises** `FlowParseError`) → `_build`.
-- `FlowDefinition` has exactly `name`, `timeout`, `actions`.
+- `FlowDefinition` has `name`, `timeout`, `actions`, `title`, `markers`, `section_markers`.
 
 ## Runtime semantics
 

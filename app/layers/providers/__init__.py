@@ -13,35 +13,25 @@ class ConfigError(Exception):
 _VALID_PROVIDERS = ("openai", "gemini", "anthropic")
 
 
-def _missing_vars(provider: str, key: str, model: str) -> list[str]:
-    missing: list[str] = []
-    if not provider:
-        missing.append("AI_PROVIDER")
-    if not key:
-        missing.append("LLM_KEY")
-    if not model:
-        missing.append("LLM_MODEL")
-    return missing
-
-
 def get_provider() -> LLMProvider | None:
     """Return the configured LLMProvider, or None if L3 is disabled.
 
-    L3 is disabled only when all three env vars (AI_PROVIDER, LLM_KEY,
-    LLM_MODEL) are unset. Any partial or invalid configuration raises
-    ConfigError with a message naming the problem.
+    AI_PROVIDER is the switch: unset, empty, or whitespace-only disables L3
+    regardless of LLM_KEY / LLM_MODEL. Once a provider is named, both
+    LLM_KEY and LLM_MODEL must be non-blank, and the name must be a known
+    provider — anything else raises ConfigError naming the problem.
     """
     provider = (settings.ai_provider or "").strip().lower()
     key      = (settings.llm_key or "").strip()
     model    = (settings.llm_model or "").strip()
 
-    if not provider and not key and not model:
+    if not provider:
         return None
 
-    missing = _missing_vars(provider, key, model)
+    missing = [name for name, value in (("LLM_KEY", key), ("LLM_MODEL", model)) if not value]
     if missing:
         raise ConfigError(
-            "Incomplete LLM configuration — missing: "
+            "Incomplete LLM configuration — AI_PROVIDER is configured but missing: "
             + ", ".join(missing)
         )
 

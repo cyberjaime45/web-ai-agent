@@ -14,10 +14,10 @@ from app.observability.reporter import (
 
 def make_step(label="click: \"Login\"", passed=True, skipped=False, msg="",
               duration=0.5, sub_flow="", section="", screenshot="", layer=1,
-              ts_start=0.0, ts_end=0.0):
+              ts_start=0.0, ts_end=0.0, action=None):
     return {
-        "label": label, "name": label, "passed": passed, "skipped": skipped,
-        "msg": msg, "duration": duration, "sub_flow": sub_flow,
+        "label": label, "name": label, "action": action, "passed": passed,
+        "skipped": skipped, "msg": msg, "duration": duration, "sub_flow": sub_flow,
         "section": section, "screenshot": screenshot, "layer": layer,
         "ts_start": ts_start, "ts_end": ts_end,
     }
@@ -31,10 +31,14 @@ def _json_report(report_dir):
 
 def make_result(nodeid="flows/login/sso.md::SSO Login", outcome="passed",
                 duration=2.5, longrepr="", error="", started_at="2026-07-28T10:00:00",
-                flow_steps=None, console=None, network=None):
+                flow_steps=None, console=None, network=None, flow_title=None,
+                flow_markers=None, section_markers=None):
     return {
         "nodeid": nodeid,
         "name": nodeid.split("::")[-1],
+        "flow_title": flow_title,
+        "flow_markers": flow_markers or [],
+        "section_markers": section_markers or {},
         "outcome": outcome,
         "duration": duration,
         "longrepr": longrepr,
@@ -144,6 +148,7 @@ def test_build_test_basic_fields():
     assert t["duration_ms"] == pytest.approx(2500.0)
     assert t["retries"] == 0
     assert t["markers"] == []
+    assert t["file_title"] is None
     assert "error" not in t
 
 
@@ -235,7 +240,8 @@ def test_split_produces_one_test_per_section():
         "flows/login/sso.md::s1", "flows/login/sso.md::s2", "flows/login/sso.md::s3",
     ]
     assert all(t["file"] == "flows/login/sso.md" for t in tests)
-    assert all(t["flow"] == "SSO Login" for t in tests)
+    assert all(t["file_title"] is None for t in tests)   # no # H1 → UI shows the path
+    assert "flow" not in tests[0]
     # steps are depth-0 within their section (no redundant section group)
     assert [s["depth"] for s in tests[0]["steps"]] == [0, 0]
     # failing section carries its own error + failed-step screenshot
@@ -484,3 +490,58 @@ def test_attribute_steps_uses_step_windows():
     entries = [{"ts": 10_200}, {"ts": 10_900}, {"ts": 11_400}, {"ts": 20_000}, {"ts": None}]
     _attribute_steps(entries, steps)
     assert [e.get("step") for e in entries] == ["a", "b", "c", None, None]
+
+
+# ── suite title, markers, and step detail ────────────────────────────────────
+
+def sectioned(title_steps):
+    """[(section, label)] → timestamped steps so the flow splits per section."""
+    return [make_step(label=label, section=sec, ts_start=BASE + i, ts_end=BASE + i + 1)
+            for i, (sec, label) in enumerate(title_steps)]
+
+
+def test_split_tests_carry_the_file_title_and_their_own_markers():
+    r = make_result(
+        nodeid="tests/marketing_site/flows/sample_run.md::Home Page",
+        flow_title="Home Page", flow_markers=["site"],
+        section_markers={"Test One": ["smoke"], "Test Two": ["another_tag"]},
+        flow_steps=sectioned([("Test One", 'goto: "/"'), ("Test Two", 'goto: "/"')]),
+    )
+    tests = _build_tests(r)
+    assert [(t["title"], t["file_title"], t["markers"]) for t in tests] == [
+        ("Test One", "Home Page", ["site", "smoke"]),
+        ("Test Two", "Home Page", ["site", "another_tag"]),
+    ]
+    assert all(t["file"] == "tests/marketing_site/flows/sample_run.md" for t in tests)
+
+
+def test_single_named_section_becomes_the_test_and_the_h1_the_suite():
+    r = make_result(nodeid="flows/login.md::Login", flow_title="Login",
+                    section_markers={"Valid Login": ["smoke"]},
+                    flow_steps=sectioned([("Valid Login", 'goto: "/"')]))
+    (t,) = _build_tests(r)
+    assert (t["title"], t["file_title"], t["markers"]) == ("Valid Login", "Login", ["smoke"])
+    assert t["id"] == "flows/login.md::Login"   # nodeid unchanged — one pytest item
+
+
+def test_generic_steps_section_keeps_the_flow_name_as_the_test_title():
+    r = make_result(nodeid="flows/login.md::Login", flow_title="Login",
+                    flow_markers=["smoke"],
+                    flow_steps=sectioned([("Steps", 'goto: "/"')]))
+    (t,) = _build_tests(r)
+    assert (t["title"], t["file_title"], t["markers"]) == ("Login", "Login", ["smoke"])
+
+
+def test_leaf_steps_expose_verb_argument_and_fallback_layer():
+    steps = _build_steps([
+        make_step(label='goto: "https://wheelsup.com/"', action="goto", layer=1),
+        make_step(label="wait_load", action="wait_load", layer=1),
+        make_step(label='click_link_text: "Accept All Cookies"', action="click_link_text", layer=2),
+        make_step(label="legacy row", action=None),
+        make_step(label='assert_text: "x"', action="assert_text", skipped=True, passed=False, layer=1),
+    ], "t")
+    assert (steps[0]["action"], steps[0]["args"]) == ("goto", '"https://wheelsup.com/"')
+    assert (steps[1]["action"], steps[1]["args"]) == ("wait_load", "")
+    assert steps[0]["layer"] == 1 and steps[2]["layer"] == 2   # UI chips only L2/L3
+    assert "action" not in steps[3]
+    assert "layer" not in steps[4]   # skipped steps never ran on any layer

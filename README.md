@@ -31,7 +31,7 @@ open reports/staging/report.html          # the report
 Flows live beside the suite for the application they exercise —
 `tests/<app>/flows/*.md`, shared sub-flows in `components/` — and pytest picks
 them up without any `test_*.py`. Run one inline with `--flow "<markdown>"`, or
-any file anywhere with `--flow_file path.md`.
+any file anywhere with `--flow_file=path.md`.
 
 ## Documentation
 
@@ -57,12 +57,12 @@ Copy `.env.example` to `.env`. Every variable is read once by
 | `HEADLESS` | `true` | `false` shows the browser, maximized |
 | `VIEWPORT` | `1920x1080` | Viewport size (`WIDTHxHEIGHT`) |
 | `SLOW_MO` | `0` | Milliseconds between actions, for debugging |
-| `AI_PROVIDER` | — | Layer 3 provider: `openai`, `gemini`, or `anthropic` |
+| `AI_PROVIDER` | — | Layer 3 provider: `openai`, `gemini`, or `anthropic`; empty disables L3 |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider |
 | `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network data |
 
-Layer 3 is optional: set all three AI variables to enable it, or none of them.
+Layer 3 is optional: it is enabled only when `AI_PROVIDER` is set, and then `LLM_KEY` and `LLM_MODEL` are required. An empty or missing `AI_PROVIDER` disables it.
 Setting only some is a startup error. Flow secrets never go in the flow file —
 reference environment variables as `<NAME>` in any step argument.
 
@@ -81,7 +81,7 @@ flow can be tightened up.
 ## Development
 
 ```bash
-uv run pytest tests/framework        # the runtime's own tests (no browser)
+uv run pytest tests/_framework        # the runtime's own tests (no browser)
 uv run ruff check app conftest.py main.py tests
 ```
 

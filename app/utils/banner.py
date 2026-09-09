@@ -1,58 +1,52 @@
-"""
-Startup banner for the Web Agent test runner.
+"""Startup banner printed once at the top of a pytest session.
 
-Edit BANNER_CONFIG to change the displayed values without touching
-the render logic.
+Ported from Astra's ``banner.py``: plain text centered to the terminal width,
+green when stdout is a TTY, no third-party rendering. Shows the version,
+the author, the run's build name, and the same environment label the
+execution summary ends with (``env · browser · mode[ · lambda]``).
 """
 
 from __future__ import annotations
 
-from rich.align import Align
-from rich.console import Console
-from rich.text import Text
+import shutil
+import sys
 
+from app.config.settings import settings
 from app.utils.build import get_build_name
 
-# ── Configuration ──────────────────────────────────────────────────────────
-# All user-facing values live here.  Swap ascii_title for any ASCII art
-# string you like — the layout will center it automatically.
+APP_VERSION = "1.0.0"
+CREATED_BY = "Cyberjaime45"
 
-BANNER_CONFIG: dict = {
-    "version":    "1.0",
-    "author":     "Cyberjaime45",
+_ART = (
+    "██╗    ██╗███████╗██████╗   █████╗  ██████╗ ███████╗███╗   ██╗████████╗\n"
+    "██║    ██║██╔════╝██╔══██╗ ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝\n"
+    "██║ █╗ ██║█████╗  ██████╔╝ ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   \n"
+    "██║███╗██║██╔══╝  ██╔══██╗ ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   \n"
+    "╚███╔███╔╝███████╗██████╔╝ ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   \n"
+    " ╚══╝╚══╝ ╚══════╝╚═════╝  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝  "
+)
 
-    # ASCII art title.  Replace with any multi-line string.
-    "ascii_title": (
-        "██╗    ██╗███████╗██████╗   █████╗  ██████╗ ███████╗███╗   ██╗████████╗\n"
-        "██║    ██║██╔════╝██╔══██╗ ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝\n"
-        "██║ █╗ ██║█████╗  ██████╔╝ ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   \n"
-        "██║███╗██║██╔══╝  ██╔══██╗ ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   \n"
-        "╚███╔███╔╝███████╗██████╔╝ ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   \n"
-        " ╚══╝╚══╝ ╚══════╝╚═════╝  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝  "
-    ),
+# Pad the art to one block width so centering can't skew the lines.
+_ART_WIDTH = max(len(line) for line in _ART.splitlines())
 
-    # Rich style strings — see https://rich.readthedocs.io/en/stable/style.html
-    "title_color": "dark_cyan",
-    "meta_color":  "dark_cyan",
-}
+_GREEN = "\033[32m"
+_RESET = "\033[0m"
 
 
-# ── Render ─────────────────────────────────────────────────────────────────
+def banner_text(*, color: bool = False, width: int | None = None) -> str:
+    """The banner centered to *width* (defaults to the terminal width)."""
+    width = width or shutil.get_terminal_size(fallback=(80, 24)).columns
+    lines = [
+        *(line.ljust(_ART_WIDTH) for line in _ART.splitlines()),
+        "",
+        f"Version: {APP_VERSION}",
+        f"Created by: {CREATED_BY}",
+        f"Build: {get_build_name()}",
+        settings.run_label(),
+    ]
+    text = "\n".join(line.center(width).rstrip() for line in lines)
+    return f"{_GREEN}{text}{_RESET}" if color else text
+
 
 def show_banner() -> None:
-    """Print the startup banner to stdout using Rich."""
-    cfg = BANNER_CONFIG
-    console = Console()
-
-    title   = Text(cfg["ascii_title"], style=cfg["title_color"], no_wrap=True)
-    version = Text(f"Version: {cfg['version']}",    style=cfg["meta_color"], justify="center")
-    author  = Text(f"Created by: {cfg['author']}", style=cfg["meta_color"], justify="center")
-    build   = Text(f"Build: {get_build_name()}",     style=cfg["meta_color"], justify="center")
-
-    console.print()
-    console.print(Align.center(title))
-    console.print()
-    console.print(Align.center(version))
-    console.print(Align.center(author))
-    console.print(Align.center(build))
-    console.print()
+    print(f"\n{banner_text(color=sys.stdout.isatty())}\n")

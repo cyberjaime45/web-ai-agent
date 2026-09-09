@@ -36,7 +36,7 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `UsageError: Incomplete LLM configuration` at startup | Some but not all of `AI_PROVIDER`/`LLM_KEY`/`LLM_MODEL` set (often a commented-out provider line in `.env`) | Set all three or none; `LLM_KEY= LLM_MODEL= pytest` forces L3 off for one run |
+| `UsageError: Incomplete LLM configuration` at startup | `AI_PROVIDER` is set but `LLM_KEY` or `LLM_MODEL` is empty | Fill both, or blank `AI_PROVIDER`; `AI_PROVIDER= pytest` forces L3 off for one run |
 | `L3 skipped: no L3 path for this action` | Assertion/wait/press failed — L3 only executes element interactions (`_LOCATOR_ACTIONS`) | Fix the target or the page state; L3 cannot help here by design |
 | Returns None | Suggestion matched nothing, or LLM/JSON error | Check `[L3]` warnings in the log; expected when the provider is unset |
 | Correct element found but wrong action | Prompt missing action type context | Check prompt structure in ai_resolver.py |
@@ -47,7 +47,7 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | `FlowParseError` | Invalid action keyword or wrong arg count | Check syntax: `keyword: "arg1" \| "arg2"` |
-| pytest can't discover flow | File not under `tests/<app>/flows/` | Check `conftest.py` collection — needs `flows` in path and `tests` in `testpaths` |
+| pytest can't discover flow | File outside `testpaths` (`tests/`) and not passed by path | Any `.md` pytest traverses is collected; run `pytest path/to/flow.md` or move it under `tests/` |
 | Sub-flow not found | Wrong `run_flow` reference | Resolved relative to the calling flow's directory: `"components/sso_login"` → `tests/fms/flows/components/sso_login.md` |
 | Circular flow reference | Flow A calls B which calls A | Break the cycle; restructure shared steps |
 | Report not generated | Nothing ran (`--collect-only`, all deselected) — previous report is kept on purpose | Run at least one test |
@@ -60,7 +60,7 @@ When given a bug report or failing flow: fix it. Read the logs, reproduce, find 
 - [ ] Root cause found (not just symptom)
 - [ ] Fix is minimal — only touches what's broken
 - [ ] `pytest --flow_file=tests/<app>/flows/failing.md` passes
-- [ ] `pytest tests/framework` passes; `ruff check app conftest.py main.py tests` clean
+- [ ] `pytest tests/_framework` passes; `ruff check app conftest.py main.py tests` clean
 - [ ] Report generates and opens with no console errors
 - [ ] No `time.sleep()` introduced; no new per-step round trips
 - [ ] L3 still skips gracefully with `LLM_KEY= LLM_MODEL=`

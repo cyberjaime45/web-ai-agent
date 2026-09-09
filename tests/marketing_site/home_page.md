@@ -1,15 +1,11 @@
 # Home Page
 
-## Config
-- url: https://wheelsup.com
-- timeout: 30000
-
 ## Steps
 - goto: "https://wheelsup.com/"
 - wait_load
 - click_link_text: "Accept All Cookies"
 - assert_text: "WheelsUp"
-- assert_text: "The Next Wave of Private Aviation Is Here"
+- assert_text: "Private aviation. The right way."
 - assert_text: "The right way"
 - assert_text: "Membership that moves you"
 - assert_text: "Our new fleet, your next journey"
