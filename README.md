@@ -101,6 +101,3 @@ flow can be tightened up.
 uv run pytest tests/_framework        # the runtime's own tests (no browser)
 uv run ruff check app conftest.py main.py tests
 ```
-
-See [.claude/CLAUDE.md](.claude/CLAUDE.md) for the rules that keep the
-L1 → L2 → L3 chain intact when touching the core.
