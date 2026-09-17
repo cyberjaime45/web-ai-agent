@@ -43,3 +43,16 @@ test-results/
 
 # Logs
 *.log
+
+# Ruflo local secrets and runtime data
+.env.local
+.env.*.local
+.agents/
+.claude-flow/
+.swarm/
+ruvector.db
+/AGENTS.md
+/CLAUDE.md
+
+# Codex local configuration
+.codex/

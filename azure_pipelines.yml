@@ -9,12 +9,12 @@ parameters:
 
 variables:
   - group: qa-automation
-  - name: image-name
-    value: $[replace(variables['Build.Repository.Name'], 'wheelsup/', '')]
-  - name: image-tag
-    value: $(Build.SourceBranchName)
   - name: BUILD_ID
     value: $(Build.BuildId)
+  # Parameter → flow file. Add one block per new value of TEST.
+  - ${{ if eq(parameters.TEST, 'FMS') }}:
+      - name: FLOW_PATH
+        value: tests/fms/production_smoke.md
 
 stages:
   - stage:
@@ -22,17 +22,80 @@ stages:
 
     jobs:
       - job:
+        timeoutInMinutes: 30
         steps:
+          # Self-hosted agents keep their workspace between runs.
+          - checkout: self
+            clean: true
           - task: Bash@3
-            displayName: 'Running Tests'
-            timeoutInMinutes: 20
+            displayName: 'Check Python and Pip Versions'
             inputs:
               targetType: 'inline'
               script: |
-                echo "Running Tests"
-                echo "Selected Production Test: ${{ parameters.TEST }}"
-                echo "This is a test for the selected production environment"
-                python --version
-              workingDirectory: '$(Build.SourcesDirectory)'
-              failOnStderr: false
+               python3 --version
+               pip3 --version
 
+          # - task: Bash@3
+          #   displayName: 'Install uv'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       set -euo pipefail
+          #       export PATH="$HOME/.local/bin:$PATH"
+          #       if ! command -v uv >/dev/null 2>&1; then
+          #         curl -LsSf https://astral.sh/uv/install.sh | sh
+          #       fi
+          #       echo "##vso[task.prependpath]$HOME/.local/bin"
+          #       uv --version
+
+          # - task: Bash@3
+          #   displayName: 'Install dependencies and Chromium'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       set -euo pipefail
+          #       # uv reads .python-version and downloads Python 3.13 when the VM lacks it.
+          #       uv sync --locked
+          #       # Chromium's system libraries need root; without passwordless sudo they
+          #       # must be installed once per VM: sudo .venv/bin/playwright install-deps chromium
+          #       if sudo -n true 2>/dev/null; then
+          #         uv run playwright install --with-deps chromium
+          #       else
+          #         uv run playwright install chromium
+          #       fi
+          #     workingDirectory: '$(Build.SourcesDirectory)'
+
+          # - task: Bash@3
+          #   displayName: 'Running Tests'
+          #   timeoutInMinutes: 20
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       echo "Selected Production Test: ${{ parameters.TEST }} ($(FLOW_PATH))"
+          #       uv run pytest "$(FLOW_PATH)" --junitxml=reports/junit.xml
+          #     workingDirectory: '$(Build.SourcesDirectory)'
+          #     failOnStderr: false
+          #   env:
+          #     ENVIRONMENT: production
+          #     RUNNING_MODE: local
+          #     HEADLESS: 'true'
+          #     BUILD_NAME: '${{ parameters.TEST }} Production Smoke #$(BUILD_ID)'
+          #     # Secret variables are never exported on their own — map them explicitly.
+          #     FMS_EMAIL: $(FMS_EMAIL)
+          #     FMS_PASSWORD: $(FMS_PASSWORD)
+
+          # - task: PublishTestResults@2
+          #   displayName: 'Publish test results'
+          #   condition: always()
+          #   inputs:
+          #     testResultsFormat: 'JUnit'
+          #     testResultsFiles: 'reports/junit.xml'
+          #     searchFolder: '$(Build.SourcesDirectory)'
+          #     testRunTitle: '${{ parameters.TEST }} Production Smoke'
+
+          # - task: PublishPipelineArtifact@1
+          #   displayName: 'Publish HTML report'
+          #   condition: always()
+          #   inputs:
+          #     targetPath: '$(Build.SourcesDirectory)/reports/production'
+          #     artifact: 'report-${{ parameters.TEST }}-$(BUILD_ID)'
