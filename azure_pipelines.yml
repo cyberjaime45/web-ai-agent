@@ -1,0 +1,44 @@
+trigger: none
+parameters:
+  - name: TEST
+    displayName: Select Production Test
+    type: string
+    default: FMS
+    values:
+      - FMS
+
+variables:
+  - group: qa-automation
+  - name: image-name
+    value: $[replace(variables['Build.Repository.Name'], 'wheelsup/', '')]
+  - name: image-tag
+    value: $(Build.SourceBranchName)
+  - name: BUILD_ID
+    value: $(Build.BuildId)
+
+stages:
+  - stage:
+    pool: ado-agents-pool
+
+    jobs:
+      - job:
+        steps:
+          - task: DownloadSecureFile@1
+            name: mavensettings
+            inputs:
+              secureFile: 'settings.xml'
+              retryCount: '1'
+
+          - task: Bash@3
+            displayName: 'Running Tests'
+            timeoutInMinutes: 20
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Running Tests"
+                echo "Selected Production Test: ${{ parameters.TEST }}"
+                echo "This is a test for the selected production environment"
+                python --version
+              workingDirectory: '$(Build.SourcesDirectory)'
+              failOnStderr: false
+
