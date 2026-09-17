@@ -23,12 +23,6 @@ stages:
     jobs:
       - job:
         steps:
-          - task: DownloadSecureFile@1
-            name: mavensettings
-            inputs:
-              secureFile: 'settings.xml'
-              retryCount: '1'
-
           - task: Bash@3
             displayName: 'Running Tests'
             timeoutInMinutes: 20
