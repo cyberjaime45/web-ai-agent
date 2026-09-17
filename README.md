@@ -18,20 +18,37 @@ last resort — with a live console and a portable HTML report per environment.
 
 ## Quick start
 
-```bash
-uv sync                                   # dependencies (or: pip install -r requirements.txt)
-uv run playwright install chromium        # browser
-cp .env.example .env                      # configuration (see below)
+**Requirements:** [uv](https://docs.astral.sh/uv/) (it downloads Python 3.13 from
+`.python-version` by itself), `curl`, and on Linux the Chromium system libraries
+(installing them needs root, once per machine). No LLM key is needed: Layer 3 stays
+off unless `AI_PROVIDER` is set.
 
-uv run pytest                             # run every flow under tests/
-uv run pytest tests/fms/flows/production_smoke.md   # one flow
-open reports/staging/report.html          # the report
+```bash
+# 1. Install (once per machine / agent)
+curl -LsSf https://astral.sh/uv/install.sh | sh       # skip if uv is already installed
+uv sync --locked                                       # Python 3.13 + dependencies
+uv run playwright install --with-deps chromium         # browser + OS libs (drop --with-deps without root)
+
+# 2. Configure
+cp .env.example .env                                   # defaults work for the sample below; in CI export variables instead
+
+# 3. Run a sample test (public site, no credentials)
+uv run pytest tests/marketing_site/sample_run.md
+
+# 4. Results
+open reports/staging/report.html                       # HTML report under reports/<ENVIRONMENT>/
 ```
 
+pytest exits `0` when every flow passes and non-zero otherwise, so the same
+command is the CI gate. Add `--junitxml=reports/junit.xml` to publish results,
+and pass `ENVIRONMENT`, `BUILD_NAME` and flow secrets (for example `FMS_EMAIL`
+and `FMS_PASSWORD` for `tests/fms/production_smoke.md`) as pipeline variables.
+`azure_pipelines.yml` is a working reference.
+
 Flows live beside the suite for the application they exercise —
-`tests/<app>/flows/*.md`, shared sub-flows in `components/` — and pytest picks
-them up without any `test_*.py`. Run one inline with `--flow "<markdown>"`, or
-any file anywhere with `--flow_file=path.md`.
+`tests/<app>/*.md`, shared sub-flows in `components/` — and pytest picks them
+up without any `test_*.py`. Run one inline with `--flow "<markdown>"`, or any
+file anywhere with `--flow_file=path.md`.
 
 ## Documentation
 
