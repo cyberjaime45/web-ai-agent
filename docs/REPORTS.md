@@ -9,7 +9,7 @@ percentage on the right, and the run ends with an execution summary and the
 report paths:
 
 ```
-                     Version: 1.0.0
+                     Version: 1.1.0
                  Created by: Cyberjaime45
                  Build: Web Test Report
               staging · chromium · headless
@@ -51,12 +51,14 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 
 ```
 reports/staging/
-├── report.html          # Interactive UI (overview, tests, timeline, console, network)
+├── report.html          # Interactive UI (summary, failures, tests, suites, timeline, console, network)
 ├── report_<build>.json  # Raw structured data, full detail inline (for CI/tooling);
 │                        # <build> = BUILD_NAME slug, e.g. report_web_test_report.json
 ├── assets/
 │   ├── report.css
-│   ├── report.js
+│   ├── report.js         # Summary, attention list, tests, suites, timeline
+│   ├── report-detail.js  # Per-test drawer, console and network views
+│   ├── nunito.woff2      # Dashboard font, bundled so the report works offline
 │   ├── data.js          # Slim payload: run meta + per-test steps/errors/counts
 │   └── data/
 │       └── t-<i>.js     # Per-test console/network detail, lazy-loaded on demand
@@ -75,48 +77,66 @@ its drawer opens, and the execution-level Console/Network tabs load the rest on
 first open. Large runs stay fast to open, and the folder remains fully portable —
 zip it and it opens anywhere.
 
-The report includes:
+The report uses the UP QA Dashboard's design system (colours, Nunito, cards,
+badges, verdict banner, side drawer), so it reads as part of the same product.
+It is written for reviewers first and engineers second, top to bottom:
 
-- A flow file shown as a suite named by its `# H1` (`Home Page`), with the
-  source path underneath as secondary text; a file without an H1 is labelled
-  by its path. Each `## section` is its own test row under that header, with
-  status, markers, duration, and steps — totals count these tests, not files
-- A right-side drawer per test: status, then suite, file, test, duration,
-  start time, profile, reruns, and markers, then the steps in order — action
-  verb and argument, L2/L3 chip when the fallback chain resolved the step,
-  duration, the error card at the failing step, and a clickable screenshot
-  thumbnail — followed by Console and Network tabs. Clicking another test
-  updates the same drawer; `✕`, `Esc`, or the backdrop closes it, and
-  search/filter state is untouched
-- Failure evidence under the failing step: what each layer did (`L1 exact
-  failed · L2 fuzzy failed · L3 AI skipped: …`), the profile, page URL and
-  title, viewport / full-page / element screenshot thumbnails, a download
-  link for the Playwright trace, and the console errors and failed requests
-  recorded during that step. The JSON carries the same under each failed
-  step's `evidence` and the test's `artifacts` (`screenshot`, `screenshots`,
-  `trace`)
-- A profile chip (`🖥 desktop` / `📱 mobile`) on every test row; a flow run
-  under both profiles appears once per profile, named `Test[mobile]` for the
-  second
-- An **Agent** panel for autonomous runs (`test_page`, `explore_page`, `--agent-test`):
-  page type and how it was classified, discovered components, the plan, actions
-  executed, plan steps the validator rejected, controls skipped by the safety
-  policy, AI calls, and a link to the generated Markdown flow under
-  `generated/`. Skills nested inside `test_page` appear as groups within its
-  group. A `🤖` chip marks such tests in the list
-- Automatic checks under navigation steps and skill findings on skill groups:
-  a collapsed line (`✓ 8 checks passed`, `⚠ 1 warning in 8 checks`,
-  `✕ 1 of 8 checks failed`) that expands to one row per check with its
-  detail. A `⚑ n` chip on the test row counts flagged checks. Skill groups
-  (`test_form`, `test_responsive`…) show their checks and screenshots above
-  the child steps they ran; the JSON carries `checks` on each step
-- Console messages (all levels) with level filters, search, repeat grouping, and source locations
-- Network requests with method/status/type/duration/size, filters (Failed/XHR/Doc/JS/CSS/Img), search, sorting, expandable headers/payloads, and Copy cURL/URL actions
-- Console errors and network activity routed to the section and step where they occurred
-- "Likely related activity" hints next to failures (nearby console errors and failed requests)
-- Execution-level Console and Network tabs aggregating all tests with per-test attribution
-- Healed-locator tracking (L2/L3 usage) and failure screenshots
-- Sensitive headers/fields (Authorization, cookies, tokens…) redacted automatically; extend via `REPORT_REDACT`
+- **Execution summary** — build name, environment, browser, device, duration,
+  run type and date; a verdict banner (`6 tests failed` / `All tests passed`)
+  with a one-line explanation; the pass rate, the passed / failed / skipped
+  counts with a bar, and the number of suites
+- **Tests requiring attention** — shown only when something failed. One row
+  per failure: the test, a plain-English explanation (`Expected text "Book now"
+  was not found on the page within 5 seconds.`), the failed step, duration, and
+  a thumbnail of the screen at the failure that opens full size
+- **All tests** — tests grouped by suite (a flow file, named by its `# H1`, with
+  the path underneath; each `## section` is its own test). Suites with failures
+  come first and stay open; passing suites fold away. Search (`/`), status
+  filters (All / Failed / Passed / Passed on retry / Skipped), area and tag
+  filters. Row badges are coloured only when they carry status: console errors
+  in red; console warnings and flagged checks in amber; failed requests (mostly
+  third-party beacons) in grey; a lightning icon marks a self-healed test (a
+  fallback locator was needed — the tooltip says so); *Autonomous* (`test_page`, `explore_page`) and the device
+  (when a run used several) in blue; tags in grey
+- **Suites** — one row per suite with pass rate, results and duration; select a
+  row to list its tests
+- **Timeline** — when each test ran, in lanes for parallel runs
+- **Console / Network** — every test's browser console messages and requests,
+  with level/type filters, search, source test, expandable headers and bodies,
+  and Copy cURL / Copy URL
+- **Run details** — timing, environment (devices, OS, run type), tool versions,
+  run ID, the slowest tests, and the tests with self-healed steps
+
+Selecting a test opens a side drawer, which reads the same way:
+
+- **What went wrong** (failures) — the failed step as a red callout, the
+  plain-English explanation, and the viewport / full-page / element screenshots
+- **Summary** — result, duration, start time, suite, area, device, reruns and
+  tags, laid out side by side and wrapping onto a second line when narrow
+- **Autonomous run** (when present) — page type and how it was classified,
+  components, plan, actions executed, plan steps the validator rejected,
+  controls skipped by the safety policy, AI calls, and a link to the generated
+  flow under `generated/`
+- **Steps** — each step as a readable action (`Check text is shown "Book now"`,
+  the keyword on hover), its duration, the self-healed lightning icon when L2/L3
+  found the element, screenshots, and automatic checks / skill findings as one
+  collapsed line (`9 checks passed`, `1 warning in 9 checks`, `1 of 8 checks
+  failed`) that expands to one row per check. In a failing test, passing
+  groups fold so the failing one stands out
+- **Technical details** (folded; stays open across tests once opened) — the raw
+  error output and full traceback, how each layer attempted the step
+  (`L1 exact: failed · L2 fuzzy: failed · L3 AI: skipped: …`), the page URL
+  and title at the failure, the Playwright trace download, console errors and
+  failed requests logged during the step, browser activity near the failure
+  (hints, not a confirmed cause), self-healed steps, and the test's Console and
+  Network views
+
+`✕`, `Esc` or the backdrop closes the drawer; filters are untouched. A moon
+button in the header switches to dark mode (remembered per browser). The JSON
+carries each failed step's `evidence`, the test's `artifacts` (`screenshot`,
+`screenshots`, `trace`), and `checks` on each step. Sensitive headers and fields
+(Authorization, cookies, tokens…) are redacted automatically; extend the list
+with `REPORT_REDACT`.
 
 ```bash
 open reports/staging/report.html

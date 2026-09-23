@@ -1,22 +1,62 @@
 const DATA = window.__WEBAGENT_DATA__;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtMs = ms => ms >= 60000 ? Math.floor(ms/60000)+'m '+Math.round(ms%60000/1000)+'s' : ms >= 1000 ? (ms/1000).toFixed(1)+'s' : Math.round(ms)+'ms';
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 const failedLike = s => s === 'failed' || s === 'error';
 const isFlaky = t => t.retries > 0 && !failedLike(t.status);
 const effStatus = t => isFlaky(t) ? 'flaky' : t.status;
-const suiteOf = t => (t.file.match(/^(?:apps|tests|flows)\/([^/]+)\//) || [,'(root)'])[1];
+const areaOf = t => (t.file.match(/^(?:apps|tests|flows)\/([^/]+)\//) || [,'(root)'])[1];
+const areaLabel = a => { const s = a === '(root)' ? 'Other' : a.replace(/^_+/, '').replace(/_/g, ' '); return s.length <= 3 ? s.toUpperCase() : cap(s); };
+const suiteTitle = t => t.file_title || t.file.split('/').pop().replace(/\.(md|py)$/, '');
 const lvlOf = c => c.level === 'pageerror' ? 'error' : c.level === 'log' ? 'info' : c.level;
 const fmtBytes = b => b == null ? '' : b >= 1048576 ? (b/1048576).toFixed(1)+' MB' : b >= 1024 ? (b/1024).toFixed(1)+' KB' : b+' B';
 const relTime = (ts, t0) => (ts != null && t0 != null) ? '+' + fmtMs(ts - t0) : '';
-const NET_CATS = [['','All'], ['bad','Failed'], ['xhr','XHR'], ['doc','Doc'], ['js','JS'], ['css','CSS'], ['img','Img'], ['other','Other']];
-const CON_LEVELS = [['error','Errors'], ['warning','Warnings'], ['info','Info'], ['debug','Debug']];
-function catOf(n){
-  const rt = n.resource_type || '';
-  return rt === 'xhr' || rt === 'fetch' ? 'xhr' : rt === 'document' ? 'doc' :
-    rt === 'script' ? 'js' : rt === 'stylesheet' ? 'css' :
-    rt === 'image' || rt === 'media' || rt === 'font' ? 'img' : 'other';
-}
+const fmtDate = iso => new Date(iso).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
 const debounce = (fn, ms = 150) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
+const $ = id => document.getElementById(id);
+
+/* ── icons: inline SVG so the report needs no network ── */
+const ICONS = {
+  check: '<circle cx="12" cy="12" r="10"/><polyline points="16 9 10.5 15 8 12.5"/>',
+  x: '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
+  warn: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  skip: '<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
+  phone: '<rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  chev: '<polyline points="9 18 15 12 9 6"/>',
+  close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+  zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+  bot: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><line x1="9" y1="13" x2="9" y2="15"/><line x1="15" y1="13" x2="15" y2="15"/>',
+};
+const icon = (name, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+
+/* ── one vocabulary for status, used by every badge and filter ── */
+const STATUS = {
+  passed:  {label: 'Passed',          badge: 'success', icon: 'check'},
+  failed:  {label: 'Failed',          badge: 'danger',  icon: 'x'},
+  error:   {label: 'Error',           badge: 'danger',  icon: 'x'},
+  skipped: {label: 'Skipped',         badge: 'neutral', icon: 'skip'},
+  flaky:   {label: 'Passed on retry', badge: 'warning', icon: 'warn'},
+};
+const badge = (text, kind = 'neutral', title = '') =>
+  `<span class="qa-badge qa-badge-${kind}"${title ? ` title="${esc(title)}"` : ''}>${text}</span>`;
+// Icon-only badge: the label moves to the tooltip and to assistive tech.
+const iconBadge = (name, kind, label) =>
+  `<span class="qa-badge qa-badge-${kind}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon(name)}</span>`;
+const HEALED = 'Self-healed: a fallback locator found an element the flow describes. Update the flow so it passes on the first attempt.';
+const statusBadge = st => badge(STATUS[st].label, STATUS[st].badge);
+
 const T = DATA.tests, TOT = DATA.totals, ENV = DATA.environment;
 // Per-test values every renderer needs — computed once, not per row per keystroke.
 T.forEach((t, i) => {
@@ -26,10 +66,14 @@ T.forEach((t, i) => {
   t._startMs = t.started_at ? new Date(t.started_at).getTime() : null;
 });
 const titleOf = t => t._title;
+const failing = TOT.failed + TOT.errors;
 const flakyCount = T.filter(isFlaky).length;
 const healCount = T.reduce((n,t) => n + (t.healings||[]).length, 0);
+const profiles = [...new Set(T.map(t => t.profile && t.profile.name).filter(Boolean))];
 // ISO-8601 strings order correctly with plain comparison — no collator needed.
 const byStart = T.map((t,i)=>i).sort((a,b) => { const x = T[a].started_at||'', y = T[b].started_at||''; return x < y ? -1 : x > y ? 1 : 0; });
+const bySuite = {};
+T.forEach(t => (bySuite[t.file] ||= []).push(t));
 
 /* ── lazy per-test detail (console/network live in assets/data/t-<i>.js) ──
    Shards are JSONP-style scripts because fetch() is blocked on file://. */
@@ -60,665 +104,309 @@ function loadDetail(i){
   return DETAIL_P[i];
 }
 
-/* ── theme ── */
-const themebtn = document.getElementById('themebtn');
-const setTheme = m => { document.documentElement.dataset.theme = m; try{localStorage.setItem('webagent-theme', m)}catch(e){} };
-setTheme((()=>{try{return localStorage.getItem('webagent-theme')}catch(e){return null}})() || 'light');
-themebtn.onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
-
-/* ── top bar + hero + pulse + tabs ── */
-const failing = TOT.failed + TOT.errors, pill = document.getElementById('statuspill');
-pill.className = 'pill ' + (failing ? 'bad' : 'good');
-pill.textContent = failing ? `✕ ${failing} Failing` : '✓ All Tests Passed';
-const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
-const triggeredBy = ENV.ci ? 'CI Pipeline' : 'Local run';
-document.getElementById('envchip').textContent = ENV.env;
-if (ENV.build_name){ document.getElementById('htitle').textContent = ENV.build_name; document.title = ENV.build_name; }
-document.getElementById('hdate').textContent = new Date(DATA.created_at).toLocaleString();
-document.getElementById('hrunid').textContent = DATA.run_id;
-document.getElementById('htrigger').textContent = triggeredBy;
-document.getElementById('hbrowser').textContent = cap(ENV.browser) + (ENV.headless ? ' (headless)' : '');
-document.getElementById('copyrun').onclick = function(){
-  const done = () => { this.textContent = '✓'; setTimeout(() => this.textContent = '⧉', 1200); };
-  try { navigator.clipboard.writeText(DATA.run_id).then(done.bind(this), () => {}); } catch(e){}
-};
-document.getElementById('tcount').textContent = TOT.total;
-document.getElementById('pulse').innerHTML = byStart.map(i => {
-  const t = T[i], st = effStatus(t);
-  return `<div class="px ${st}" title="${titleOf(t)} · ${st}" onclick="openTest(${i})"></div>`;
-}).join('');
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
-function showTab(name){
-  document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name));
-  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + name));
-  if (name === 'console' || name === 'network') ensureGlobalViews();
-}
-document.getElementById('foot').textContent =
-  `Generated on ${new Date(DATA.created_at).toLocaleString()} · Web Agent ${ENV.framework}`;
-
-/* ── overview ── */
-(function donut(){
-  const segs = [[TOT.passed,'var(--pass)','Passed'], [failing,'var(--fail)','Failed'],
-                [flakyCount,'#d99a11','Flaky'], [TOT.skipped,'#b7bcc2','Skipped']];
-  let acc = 0; const stops = [];
-  const denom = Math.max(TOT.total, 1);
-  segs.forEach(([n,c]) => { if(n){ stops.push(`${c} ${acc/denom*100}% ${(acc+n)/denom*100}%`); acc += n; } });
-  document.getElementById('donut').innerHTML = `
-    <div class="donut" style="background:conic-gradient(${stops.join(',') || 'var(--border) 0 100%'})">
-      <i><div><b>${TOT.pass_rate}%</b><span>pass rate</span></div></i></div>
-    <div class="legend">${segs.map(([n,c,l]) =>
-      `<div><span class="sw" style="background:${c}"></span>${l}<b>${n}</b></div>`).join('')}</div>`;
-})();
-
-(function histo(){
-  let max = 1;
-  T.forEach(t => { if (t.duration_ms > max) max = t.duration_ms; });
-  const N = 12, buckets = Array(N).fill(0);
-  T.forEach(t => buckets[Math.min(N-1, Math.floor(t.duration_ms/max*N))]++);
-  const bmax = Math.max(...buckets, 1);
-  document.getElementById('totaldur').textContent = `Total ${fmtMs(TOT.duration_ms)}`;
-  document.getElementById('histo').innerHTML =
-    `<div class="histo">${buckets.map(b => `<div style="height:${b/bmax*100}%" title="${b} tests"></div>`).join('')}</div>
-     <div class="axis"><span>0</span><span>${fmtMs(max)}</span></div>`;
-})();
-
-(function healsum(){
-  const healed = T.filter(t => (t.healings||[]).length);
-  document.getElementById('healsum').innerHTML = healed.length
-    ? healed.map(t => `<div class="rowline"><span class="sdot ${effStatus(t)}"></span>
-          <span class="nm" onclick="openTest(${t._i})">${titleOf(t)}</span>
-          <span class="val" style="color:var(--skip)">🩹 ${t.healings.length} L${Math.max(...t.healings.map(h=>h.layer))}</span></div>`
-      ).join('') + `<div class="axis" style="margin-top:10px"><span>${healCount} heal${healCount===1?'':'s'} — update these page objects</span></div>`
-    : `<div class="estate"><div class="ecirc">✓</div>
-       <div class="ehead">No locators needed healing 🎉</div>
-       <div class="esub">Great job! No unstable locators detected.</div></div>`;
-})();
-
-(function failures(){
-  const fails = T.filter(t => failedLike(t.status));
-  document.getElementById('failures').innerHTML = fails.length
-    ? fails.map(t => `<div class="failcard" onclick="openTest(${t._i})">
-        <div class="fname">${titleOf(t)} ${(t.markers||[]).map(m=>`<span class="chiplet">${esc(m)}</span>`).join(' ')}</div>
-        <div class="ferr">${esc((t.error && t.error.message || '').split('\n')[0])}</div>
-        <div class="ffile">${t.file_title ? `${esc(t.file_title)} · ` : ''}${esc(t.file)}</div></div>`).join('')
-    : `<div class="estate"><div class="ecirc">🛡</div>
-       <div class="ehead">No failures 🎉</div>
-       <div class="esub">All tests passed successfully.</div></div>`;
-})();
-
-(function slowest(){
-  const top = [...T].sort((a,b) => b.duration_ms - a.duration_ms).slice(0, 7);
-  const max = Math.max(...top.map(t => t.duration_ms), 1);
-  document.getElementById('slowest').innerHTML = top.map(t => `
-    <div class="rowline" style="border-bottom:none;padding-bottom:2px">
-      <span class="nm" onclick="openTest(${t._i})">${titleOf(t)}</span>
-      <span class="val">${fmtMs(t.duration_ms)}</span></div>
-    <div class="meterwrap"><div class="meter" style="width:${t.duration_ms/max*100}%;background:${failedLike(t.status)?'var(--fail)':'var(--bar)'}"></div></div>`).join('');
-})();
-
-/* ── summary tab — three metric groups, each led by a headline value ── */
-(function execSummary(){
-  // End time = report creation; start = earliest test start when recorded.
-  const starts = T.map(t => t.started_at).filter(Boolean).sort();
-  const startAt = starts[0] || DATA.created_at;
-  const testTime = T.reduce((n,t) => n + t.duration_ms, 0);
-  const fmtT = iso => new Date(iso).toLocaleString();
-  const row = ([ico, k, v, cls]) =>
-    `<div class="xrow"><span class="xk"><i>${ico}</i>${k}</span><span class="xv ${cls || ''}">${v}</span></div>`;
-  const lead = (lbl, val) => `<div class="xlead"><div class="lbl">${lbl}</div><div class="num">${val}</div></div>`;
-  document.getElementById('sum-timing').innerHTML =
-    lead('Wall-clock duration', esc(fmtMs(TOT.duration_ms))) + [
-      ['◷', 'Start time', esc(fmtT(startAt))],
-      ['◶', 'End time', esc(fmtT(DATA.created_at))],
-      ['Σ', 'Cumulative test time', esc(fmtMs(testTime))]
-    ].map(row).join('');
-  document.getElementById('sum-env').innerHTML =
-    lead('Environment', esc(ENV.env)) + [
-      ['⬒', 'Build', esc(ENV.build_name || 'Web Test Report')],
-      ['◍', 'Browser', esc(cap(ENV.browser) + (ENV.headless ? ' · headless' : ''))],
-      ['⌗', 'OS', esc(ENV.os)],
-      ['⚙', 'Run type', `<span class="vchip ${ENV.ci ? 'green' : 'blue'}">${ENV.ci ? 'Automated' : 'Local'}</span>`]
-    ].map(row).join('');
-  document.getElementById('sum-tool').innerHTML =
-    lead('Web Agent', esc(ENV.framework)) + [
-      ['⬡', 'Python', esc(ENV.python)],
-      ['⬢', 'Playwright', esc(ENV.playwright)],
-      ['#', 'Run id', esc(DATA.run_id), 'mono']
-    ].map(row).join('');
-})();
-
-(function suites(){
-  const groups = {};
-  T.forEach(t => (groups[suiteOf(t)] ||= []).push(t));
-  document.getElementById('suites').innerHTML = Object.entries(groups).map(([name, ts]) => {
-    const ok = ts.filter(t => !failedLike(t.status)).length;
-    const time = ts.reduce((n,t) => n + t.duration_ms, 0);
-    const pct = ok/ts.length*100;
-    return `<div class="rowline" style="border-bottom:none;padding-bottom:2px">
-      <span class="nm mono">${esc(name)}</span>
-      <span class="val">${ok}/${ts.length} passed · ${fmtMs(time)}</span></div>
-      <div class="meterwrap"><div class="meter" style="width:${pct}%;background:${ok===ts.length?'var(--pass)':'var(--fail)'}"></div></div>`;
-  }).join('');
-})();
-
-/* ── tests tab ── */
-let statusFilter = '';
-const FILTERS = [['passed','var(--pass)',TOT.passed], ['failed','var(--fail)',failing],
-                 ['flaky','#d99a11',flakyCount], ['skipped','#b7bcc2',TOT.skipped]];
-document.getElementById('fchips').innerHTML = FILTERS.map(([s,c,n]) =>
-  `<div class="fchip" data-f="${s}"><span class="sw" style="background:${c}"></span>${s[0].toUpperCase()+s.slice(1)}<span class="n">${n}</span></div>`).join('');
-document.querySelectorAll('.fchip[data-f]').forEach(ch => ch.onclick = () => {
-  statusFilter = statusFilter === ch.dataset.f ? '' : ch.dataset.f;
-  document.querySelectorAll('.fchip[data-f]').forEach(x => x.classList.toggle('on', x.dataset.f === statusFilter));
-  renderTests();
-});
-const markers = [...new Set(T.flatMap(t => t.markers || []))].sort();
-const markerSel = document.getElementById('marker');
-markerSel.innerHTML += markers.map(m => `<option>${esc(m)}</option>`).join('');
-markerSel.hidden = !markers.length;   // nothing to pick from — don't show an empty control
-const suiteNames = [...new Set(T.map(suiteOf))].sort();
-document.getElementById('suite').innerHTML += suiteNames.map(s => `<option>${esc(s)}</option>`).join('');
-document.getElementById('search').addEventListener('input', debounce(renderTests));
-['marker','suite'].forEach(id => document.getElementById(id).addEventListener('change', renderTests));
-document.addEventListener('keydown', e => {
-  if (e.key === '/' && !e.target.matches('input,select')) { e.preventDefault(); showTab('tests'); document.getElementById('search').focus(); }
-  if (e.key === 'Escape') closeDrawer();
-});
-
-function chips(t){
-  const {con_err: cerr, con_warn: cwarn, net_bad: nbad} = t.counts;
-  return [
-    cerr ? `<span class="chiplet cbad" title="console errors">⚠ ${cerr}</span>` : '',
-    cwarn ? `<span class="chiplet cwarn" title="console warnings">⚠ ${cwarn}</span>` : '',
-    nbad ? `<span class="chiplet cbad" title="failed requests">⇅ ${nbad}</span>` : '',
-    t.counts.checks_flagged ? `<span class="chiplet cwarn" title="flagged QA checks">⚑ ${t.counts.checks_flagged}</span>` : '',
-    t.agent ? `<span class="chiplet" title="autonomous run${t.agent.ai_calls ? ` · ${t.agent.ai_calls} AI call(s)` : ''}">🤖 ${esc(t.agent.page_type || 'agent')}</span>` : '',
-    t.retries ? `<span class="chiplet" style="color:var(--skip)" title="reruns">↻ ${t.retries}</span>` : '',
-    (t.healings||[]).length ? `<span class="chiplet" style="color:var(--skip)" title="healed locators">🩹 ${t.healings.length}</span>` : '',
-    profileChip(t),
-    ...(t.markers||[]).map(m => `<span class="chiplet">${esc(m)}</span>`)
-  ].join('');
-}
-function profileChip(t){
-  const p = t.profile;
-  if (!p || !p.name) return '';
-  return `<span class="chiplet" title="${esc(p.label || p.name)}">${p.name === 'mobile' ? '📱' : '🖥'} ${esc(p.name)}</span>`;
-}
-
-function renderTests(){
-  const q = document.getElementById('search').value.toLowerCase();
-  const mk = document.getElementById('marker').value, su = document.getElementById('suite').value;
-  const keep = T.filter(t => {
-    if (statusFilter === 'failed' ? !failedLike(t.status) :
-        statusFilter === 'flaky' ? !isFlaky(t) :
-        (statusFilter && t.status !== statusFilter)) return false;
-    if (mk && !(t.markers||[]).includes(mk)) return false;
-    if (su && suiteOf(t) !== su) return false;
-    return !q || t._hay.includes(q);
-  });
-  const groups = {};
-  keep.forEach(t => (groups[t.file] ||= []).push(t));
-  document.getElementById('tests').innerHTML = keep.length ? Object.entries(groups).map(([file, ts]) => {
-    const ok = ts.filter(t => !failedLike(t.status)).length, ko = ts.length - ok;
-    const time = ts.reduce((n,t) => n + t.duration_ms, 0);
-    // A flow file is a suite: its # title leads and the path is secondary.
-    // Files without a title (or non-flow tests) keep the path as the label.
-    const ftitle = (ts.find(t => t.file_title) || {}).file_title;
-    const flabel = ftitle
-      ? `<span class="fp">${esc(ftitle)}<span class="fpsub">${esc(file)}</span></span>`
-      : `<span class="fp path">${esc(file)}</span>`;
-    return `<div class="filegrp">
-      <div class="filehead" onclick="this.parentElement.classList.toggle('closed')">
-        <span class="arrow">▼</span>${flabel}
-        <span class="sum"><span class="ok">✓ ${ok}</span>${ko ? `<span class="ko">✕ ${ko}</span>` : ''}<span class="t">${fmtMs(time)}</span></span>
-      </div>
-      <div class="trows">${ts.map(t => `
-        <div class="trow" onclick="openTest(${t._i})">
-          <span class="sdot ${effStatus(t)}"></span>
-          <span class="tt">${titleOf(t)}${t.title && t.title !== t.name ? `<span class="fn">${esc(t.name)}</span>` : ''}</span>
-          <span class="right">${chips(t)}<span class="dur">${fmtMs(t.duration_ms)}</span></span>
-        </div>`).join('')}</div>
-    </div>`;
-  }).join('') : '<div class="empty">No tests match the current filters.</div>';
-}
-renderTests();
-
-/* ── drawer ── */
-function stepTree(steps){
-  // flat depth-annotated list → nested tree
-  const root = {children: []}, stack = [root];
-  steps.forEach(s => {
-    while (stack.length - 1 > s.depth) stack.pop();
-    const node = {step: s, children: []};
-    stack[stack.length - 1].children.push(node);
-    stack.push(node);
-  });
-  return root.children;
-}
-function shotThumb(s){
-  // attachment is a report-relative path; escape it like any other attribute value
-  return s.attachment
-    ? `<a href="${esc(s.attachment)}" target="_blank"><img class="sthumb" src="${esc(s.attachment)}" alt="Screenshot at failing step" loading="lazy"></a>`
-    : '';
-}
-const EV_KIND = {viewport: 'Viewport', full_page: 'Full page', element: 'Element'};
-function checksHtml(s){
-  // Oracle checks after a step, or a skill's findings: collapsed one-liner,
-  // rows on expand. info rows are observations, never flagged.
-  const cs = s.checks || [];
-  if (!cs.length) return '';
-  const flagged = cs.filter(c => !c.passed);
-  const bad = flagged.filter(c => c.severity === 'error').length, warn = flagged.length - bad;
-  const counted = cs.filter(c => c.severity !== 'info').length;
-  const cls = bad ? 'bad' : warn ? 'warn' : 'ok';
-  const head = bad ? `✕ ${bad} of ${counted} checks failed${warn ? `, ${warn} warning${warn > 1 ? 's' : ''}` : ''}`
-    : warn ? `⚠ ${warn} warning${warn > 1 ? 's' : ''} in ${counted} checks`
-    : counted ? `✓ ${counted} checks passed` : `${cs.length} observations`;
-  const rows = cs.map(c => {
-    const icon = c.severity === 'info' ? '·' : c.passed ? '✓' : c.severity === 'error' ? '✕' : '!';
-    const rcls = c.severity === 'info' ? 'info' : c.passed ? 'ok' : c.severity === 'error' ? 'bad' : 'warn';
-    return `<div class="chkrow ${rcls}"><span class="chkicon">${icon}</span><span class="chkname">${esc(c.name)}</span>${c.detail ? `<span class="chkdetail">${esc(c.detail)}</span>` : ''}</div>`;
-  }).join('');
-  return `<details class="chk ${cls}"><summary>${head}</summary>${rows}</details>`;
-}
-function evidenceHtml(s){
-  // Failure evidence collected by the engine at the failing step: what each
-  // layer did, where the page was, the screenshots, the trace, and the
-  // console errors / failed requests that happened during the step.
-  const ev = s.evidence;
-  if (!ev) return '';
-  const layers = Object.entries(ev.layers || {}).map(([k, v]) =>
-    `<span class="evlayer ${v === 'failed' ? 'bad' : ''}"><b>${esc(k)}</b>${esc(v)}</span>`).join('');
-  const meta = [ev.profile && ['profile', ev.profile], ev.url && ['url', ev.url], ev.title && ['title', ev.title]]
-    .filter(Boolean).map(([k, v]) => `<span><b>${k}</b>${esc(v)}</span>`).join('');
-  const shots = Object.entries(ev.screenshots || {}).map(([k, p]) =>
-    `<a class="evshot" href="${esc(p)}" target="_blank"><img src="${esc(p)}" alt="${esc(EV_KIND[k] || k)} screenshot" loading="lazy"><span>${esc(EV_KIND[k] || k)}</span></a>`).join('');
-  const trace = (ev.trace ? `<a class="evtrace" href="${esc(ev.trace)}" download title="Open with: npx playwright show-trace <file>">⬇ Playwright trace</a>` : '')
-    + Object.entries(ev.files || {}).map(([k, p]) => `<a class="evtrace" href="${esc(p)}" target="_blank">📄 ${esc(k)}</a>`).join('');
-  const cons = ev.console || [], net = ev.network || [];
-  const rows = [
-    ...cons.map(c => conRowHtml(c, null)),
-    ...net.map(n => conRowHtml({level: 'error', ts: n.ts,
-      text: `${n.method} ${n.url} — ${n.failure ? n.failure : 'HTTP ' + n.status}`}, null).replace('>error<', '>net<'))
-  ];
-  const diag = rows.length;
-  return `<div class="evbox${s.status === 'failed' ? '' : ' ok'}">
-    ${layers ? `<div class="evlayers">${layers}</div>` : ''}
-    ${meta ? `<div class="evmeta">${meta}</div>` : ''}
-    ${shots || trace ? `<div class="evgal">${shots}${trace}</div>` : ''}
-    ${diag ? `<details class="evdiag"><summary>${cons.length} console error${cons.length === 1 ? '' : 's'} · ${net.length} failed request${net.length === 1 ? '' : 's'} during this step</summary>${rows.join('')}</details>` : ''}
-  </div>`;
-}
+/* ── what failed, in words a reviewer can act on ── */
 function failedStep(t){
   // The exception propagates up through nested steps, marking each ancestor
   // failed too — the last failed step is the deepest one: the failure site.
   const failed = (t.steps || []).filter(s => s.status === 'failed');
   return failed.length ? failed[failed.length - 1] : null;
 }
-function stepErr(t, n, errStep){
-  const s = n.step;
-  // Ancestors carry a copy of the child's error — render only at the site.
-  if (s.status !== 'failed' || n.children.some(c => c.step.status === 'failed')) return '';
-  if (t.error && s === errStep) return errCard(t.error, true);
-  return s.error ? `<pre class="codebox serrbox">${esc(s.error)}</pre>` : '';
+function cleanError(msg){
+  // Drop the layer-chain preamble and Playwright's call log; keep the sentence.
+  return String(msg || '')
+    .replace(/^L\d(\+L\d)* failed \([^)]*\):\s*/, '')
+    .replace(/^Layers? [\d+]+ could not resolve step \d+ \(.*?\)\.\s*(Original:\s*)?/, '')
+    .split(/\n|Call log:/)[0]
+    .replace(/^Locator\.\w+:\s*/, '').replace(/^Error:\s*/, '').trim();
 }
-function stepIcon(status){
-  return status === 'failed' ? '✕' : status === 'skipped' ? '»' : '✓';
-}
-function stepName(s){
-  // Flow steps carry the action verb and its (secret-masked) argument text;
-  // anything else (groups, legacy data) shows its raw name.
-  const layer = s.layer > 1 ? `<span class="slayer" title="resolved by layer ${s.layer}">L${s.layer}</span>` : '';
-  if (!s.action) return `<span class="sname">${esc(s.name)}</span>${layer}`;
-  return `<span class="sname"><span class="sverb">${esc(s.action)}</span>${s.args ? `<span class="sargs">${esc(s.args)}</span>` : ''}</span>${layer}`;
-}
-function stepNodes(t, nodes, nested, errStep){
-  return nodes.map((n, i) => {
-    const s = n.step;
-    const label = `<span class="slabel">Step ${i + 1}</span>`;
-    const dur = `<span class="sdur">${fmtMs(s.duration_ms)}</span>`;
-    const err = stepErr(t, n, errStep);
-    const extras = `${checksHtml(s)}${s.evidence ? evidenceHtml(s) : shotThumb(s)}`;
-    if (n.children.length){
-      // a skill group carries its own checks / screenshots above its child steps
-      return `<div class="sgroup ${s.status}">
-        <div class="sghead" onclick="this.parentElement.classList.toggle('closed')">
-          <span class="sicon grp ${s.status}">${stepIcon(s.status)}</span><span class="chev">▼</span>
-          ${label}<span class="sgname">${esc(s.name)}</span>${dur}
-        </div>
-        <div class="sgbody">${extras}${stepNodes(t, n.children, true, errStep)}${err}</div>
-      </div>`;
-    }
-    return `<div class="srow ${s.status}">
-      <span class="sicon ${s.status}">${stepIcon(s.status)}</span>
-      <div class="smain">${label}${nested ? '<span class="hook">↳</span>' : ''}${stepName(s)}${dur}${err}${extras}</div>
-    </div>`;
-  }).join('');
-}
-function stepsHtml(t){
-  if (!(t.steps||[]).length) return '<div class="empty" style="padding:14px 0">No steps recorded.</div>';
-  return stepNodes(t, stepTree(t.steps), false, failedStep(t));
-}
-function errCard(e, instep){
-  // headline without the class prefix when the kind chip already shows it
-  let headline = (e.message || '').split('\n')[0];
-  if (e.kind && headline.startsWith(e.kind + ':')) headline = headline.slice(e.kind.length + 1).trim();
-  return `<div class="errcard${instep ? ' instep' : ''}">
-    <div class="errhead">${e.kind ? `<span class="ekind">${esc(e.kind)}</span>` : ''}<span class="msg">${esc(headline)}</span></div>
-    ${e.traceback ? `<details class="fullout"><summary>Full output</summary><pre class="codebox tall">${esc(e.traceback)}</pre></details>` : ''}
-  </div>`;
-}
-function errorHtml(t){
-  // Failures inside a step render at the step itself; this section only
-  // covers failures outside any step (fixture setup, bare asserts).
-  if (!t.error || failedStep(t)) return '';
-  return `<div class="sec"><h3>Error</h3>${errCard(t.error, false)}</div>`;
-}
-function agentHtml(t){
-  // Autonomous run facts (test_page / explore_page): what the agent saw,
-  // planned, skipped, and left behind. Lists are data from the run.
-  const a = t.agent;
-  if (!a) return '';
-  const list = (items, cls) => items && items.length
-    ? `<ul class="${cls || ''}">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
-  const row = (k, v) => v ? `<div class="arow"><span class="ak">${k}</span><div class="av">${v}</div></div>` : '';
-  return `<div class="sec"><h3>🤖 Agent</h3><div class="agentbox">
-    ${row('page type', a.page_type ? esc(a.page_type) + (a.classification ? ` <span class="amuted">(${esc(a.classification)})</span>` : '') : '')}
-    ${row('components', list(a.components))}
-    ${row('plan', a.plan && a.plan.length ? `<ol>${a.plan.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : '')}
-    ${row('rejected plan steps', list(a.plan_rejected, 'abad'))}
-    ${row('skipped by safety', list(a.skipped, 'awarn'))}
-    ${row('actions executed', a.actions && a.actions.length ? `<span class="amuted">${a.actions.length}</span> — ` + esc(a.actions.slice(0, 8).join(' · ')) + (a.actions.length > 8 ? ' …' : '') : '')}
-    ${row('AI calls', a.ai_calls != null ? String(a.ai_calls) : '')}
-    ${row('generated flow', a.generated ? `<a href="${esc(a.generated)}" target="_blank">${esc(a.generated)}</a> <span class="amuted">— review, then add it to the suite</span>` : '')}
-  </div></div>`;
-}
-function healHtml(t){
-  const h = t.healings || [];
-  if (!h.length) return '';
-  return `<div class="sec"><h3>🩹 Healed locators</h3><div class="healbox">
-    Resolved by the fallback chain at runtime — update the page object.
-    <ul>${h.map(e => `<li><span class="layer">L${e.layer}</span>'${esc(e.description)}'
-      <br>healed by <code>${esc(e.healed_by)}</code> → <code>${esc(e.resolved)}</code></li>`).join('')}</ul></div></div>`;
-}
-
-/* ── console & network row renderers (shared by drawer + execution tabs) ── */
-function groupConsole(logs){
-  const map = new Map(), out = [];
-  logs.forEach(c => {
-    const k = c.level + ' ' + c.text + ' ' + (c.location || '');
-    if (map.has(k)) map.get(k).count++;
-    else { const g = {...c, count: 1}; map.set(k, g); out.push(g); }
-  });
-  return out;
-}
-function conRowHtml(c, t0, ti){
-  const lvl = lvlOf(c);
-  const lines = String(c.text ?? '').split('\n');
-  const main = `<span class="ctime">${relTime(c.ts, t0)}</span><span class="clvl ${lvl}">${esc(c.level)}</span>
-    <span class="ctext">${esc(lines[0])}${c.count > 1 ? `<span class="cxn">×${c.count}</span>` : ''}</span>
-    ${ti != null ? `<span class="cfrom" onclick="event.preventDefault();openTest(${ti})">${titleOf(T[ti])}</span>` : ''}
-    ${c.step ? `<span class="cstep" title="active step">${esc(c.step)}</span>` : ''}
-    ${c.location ? `<span class="cloc" title="${esc(c.location)}">${esc(c.location.replace(/^https?:\/\/[^/]*/, ''))}</span>` : ''}`;
-  return lines.length > 1
-    ? `<details class="crow ${lvl}"><summary>${main}<span class="nchev">▸</span></summary><pre class="codebox">${esc(lines.slice(1).join('\n'))}</pre></details>`
-    : `<div class="crow ${lvl}">${main}</div>`;
-}
-function curlOf(n){
-  const q = s => `'${String(s).replace(/'/g, "'\\''")}'`;
-  const h = Object.entries(n.request_headers || {}).map(([k, v]) => ` -H ${q(k + ': ' + v)}`).join('');
-  return `curl -X ${n.method} ${q(n.url)}${h}${n.post_data ? ` --data ${q(n.post_data)}` : ''}`;
-}
-// Entries behind the rendered rows of each network list, keyed by view, so
-// the drawer and the execution-level list never clobber each other's copy
-// buttons (both can be on screen once the drawer has been opened and closed).
-const NET_CTX = {};
-window.copyIdx = (kind, ctx, i, btn) => {
-  const n = (NET_CTX[ctx] || [])[i]; if (!n) return;
-  const txt = kind === 'curl' ? curlOf(n) : n.url;
-  try { navigator.clipboard.writeText(txt).then(() => { btn.textContent = '✓'; setTimeout(() => btn.textContent = kind === 'curl' ? 'Copy cURL' : 'Copy URL', 900); }, () => {}); } catch(e) {}
+const argParts = args => String(args || '').split(/\s+\|\s+/).map(x => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+const ACTION_LABEL = {
+  goto: 'Open page', reload: 'Reload page', back: 'Go back', wait_load: 'Wait for page load', switch_tab: 'Switch tab',
+  click: 'Click', click_link_text: 'Click link', double_click: 'Double-click', right_click: 'Right-click', hover: 'Hover',
+  fill: 'Fill in', type: 'Type into', clear: 'Clear', focus: 'Focus', select: 'Choose option', check: 'Tick', uncheck: 'Untick',
+  press: 'Press key', upload: 'Upload file', drag_to: 'Drag', scroll: 'Scroll', screenshot: 'Take screenshot', wait: 'Wait',
+  assert_text: 'Check text is shown', assert_not_text: 'Check text is not shown', assert_visible: 'Check element is visible',
+  assert_hidden: 'Check element is hidden', assert_url: 'Check page address', assert_enabled: 'Check element is enabled',
+  assert_disabled: 'Check element is disabled', assert_checked: 'Check box is ticked',
+  wait_for_element: 'Wait for element', wait_for_text: 'Wait for text', wait_for_url: 'Wait for page address',
+  run_flow: 'Run shared steps', ai_click: 'AI click', ai_assert: 'AI check', ai_extract: 'AI extract', ai_summarize: 'AI summary',
+  inspect_page: 'Inspect page', check_console_network: 'Check console and network', test_responsive: 'Test responsive layout',
+  test_form: 'Test form', explore_page: 'Explore page', test_page: 'Test page',
 };
-const fmtKv = o => Object.entries(o || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
-function netRowHtml(n, t0, ctx, idx, ti){
-  let host = '', path = n.url;
-  try { const u = new URL(n.url); host = u.host; path = u.pathname + u.search; } catch(e) {}
-  const status = n.status != null
-    ? `<span class="nstat ${n.status >= 400 ? 'sbad' : n.status >= 300 ? 'swarn' : 'sok'}">${n.status}</span>`
-    : `<span class="nstat ${n.method === 'WS' ? 'swarn' : 'sbad'}">${n.method === 'WS' ? 'WS' : 'ERR'}</span>`;
-  const slow = (n.duration_ms || 0) > 2000;
-  const summary = `<span class="nmethod">${esc(n.method)}</span>${status}
-    <span class="nurl" title="${esc(n.url)}"><span class="nhost">${esc(host)}</span>${esc(path)}${n.failure ? ` <span class="nfailure">${esc(n.failure)}</span>` : ''}</span>
-    ${ti != null ? `<span class="cfrom" onclick="event.preventDefault();openTest(${ti})">${titleOf(T[ti])}</span>` : ''}
-    <span class="ntime">${relTime(n.ts, t0)}</span>
-    <span class="ndur${slow ? ' slow' : ''}"${slow ? ' title="slow request (>2s)"' : ''}>${n.duration_ms != null ? fmtMs(n.duration_ms) : ''}</span>
-    <span class="nsize">${fmtBytes(n.size)}</span>
-    <span class="ntype"${n.resource_type ? ` title="${esc(n.resource_type)}"` : ''}>${esc(n.resource_type || '')}</span>`;
-  let qp = '';
-  try { qp = [...new URL(n.url).searchParams].map(([k, v]) => `${k} = ${v}`).join('\n'); } catch(e) {}
-  const detail = `<div class="ndetail">
-    <div class="nbtns">
-      <button class="minibtn" onclick="copyIdx('curl','${ctx}',${idx},this)">Copy cURL</button>
-      <button class="minibtn" onclick="copyIdx('url','${ctx}',${idx},this)">Copy URL</button>
-      ${n.step ? `<span class="cstep" title="active step">during: ${esc(n.step)}</span>` : ''}
-    </div>
-    ${qp ? `<div class="sublbl">Query parameters</div><pre class="codebox">${esc(qp)}</pre>` : ''}
-    ${n.request_headers ? `<div class="sublbl">Request headers</div><pre class="codebox">${esc(fmtKv(n.request_headers))}</pre>` : ''}
-    ${n.post_data ? `<div class="sublbl">Request body</div><pre class="codebox">${esc(n.post_data)}</pre>` : ''}
-    ${n.response_headers ? `<div class="sublbl">Response headers</div><pre class="codebox">${esc(fmtKv(n.response_headers))}</pre>` : ''}
-    ${n.body ? `<div class="sublbl">Response body</div><pre class="codebox netbody">${esc(n.body)}</pre>` : ''}
-  </div>`;
-  return `<details class="netrow ${n.ok ? 'ok' : 'bad'}"><summary>${summary}<span class="nchev">▸</span></summary>${detail}</details>`;
-}
-const netHeadHtml = withTest =>
-  `<div class="nethead"><span>Method</span><span>Status</span><span>Name</span>${withTest ? '<span>Test</span>' : ''}<span class="num">Offset</span><span class="num">Duration</span><span class="num">Size</span><span>Type</span><span></span></div>`;
-function netSummaryHtml(net){
-  // One pass; Math.max(...arr) would overflow the call stack on a large
-  // execution-level list (hundreds of tests × up to 1500 requests).
-  let failed = 0, bytes = 0, slowest = null, first = null, last = null;
-  for (const n of net){
-    if (!n.ok) failed++;
-    bytes += n.size || 0;
-    if (n.duration_ms != null && (slowest == null || n.duration_ms > slowest)) slowest = n.duration_ms;
-    if (n.ts != null){
-      const end = n.ts + (n.duration_ms || 0);
-      if (first == null || n.ts < first) first = n.ts;
-      if (last == null || end > last) last = end;
-    }
+const actionLabel = a => ACTION_LABEL[a] || cap(String(a || '').replace(/_/g, ' '));
+const INTERACT = {click: 'click', click_link_text: 'click', double_click: 'double-click', right_click: 'right-click', hover: 'hover over',
+  fill: 'fill in', type: 'type into', clear: 'clear', focus: 'focus', select: 'choose an option in', check: 'tick', uncheck: 'untick',
+  upload: 'upload a file to', drag_to: 'drag', table_click: 'click in', ai_click: 'click'};
+function explain(t){
+  const s = failedStep(t);
+  const raw = (s && s.error) || (t.error && t.error.message) || '';
+  if (!s || !s.action) return cleanError(raw) || 'The test stopped with an error.';
+  const [a] = argParts(s.args), A = a ? `"${a}"` : 'the element';
+  const secs = (raw.match(/Timeout (\d+)ms/) || [])[1];
+  const within = secs ? ` within ${Math.round(secs / 1000)} seconds` : '';
+  const net = (raw.match(/net::(ERR_[A-Z_]+)/) || [])[1];
+  const url = s.evidence && s.evidence.url;
+  const checks = (s.checks || []).filter(c => !c.passed && c.severity === 'error');
+  if (checks.length) return `The ${actionLabel(s.action).toLowerCase()} step found ${plural(checks.length, 'problem')}: ${checks.map(c => c.name).slice(0, 3).join(', ')}.`;
+  if (/strict mode violation/i.test(raw)) return `More than one element matches ${A}, so the step could not tell which one to use.`;
+  switch (s.action){
+    case 'assert_text': case 'wait_for_text': return `Expected text ${A} was not found on the page${within}.`;
+    case 'assert_not_text': return `Text ${A} was on the page, but it should not be.`;
+    case 'assert_visible': case 'wait_for_element': return `Expected ${A} to be visible, but it did not appear${within}.`;
+    case 'assert_hidden': return `${cap(A)} should have been hidden, but it was still visible.`;
+    case 'assert_enabled': return `${cap(A)} should be enabled, but it was disabled or missing.`;
+    case 'assert_disabled': return `${cap(A)} should be disabled, but it was enabled or missing.`;
+    case 'assert_checked': return `${cap(A)} should be ticked, but it was not.`;
+    case 'assert_url': case 'wait_for_url': return `The page address did not match ${A}${url ? ` (the browser was on ${url})` : ''}.`;
+    case 'goto': return net ? `The page ${A} could not be reached (${net}).` : `The page ${A} did not finish loading${within}.`;
+    case 'wait_load': return `The page did not finish loading${within}.`;
+    case 'press': return `Could not press ${A}.`;
+    case 'ai_assert': return `The AI check ${A} did not pass.`;
   }
-  return `<div class="netsum">
-    <span><b>${net.length}</b> requests</span>
-    <span class="${failed ? 'ko' : ''}"><b>${failed}</b> failed</span>
-    <span><b>${fmtBytes(bytes) || '0 B'}</b> transferred</span>
-    ${slowest != null ? `<span>slowest <b>${fmtMs(slowest)}</b></span>` : ''}
-    ${first != null ? `<span>span <b>${fmtMs(last - first)}</b></span>` : ''}</div>`;
+  if (INTERACT[s.action]){
+    if (/is not an? <|not a (checkbox|radio|select)/i.test(raw)) return `Found ${A}, but it is not the kind of field this step expected, so it could not ${INTERACT[s.action]} it.`;
+    if (/intercepts pointer events/i.test(raw)) return `${cap(A)} is on the page, but something else was covering it.`;
+    return `Could not find ${A} on the page to ${INTERACT[s.action]}${within}.`;
+  }
+  return `The step "${actionLabel(s.action)}${a ? ' ' + A : ''}" did not complete.` + (cleanError(raw) ? ' ' + cleanError(raw) : '');
+}
+function stepText(s){
+  return s.action ? `${esc(actionLabel(s.action))}${s.args ? ` <code>${esc(s.args)}</code>` : ''}` : esc(s.name);
+}
+function failureShot(t){
+  // The viewport at the failure site is the one a reviewer recognises.
+  const a = t.artifacts || {};
+  const vp = (a.screenshots || []).find(x => x.kind === 'viewport');
+  return (vp && vp.path) || a.screenshot || ((a.screenshots || [])[0] || {}).path || null;
 }
 
-/* ── one console view and one network view, used by the drawer and the
-   execution-level tabs. Items are {e, t0, i?}: the entry, the owning test's
-   t0 for offsets, and (aggregated views only) the test index. ── */
-const chipHtml = (cls, key, label, n, on) =>
-  `<span class="fchip ${cls}${on ? ' on' : ''}" data-k="${key}">${label}<span class="n">${n}</span></span>`;
-function wireChips(host, cls, onPick, toggle){
-  host.querySelectorAll('.' + cls).forEach(ch => ch.onclick = () => {
-    const picked = onPick(ch.dataset.k, toggle);
-    host.querySelectorAll('.' + cls).forEach(x => x.classList.toggle('on', x.dataset.k === picked));
-  });
-}
-function showMore(list, id, hidden, onClick){
-  if (hidden <= 0) return;
-  list.insertAdjacentHTML('beforeend', `<button class="showmore" id="${id}">Show more (${hidden} hidden)</button>`);
-  document.getElementById(id).onclick = onClick;
-}
-function consoleView({items, list, chipsHost, search, group, pageSize, cls}){
-  // group: collapse identical messages (drawer); aggregated view keeps every row
-  const t0 = items.length ? items[0].t0 : null;
-  const rows = group ? groupConsole(items.map(x => x.e)).map(e => ({e, t0})) : items;
-  rows.forEach(x => { x.q = (x.e.text + ' ' + (x.e.location || '')).toLowerCase(); });
-  const tally = {};
-  rows.forEach(x => { const l = lvlOf(x.e); tally[l] = (tally[l] || 0) + 1; });
-  chipsHost.innerHTML = CON_LEVELS.map(([l, lbl]) => chipHtml(cls, l, lbl, tally[l] || 0, false)).join('');
-  let lvl = '', q = '', shown = pageSize;
-  const render = () => {
-    const keep = rows.filter(x => (!lvl || lvlOf(x.e) === lvl) && (!q || x.q.includes(q)));
-    list.innerHTML = keep.slice(0, shown).map(x => conRowHtml(x.e, x.t0, x.i)).join('') ||
-      '<div class="empty" style="padding:10px 0">No matching messages.</div>';
-    showMore(list, list.id + '-more', keep.length - shown, () => { shown += 2 * pageSize; render(); });
-  };
-  wireChips(chipsHost, cls, k => { lvl = lvl === k ? '' : k; render(); return lvl; });
-  search.addEventListener('input', debounce(e => { q = e.target.value.toLowerCase(); shown = pageSize; render(); }));
-  render();
-}
-function networkView({items, list, chipsHost, search, sortSel, ctx, pageSize, withTest, cls}){
-  items.forEach(x => { x.q = x.e.url.toLowerCase(); x.c = catOf(x.e); });
-  const tally = {'': items.length, bad: 0};
-  items.forEach(x => { if (!x.e.ok) tally.bad++; tally[x.c] = (tally[x.c] || 0) + 1; });
-  chipsHost.innerHTML = NET_CATS.filter(([c]) => tally[c]).map(([c, lbl]) => chipHtml(cls, c, lbl, tally[c], c === '')).join('');
-  let cat = '', q = '', sort = 'time', shown = pageSize;
-  const render = () => {
-    const keep = items.filter(x => (cat === '' || (cat === 'bad' ? !x.e.ok : x.c === cat)) && (!q || x.q.includes(q)));
-    if (sort === 'dur') keep.sort((a, b) => (b.e.duration_ms || 0) - (a.e.duration_ms || 0));
-    else if (sort === 'status') keep.sort((a, b) => (b.e.status || 999) - (a.e.status || 999));
-    else if (sort === 'size') keep.sort((a, b) => (b.e.size || 0) - (a.e.size || 0));
-    NET_CTX[ctx] = keep.map(x => x.e);
-    const rows = keep.slice(0, shown).map((x, i) => netRowHtml(x.e, x.t0, ctx, i, withTest ? x.i : undefined)).join('');
-    list.innerHTML = rows ? netHeadHtml(withTest) + rows : '<div class="empty" style="padding:10px 0">No matching requests.</div>';
-    showMore(list, list.id + '-more', keep.length - shown, () => { shown += 2 * pageSize; render(); });
-  };
-  wireChips(chipsHost, cls, k => { cat = k; render(); return cat; });
-  search.addEventListener('input', debounce(e => { q = e.target.value.toLowerCase(); shown = pageSize; render(); }));
-  if (sortSel) sortSel.addEventListener('change', e => { sort = e.target.value; render(); });
-  render();
-}
+/* ── theme ── */
+const setTheme = m => { document.documentElement.dataset.theme = m; try{localStorage.setItem('webagent-theme', m)}catch(e){} };
+setTheme((()=>{try{return localStorage.getItem('webagent-theme')}catch(e){return null}})() || 'light');
+$('themebtn').innerHTML = icon('moon');
+$('themebtn').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 
-/* ── drawer panes ── */
-function consolePaneHtml(t){
-  if (!(t.console || []).length && !t.console_dropped)
-    return '<div class="empty" style="padding:14px 0">No console messages captured.</div>';
-  return `<div class="minibar"><input class="minisearch" id="consearch" placeholder="Search messages…"><span id="conchips"></span></div>
-    <div class="loglist" id="conlist"></div>
-    ${t.console_dropped ? `<div class="dropnote">${t.console_dropped} more entries were not captured (flow limit).</div>` : ''}`;
-}
-function netPaneHtml(t){
-  const net = t.network || [];
-  if (!net.length && !t.network_dropped)
-    return '<div class="empty" style="padding:14px 0">No network activity recorded.</div>';
-  return `${netSummaryHtml(net)}
-    <div class="minibar"><input class="minisearch" id="netsearch" placeholder="Search URL or endpoint…">
-      <select class="minisel" id="netsort"><option value="time">By time</option><option value="dur">By duration</option><option value="status">By status</option><option value="size">By size</option></select>
-      <span id="netchips"></span></div>
-    <div class="netlist" id="netlist"></div>
-    ${t.network_dropped ? `<div class="dropnote">${t.network_dropped} more requests were not captured (flow limit).</div>` : ''}`;
-}
-function wireDrawerPanes(t){
-  const $ = id => document.getElementById(id);
-  if ($('conlist')) consoleView({
-    items: (t.console || []).map(e => ({e, t0: t.t0})), list: $('conlist'), chipsHost: $('conchips'),
-    search: $('consearch'), group: true, pageSize: 200, cls: 'cf'});
-  if ($('netlist')) networkView({
-    items: (t.network || []).map(e => ({e, t0: t.t0})), list: $('netlist'), chipsHost: $('netchips'),
-    search: $('netsearch'), sortSel: $('netsort'), ctx: 'drawer', pageSize: 100, withTest: false, cls: 'nf'});
-}
-function relatedHtml(t){
-  if (!failedLike(t.status)) return '';
-  const fs = failedStep(t);
-  const from = fs && fs.ts != null ? fs.ts - 2000 :
-    t.t0 != null ? t.t0 + Math.max(t.duration_ms - 10000, 0) : null;
-  if (from == null) return '';
-  const end = t.t0 != null ? t.t0 + t.duration_ms + 2000 : Infinity;
-  const cons = (t.console || []).filter(c => lvlOf(c) === 'error' && c.ts >= from && c.ts <= end).slice(-5);
-  const net = (t.network || []).filter(n => !n.ok && n.ts >= from && n.ts <= end).slice(-5);
-  if (!cons.length && !net.length) return '';
-  // failed requests reuse the console row shape: level "net", text = request + outcome
-  const netRows = net.map(n => ({level: 'error', ts: n.ts,
-    text: `${n.method} ${n.url} — ${n.failure ? n.failure : 'HTTP ' + n.status}`}));
-  return `<div class="sec"><h3>Likely related activity</h3><div class="relbox">
-    <div class="relnote">Browser activity near the failure — troubleshooting hints, not a confirmed root cause.</div>
-    ${cons.map(c => conRowHtml(c, t.t0)).join('')}
-    ${netRows.map(c => conRowHtml(c, t.t0).replace('>error<', '>net<')).join('')}
-  </div></div>`;
-}
-let lastDtab = 'd-con';
-let drawerSeq = 0;   // ignore shard arrivals for a test the user has left
-function openTest(i){
-  const t = T[i];
-  const counts = t.counts;
-  const loading = '<div class="empty" style="padding:14px 0">Loading detail data…</div>';
-  const drawer = document.getElementById('drawer');
-  drawer.innerHTML = `
-    <div class="dhead">
-      <div class="dtitle"><span class="badge ${effStatus(t)}">${effStatus(t)}</span><h2 id="dtitle">${titleOf(t)}</h2>
-        <button class="iconbtn" onclick="closeDrawer()" aria-label="Close details">✕</button></div>
-      <div class="dmeta">
-        ${t.file_title ? `<div><span>suite </span><b>${esc(t.file_title)}</b></div>` : ''}
-        <div><span>file </span><b>${esc(t.file)}</b></div>
-        <div><span>test </span><b>${esc(t.name)}</b></div>
-        <div><span>duration </span><b>${fmtMs(t.duration_ms)}</b></div>
-        <div><span>started </span><b>${t.started_at ? new Date(t.started_at).toLocaleTimeString() : '—'}</b></div>
-        ${t.profile && t.profile.name ? `<div><span>profile </span><b>${esc(t.profile.label || t.profile.name)}</b></div>` : ''}
-        ${t.retries ? `<div><span>reruns </span><b>${t.retries}</b></div>` : ''}
-        ${(t.markers||[]).length ? `<div><span>markers </span><b>${t.markers.map(esc).join(', ')}</b></div>` : ''}
-      </div>
-    </div>
-    <div class="dbody">
-      ${errorHtml(t)}
-      <div id="d-rel">${hasDetail(t) ? relatedHtml(t) : ''}</div>
-      ${agentHtml(t)}
-      ${healHtml(t)}
-      <div class="sec"><h3>Steps</h3>${stepsHtml(t)}</div>
-      <div class="sec">
-        <div class="dtabs" role="tablist">
-          <span class="dtab" role="tab" tabindex="0" data-t="d-con">Console (${counts.console})</span>
-          <span class="dtab" role="tab" tabindex="0" data-t="d-net">Network (${counts.network})</span>
-        </div>
-        <div class="dpane" id="d-con">${hasDetail(t) ? consolePaneHtml(t) : loading}</div>
-        <div class="dpane" id="d-net">${hasDetail(t) ? netPaneHtml(t) : loading}</div>
-      </div>
-    </div>`;
-  const tabs = [...drawer.querySelectorAll('.dtab')];
-  const activate = tab => {
-    tabs.forEach(x => { x.classList.toggle('active', x === tab); x.setAttribute('aria-selected', x === tab); });
-    drawer.querySelectorAll('.dpane').forEach(x => x.classList.toggle('active', x.id === tab.dataset.t));
-    lastDtab = tab.dataset.t;   // keep the selected tab across tests
+/* ── 1. execution summary ── */
+(function summary(){
+  if (ENV.build_name){ $('htitle').textContent = ENV.build_name; document.title = ENV.build_name; }
+  $('envchip').textContent = ENV.env;
+  $('hdate').textContent = fmtDate(DATA.created_at);
+  $('hrunid').textContent = DATA.run_id;
+  $('copyicon').innerHTML = icon('copy');
+  $('copyrun').onclick = () => {
+    const done = () => { $('copyicon').innerHTML = icon('check'); setTimeout(() => $('copyicon').innerHTML = icon('copy'), 1200); };
+    try { navigator.clipboard.writeText(DATA.run_id).then(done, () => {}); } catch(e){}
   };
-  activate(tabs.find(x => x.dataset.t === lastDtab) || tabs[0]);
-  tabs.forEach(tab => {
-    tab.onclick = () => activate(tab);
-    tab.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tab); } };
+  const device = profiles.length ? profiles.map(cap).join(' & ') : 'Desktop';
+  $('hmeta').innerHTML = [
+    [icon('globe'), esc(String(ENV.env).toUpperCase())],
+    [icon('monitor'), esc(cap(ENV.browser)) + (ENV.headless ? ' · headless' : '')],
+    [icon(profiles.includes('mobile') ? 'phone' : 'monitor'), esc(device)],
+    [icon('clock'), esc(fmtMs(TOT.duration_ms))],
+    [icon('play'), ENV.ci ? 'CI pipeline' : 'Local run'],
+  ].map(([i, v]) => `<span>${i}${v}</span>`).join('');
+
+  const suites = Object.keys(bySuite).length;
+  const failedSuites = Object.values(bySuite).filter(ts => ts.some(t => failedLike(t.status))).length;
+  const executed = TOT.total - TOT.skipped;
+  const v = !TOT.total ? ['unknown', 'info', 'No tests ran', 'The run finished without executing any test.']
+    : failing ? ['bad', 'x', `${plural(failing, 'test')} failed`,
+        `${failing} of ${TOT.total} tests failed${failedSuites > 1 ? ` across ${failedSuites} suites` : ''}. Each failure is listed below with the step where it stopped.`]
+    : TOT.skipped ? ['info', 'info', 'Passed with skipped tests', `All ${executed} tests that ran passed; ${TOT.skipped} ${TOT.skipped === 1 ? 'was' : 'were'} skipped.`]
+    : ['good', 'check', 'All tests passed', `All ${TOT.total} tests passed in ${fmtMs(TOT.duration_ms)}.`];
+  const healNote = healCount && !failing ? ` ${plural(healCount, 'step')} needed a fallback locator; see Run details.` : '';
+  $('verdict').innerHTML = `<div class="run-verdict run-verdict-${v[0]}" role="status">
+    <span class="run-verdict-icon">${icon(v[1])}</span>
+    <div><p class="run-verdict-headline">${v[2]}</p><p class="run-verdict-detail">${v[3]}${healNote}</p></div></div>`;
+
+  const pct = n => (n / Math.max(TOT.total, 1) * 100).toFixed(2);
+  const clean = TOT.passed - flakyCount;
+  $('hero').innerHTML = `<div class="run-hero">
+    <div class="run-rate"><span class="run-rate-value">${Math.floor(TOT.pass_rate)}<span class="run-rate-unit">%</span></span>
+      <span class="run-rate-label">pass rate</span></div>
+    <div class="run-hero-counts">
+      ${failing ? `<p class="run-attention"><span class="run-attention-value">${failing}</span> ${failing === 1 ? 'test needs' : 'tests need'} attention</p>`
+        : TOT.total ? `<p class="run-attention run-attention-clear">${icon('check')} Nothing needs attention</p>` : ''}
+      <p class="run-breakdown"><span>${TOT.total} run</span><span class="run-breakdown-pass">${TOT.passed} passed</span>
+        ${failing ? `<span class="run-breakdown-fail">${failing} failed</span>` : ''}
+        ${flakyCount ? `<span>${flakyCount} passed on retry</span>` : ''}
+        ${TOT.skipped ? `<span class="run-breakdown-skip">${TOT.skipped} skipped</span>` : ''}</p>
+      <div class="run-bar" role="img" aria-label="${TOT.passed} passed, ${failing} failed, ${TOT.skipped} skipped">
+        <div class="run-bar-pass" style="width:${pct(clean)}%"></div><div class="run-bar-flaky" style="width:${pct(flakyCount)}%"></div>
+        <div class="run-bar-fail" style="width:${pct(failing)}%"></div><div class="run-bar-skip" style="width:${pct(TOT.skipped)}%"></div></div>
+      <p class="run-bar-key"><span class="run-key-pass">passed</span>${flakyCount ? '<span class="run-key-flaky">passed on retry</span>' : ''}
+        ${failing ? '<span class="run-key-fail">failed</span>' : ''}${TOT.skipped ? '<span class="run-key-skip">skipped</span>' : ''}</p>
+    </div>
+    <div class="run-stats">
+      <div class="run-stat"><div class="metric-label">Duration</div><div class="metric-value">${esc(fmtMs(TOT.duration_ms))}</div></div>
+      <div class="run-stat"><div class="metric-label">Suites</div><div class="metric-value">${suites}</div></div>
+    </div></div>`;
+  $('foot').textContent = `Generated ${fmtDate(DATA.created_at)} · Web Agent ${ENV.framework}`;
+})();
+
+/* ── 2. tests requiring attention ── */
+(function attention(){
+  const groups = {};
+  T.filter(t => failedLike(t.status)).forEach(t => (groups[t.file] ||= []).push(t));
+  if (!Object.keys(groups).length) return;
+  $('attention').hidden = false;
+  // A suite that is a single test (its heading is the test) needs no header of its own.
+  $('failures').innerHTML = Object.values(groups).map(ts => `<div class="failure-group">
+    ${ts.every(t => (t.title || t.name) === suiteTitle(t)) ? ''
+      : `<div class="failure-group-head"><b>${esc(suiteTitle(ts[0]))}</b>${esc(areaLabel(areaOf(ts[0])))} · ${plural(ts.length, 'failure')}</div>`}
+    ${ts.map(t => {
+      const s = failedStep(t), shot = failureShot(t);
+      return `<div class="failure-line">
+        <button class="failure-row" data-open="${t._i}" aria-haspopup="dialog">${icon('x')}
+          <span class="failure-row-main">
+            <span class="failure-row-name">${titleOf(t)}</span>
+            <span class="failure-row-why">${esc(explain(t))}</span>
+            ${s ? `<span class="failure-row-step">Failed step: ${stepText(s)}</span>` : ''}
+            <span class="failure-row-tags">${statusBadge(t.status)}${badge(esc(areaLabel(areaOf(t))))}${badge(icon('clock') + esc(fmtMs(t.duration_ms)))}
+              ${profiles.length > 1 && t.profile ? badge(esc(cap(t.profile.name)), 'primary') : ''}
+              ${shot ? '' : badge('No screenshot')}</span>
+          </span></button>
+        ${shot ? `<a class="failure-shot" href="${esc(shot)}" target="_blank" rel="noopener" title="Open the screenshot taken at the failure"><img src="${esc(shot)}" alt="Screen when ${titleOf(t)} failed" loading="lazy"></a>` : ''}
+      </div>`;
+    }).join('')}</div>`).join('');
+})();
+
+/* ── 3. all tests ── */
+let statusFilter = '';
+const FILTERS = [['', 'All', TOT.total, 'var(--primary)'], ['failed', 'Failed', failing, 'var(--bad)'],
+  ['passed', 'Passed', TOT.passed, 'var(--good)'], ['flaky', 'Passed on retry', flakyCount, 'var(--warn)'], ['skipped', 'Skipped', TOT.skipped, 'var(--dot-skip)']]
+  .filter(([k, , n]) => !k || n);
+$('fchips').innerHTML = FILTERS.map(([k, l, n, c]) =>
+  `<button class="qa-tab-btn filter-chip${k ? '' : ' active'}" data-f="${k}" style="--c:${c}">${l}<span class="n">${n}</span></button>`).join('');
+$('fchips').querySelectorAll('[data-f]').forEach(ch => ch.onclick = () => {
+  statusFilter = ch.dataset.f;
+  $('fchips').querySelectorAll('[data-f]').forEach(x => x.classList.toggle('active', x === ch));
+  renderTests();
+});
+const markers = [...new Set(T.flatMap(t => t.markers || []))].sort();
+$('marker').innerHTML += markers.map(m => `<option>${esc(m)}</option>`).join('');
+$('marker').hidden = !markers.length;   // nothing to pick from — don't show an empty control
+const areas = [...new Set(T.map(areaOf))].sort();
+$('suite').innerHTML += areas.map(a => `<option value="${esc(a)}">${esc(areaLabel(a))}</option>`).join('');
+$('suite').hidden = areas.length < 2;
+$('searchicon').innerHTML = icon('search');
+$('search').addEventListener('input', debounce(renderTests));
+['marker','suite'].forEach(id => $(id).addEventListener('change', renderTests));
+
+function signalBadges(t){
+  // Technical signals as badges: red for errors, amber for warnings, and
+  // nothing at all when the test stayed clean.
+  const c = t.counts || {};
+  return [c.con_err && badge(plural(c.con_err, 'console error'), 'danger'),
+          c.con_warn && badge(plural(c.con_warn, 'console warning'), 'warning'),
+          c.net_bad && badge(plural(c.net_bad, 'failed request')),   // mostly third-party beacons: noted, not alarmed
+          c.checks_flagged && badge(plural(c.checks_flagged, 'check flagged', 'checks flagged'), 'warning')].filter(Boolean).join('');
+}
+const openGroups = {};   // the reader's own open/close choices win over the defaults
+function renderTests(){
+  const q = $('search').value.toLowerCase(), mk = $('marker').value, ar = $('suite').value;
+  const filtering = !!(q || mk || ar || statusFilter);
+  const keep = T.filter(t => {
+    if (statusFilter === 'failed' ? !failedLike(t.status) : statusFilter === 'flaky' ? !isFlaky(t) :
+        statusFilter === 'passed' ? (t.status !== 'passed' || isFlaky(t)) : (statusFilter && t.status !== statusFilter)) return false;
+    if (mk && !(t.markers||[]).includes(mk)) return false;
+    if (ar && areaOf(t) !== ar) return false;
+    return !q || t._hay.includes(q);
   });
-  if (hasDetail(t)) wireDrawerPanes(t);
-  else {
-    const seq = ++drawerSeq;
-    loadDetail(i).then(
-      () => {
-        if (seq !== drawerSeq) return;
-        document.getElementById('d-rel').innerHTML = relatedHtml(t);
-        document.getElementById('d-con').innerHTML = consolePaneHtml(t);
-        document.getElementById('d-net').innerHTML = netPaneHtml(t);
-        wireDrawerPanes(t);
-      },
-      () => {
-        if (seq !== drawerSeq) return;
-        const miss = '<div class="empty" style="padding:14px 0">Detail data unavailable — this test\'s shard is missing from assets/data/.</div>';
-        document.getElementById('d-con').innerHTML = miss;
-        document.getElementById('d-net').innerHTML = miss;
-      });
-  }
-  drawer.classList.add('show');
-  document.getElementById('overlay').classList.add('show');
-  drawer.querySelector('.iconbtn').focus();
+  const groups = {};
+  keep.forEach(t => (groups[t.file] ||= []).push(t));
+  const few = Object.keys(groups).length <= 3;
+  // Suites with failures lead; the rest keep their run order.
+  const ordered = Object.entries(groups).sort(([, a], [, b]) => b.some(t => failedLike(t.status)) - a.some(t => failedLike(t.status)));
+  $('tests').innerHTML = keep.length ? ordered.map(([file, ts]) => {
+    const ko = ts.filter(t => failedLike(t.status)).length, time = ts.reduce((n,t) => n + t.duration_ms, 0);
+    // Passing suites fold away so the failing ones are what the eye lands on.
+    const open = openGroups[file] ?? (ko > 0 || few || filtering);
+    return `<div class="tgroup${open ? '' : ' closed'}" data-file="${esc(file)}">
+      <button class="tgroup-head" aria-expanded="${open}">${icon('chev', 'toggle-icon')}
+        <span class="tgroup-name">${esc(suiteTitle(ts[0]))}<small>${esc(file)}</small></span>
+        <span class="tgroup-counts">${ts.length - ko} of ${ts.length} passed${ko ? `<span class="bad">${ko} failed</span>` : ''}</span>
+        <span class="trow-dur">${fmtMs(time)}</span></button>
+      <div class="tgroup-body">${ts.map(t => {
+        const st = effStatus(t);
+        return `<button class="trow ${st}" data-open="${t._i}" aria-haspopup="dialog"><span class="sdot ${st}"></span>
+          <span class="trow-name">${titleOf(t)}${t.title && t.title !== t.name ? `<span class="fn">${esc(t.name)}</span>` : ''}</span>
+          <span class="trow-tags">${signalBadges(t)}
+            ${(t.healings||[]).length ? iconBadge('zap', 'warning', HEALED) : ''}
+            ${t.agent ? badge(icon('bot') + 'Autonomous', 'info') : ''}
+            ${profiles.length > 1 && t.profile ? badge(esc(cap(t.profile.name)), 'primary') : ''}
+            ${(t.markers||[]).map(m => badge(esc(m))).join('')}
+            ${st !== 'passed' ? statusBadge(st) : ''}</span>
+          <span class="trow-dur">${fmtMs(t.duration_ms)}</span></button>`;
+      }).join('')}</div></div>`;
+  }).join('') : `<div class="empty-state">${icon('search')}No tests match the current filters.</div>`;
 }
-function closeDrawer(){
-  document.getElementById('drawer').classList.remove('show');
-  document.getElementById('overlay').classList.remove('show');
-}
-document.getElementById('overlay').onclick = closeDrawer;
+$('tests').addEventListener('click', e => {
+  const head = e.target.closest('.tgroup-head');
+  if (!head) return;
+  const g = head.parentElement, open = g.classList.toggle('closed') === false;
+  head.setAttribute('aria-expanded', open);
+  openGroups[g.dataset.file] = open;
+});
+renderTests();
+$('tcount').textContent = TOT.total;
+
+/* ── suites ── */
+(function suites(){
+  const rows = Object.entries(bySuite).map(([file, ts]) => {
+    const ko = ts.filter(t => failedLike(t.status)).length, run = ts.filter(t => t.status !== 'skipped').length;
+    return {file, ts, ko, rate: run ? Math.floor((run - ko) / run * 100) : 0, time: ts.reduce((n,t) => n + t.duration_ms, 0)};
+  }).sort((a, b) => (b.ko > 0) - (a.ko > 0));
+  $('scount').textContent = rows.length;
+  $('suites').innerHTML = `<div class="list"><div class="list-head"><span>Suite</span><span>Pass rate</span><span>Results</span><span class="list-muted">Duration</span></div>
+    ${rows.map(r => `<button class="list-row" data-suite="${esc(r.file)}">
+      <span class="list-name">${esc(suiteTitle(r.ts[0]))}<small>${esc(areaLabel(areaOf(r.ts[0])))} · ${esc(r.file)}</small></span>
+      <span class="list-rate ${r.ko ? 'bad' : 'good'}">${r.rate}%</span>
+      <span class="list-counts">${r.ts.length - r.ko} of ${r.ts.length} passed${r.ko ? ` · <span class="bad">${r.ko} failed</span>` : ''}
+        <span class="list-bar"><span class="run-bar-pass" style="width:${(r.ts.length - r.ko) / r.ts.length * 100}%"></span><span class="run-bar-fail" style="width:${r.ko / r.ts.length * 100}%"></span></span></span>
+      <span class="list-muted">${fmtMs(r.time)}</span></button>`).join('')}</div>`;
+  $('suites').addEventListener('click', e => {
+    const row = e.target.closest('[data-suite]');
+    if (!row) return;
+    $('search').value = row.dataset.suite;
+    showTab('tests'); renderTests();
+    $('tests').scrollIntoView({behavior: 'smooth', block: 'start'});
+  });
+})();
+
+/* ── run details ── */
+(function runDetails(){
+  const starts = T.map(t => t.started_at).filter(Boolean).sort();
+  const dl = rows => rows.filter(r => r[1] != null && r[1] !== '').map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  const labels = [...new Set(T.map(t => t.profile && (t.profile.label || t.profile.name)).filter(Boolean))];
+  $('sum-timing').innerHTML = dl([['Duration', esc(fmtMs(TOT.duration_ms))], ['Started', esc(fmtDate(starts[0] || DATA.created_at))],
+    ['Finished', esc(fmtDate(DATA.created_at))], ['Total test time', esc(fmtMs(T.reduce((n,t) => n + t.duration_ms, 0)))]]);
+  $('sum-env').innerHTML = dl([['Environment', esc(ENV.env)], ['Build', esc(ENV.build_name || 'Web Test Report')],
+    ['Browser', esc(cap(ENV.browser) + (ENV.headless ? ' · headless' : ''))], ['Devices', labels.map(esc).join('<br>')],
+    ['Operating system', esc(ENV.os)], ['Run type', ENV.ci ? badge('CI pipeline', 'success') : badge('Local run', 'primary')]]);
+  $('sum-tool').innerHTML = dl([['Web Agent', esc(ENV.framework)], ['Python', esc(ENV.python)],
+    ['Playwright', esc(ENV.playwright)], ['Run ID', `<span class="mono">${esc(DATA.run_id)}</span>`]]);
+
+  const top = [...T].sort((a,b) => b.duration_ms - a.duration_ms).slice(0, 7);
+  const max = Math.max(...top.map(t => t.duration_ms), 1);
+  $('slowest').innerHTML = top.length ? top.map(t => `<div class="slow-row">
+    <button data-open="${t._i}">${titleOf(t)}</button><span class="list-muted">${fmtMs(t.duration_ms)}</span>
+    <span class="list-bar"><span class="${failedLike(t.status) ? 'run-bar-fail' : 'run-bar-pass'}" style="width:${t.duration_ms/max*100}%"></span></span></div>`).join('')
+    : '<p class="empty-inline">No tests ran.</p>';
+
+  const healed = T.filter(t => (t.healings||[]).length);
+  $('healsum').innerHTML = healed.length
+    ? `<p class="sub-lede">These steps passed only because a fallback locator found the element. Update the flow so they pass on the first attempt.</p>`
+      + healed.map(t => `<div class="slow-row"><button data-open="${t._i}">${titleOf(t)}</button>
+          <span class="list-muted">${plural(t.healings.length, 'step')}</span></div>`).join('')
+    : `<p class="empty-inline">${icon('check')} No steps needed a fallback locator.</p>`;
+})();
 
 /* ── timeline ── */
 (function timeline(){
   const withT = byStart.filter(i => T[i]._startMs != null);
-  if (!withT.length){ document.getElementById('lanes').innerHTML = '<div class="empty">No timing data.</div>'; return; }
-  const start = i => T[i]._startMs;
-  const end = i => start(i) + T[i].duration_ms;
+  if (!withT.length){ $('lanes').innerHTML = '<div class="empty-state">No timing data.</div>'; return; }
+  const start = i => T[i]._startMs, end = i => start(i) + T[i].duration_ms;
   let t0 = Infinity, t1 = -Infinity;
   withT.forEach(i => { t0 = Math.min(t0, start(i)); t1 = Math.max(t1, end(i)); });
   const span = Math.max(t1 - t0, 1);
@@ -728,46 +416,36 @@ document.getElementById('overlay').onclick = closeDrawer;
     if (!L){ L = {end: 0, items: []}; lanes.push(L); }
     L.items.push(i); L.end = end(i);
   });
-  document.getElementById('wallclock').textContent = 'wall clock ' + fmtMs(span);
-  document.getElementById('lanes').innerHTML = lanes.map((l, n) => `
-    <div class="lane"><span class="lb">w${n}</span><div class="track">${l.items.map(i => `
-      <div class="tbar ${effStatus(T[i])}" onclick="openTest(${i})"
-        title="${titleOf(T[i])} · ${fmtMs(T[i].duration_ms)}"
-        style="left:${(start(i)-t0)/span*100}%;width:${Math.max(T[i].duration_ms/span*100, .4)}%"></div>`).join('')}</div></div>`).join('');
-  document.getElementById('ticks').innerHTML =
-    [0,.25,.5,.75,1].map(f => `<span>${fmtMs(span*f)}</span>`).join('');
+  $('wallclock').textContent = `Wall clock ${fmtMs(span)}.`;
+  $('lanes').innerHTML = lanes.map((l, n) => `
+    <div class="lane"><span class="lb">Lane ${n + 1}</span><div class="track">${l.items.map(i => `
+      <button class="tbar ${effStatus(T[i])}" data-open="${i}" title="${titleOf(T[i])} · ${fmtMs(T[i].duration_ms)}"
+        style="left:${(start(i)-t0)/span*100}%;width:${Math.max(T[i].duration_ms/span*100, .4)}%"></button>`).join('')}</div></div>`).join('');
+  $('ticks').innerHTML = [0,.25,.5,.75,1].map(f => `<span>${fmtMs(span*f)}</span>`).join('');
 })();
 
-/* ── execution-level console & network (secondary, aggregated) ──
-   Tab badges come from the precomputed counts; the entries themselves load
-   on first open of either tab (all detail shards, rendered together). */
+/* ── tabs, shortcuts, and the one click handler that opens a test ── */
+document.querySelectorAll('.qa-tabs [data-tab]').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(name){
+  document.querySelectorAll('.qa-tabs [data-tab]').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === name); b.setAttribute('aria-selected', b.dataset.tab === name);
+  });
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + name));
+  if (name === 'console' || name === 'network') ensureGlobalViews();
+}
+document.addEventListener('click', e => {
+  const o = e.target.closest('[data-open]');
+  if (o){ e.preventDefault(); openTest(+o.dataset.open); }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && !e.target.matches('input,select,textarea')) { e.preventDefault(); showTab('tests'); $('search').focus(); }
+  if (e.key === 'Escape') closeDrawer();
+});
 (function globalBadges(){
   let c = 0, n = 0;
   T.forEach(t => { c += t.counts.console; n += t.counts.network; });
-  document.getElementById('ccount').textContent = c;
-  document.getElementById('ncount').textContent = n;
-  document.getElementById('gconlist').innerHTML = '<div class="empty">Loading detail data…</div>';
-  document.getElementById('gnetlist').innerHTML = '<div class="empty">Loading detail data…</div>';
+  $('ccount').textContent = c;
+  $('ncount').textContent = n;
+  $('gconlist').innerHTML = '<div class="empty-inline" style="padding:.75rem">Loading…</div>';
+  $('gnetlist').innerHTML = '<div class="empty-inline" style="padding:.75rem">Loading…</div>';
 })();
-let globalReady = null;
-function ensureGlobalViews(){
-  if (globalReady) return;
-  globalReady = Promise.all(T.map((t, i) => loadDetail(i).then(() => 0, () => 1)))
-    .then(fails => initGlobalViews(fails.reduce((a, b) => a + b, 0)));
-}
-function initGlobalViews(missing){
-  const $ = id => document.getElementById(id);
-  if (missing){
-    const note = `<div class="dropnote">Detail for ${missing} test(s) could not be loaded (missing shard files).</div>`;
-    $('gconlist').insertAdjacentHTML('beforebegin', note);
-    $('gnetlist').insertAdjacentHTML('beforebegin', note);
-  }
-  const bySeq = (a, b) => (a.e.ts ?? 0) - (b.e.ts ?? 0) || (a.e.seq ?? 0) - (b.e.seq ?? 0);
-  const CON = T.flatMap((t, i) => (t.console || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
-  const NET = T.flatMap((t, i) => (t.network || []).map(e => ({e, i, t0: t.t0}))).sort(bySeq);
-  consoleView({items: CON, list: $('gconlist'), chipsHost: $('gconchips'), search: $('gconsearch'),
-               group: false, pageSize: 200, cls: 'gcf'});
-  $('gnetsum').innerHTML = netSummaryHtml(NET.map(x => x.e));
-  networkView({items: NET, list: $('gnetlist'), chipsHost: $('gnetchips'), search: $('gnetsearch'),
-               sortSel: null, ctx: 'global', pageSize: 150, withTest: true, cls: 'gnf'});
-}

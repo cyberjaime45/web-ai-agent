@@ -14,7 +14,7 @@ import sys
 from app.config.settings import settings
 from app.utils.build import get_build_name
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 CREATED_BY = "Cyberjaime45"
 
 _ART = (

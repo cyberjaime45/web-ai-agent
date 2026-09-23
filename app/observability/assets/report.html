@@ -7,97 +7,106 @@
 <link rel="stylesheet" href="assets/report.css">
 </head>
 <body>
-<header class="topbar">
-  <section class="hero">
-    <div class="hmain">
-      <div class="hlogo"><img src="assets/logo.png" alt="UP QA"></div>
-      <div class="hbody">
-        <div class="htitle"><h1 id="htitle">Web Test Report</h1><span class="hchip" id="envchip"></span></div>
-        <div class="hmeta">
-          <span id="hdate"></span>
-          <span>Run ID: <b class="mono" id="hrunid"></b><button class="copybtn" id="copyrun" title="Copy run id">⧉</button></span>
-          <span>Triggered by: <b id="htrigger"></b></span>
-          <span>Browser: <b id="hbrowser"></b></span>
+<nav class="qa-navbar">
+  <div class="qa-navbar-in">
+    <span class="navbar-brand">UP QA</span>
+    <span class="navbar-sub">Web Agent report</span>
+    <button class="nav-icon" id="themebtn" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
+  </div>
+</nav>
+
+<main class="container">
+  <!-- 1. Execution summary: what ran, where, and the one-line answer -->
+  <section class="qa-card" aria-labelledby="htitle">
+    <div class="qa-card-body">
+      <div class="report-identity">
+        <div>
+          <h1 class="suite-name"><span id="htitle">Web Test Report</span><span class="qa-badge qa-badge-platform" id="envchip"></span></h1>
+          <div class="meta-row" id="hmeta"></div>
+        </div>
+        <div class="report-side">
+          <div class="report-timestamp" id="hdate"></div>
+          <button class="link-btn" id="copyrun" title="Copy the run ID">Run <span class="mono" id="hrunid"></span><span id="copyicon"></span></button>
         </div>
       </div>
-      <div class="hright">
-        <button class="iconbtn" id="themebtn" title="Toggle dark mode">◐</button>
-        <span class="pill" id="statuspill"></span>
-      </div>
+      <div id="verdict"></div>
+      <div id="hero"></div>
     </div>
-    <div class="pulselbl">Execution order</div>
-    <div class="pulse" id="pulse"></div>
   </section>
-  <nav class="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-tab="overview">Overview</button>
-    <button role="tab" aria-selected="false" data-tab="tests">Tests <span class="count" id="tcount"></span></button>
-    <button role="tab" aria-selected="false" data-tab="timeline">Timeline</button>
-    <button role="tab" aria-selected="false" data-tab="console">Console <span class="count" id="ccount"></span></button>
-    <button role="tab" aria-selected="false" data-tab="network">Network <span class="count" id="ncount"></span></button>
-    <button role="tab" aria-selected="false" data-tab="summary">Summary</button>
-  </nav>
-</header>
 
-<div class="wrap">
-  <div class="pane active" id="pane-overview">
-    <div class="grid g3">
-      <div class="panel"><div class="ptitle">Result distribution</div><div class="donutrow" id="donut"></div></div>
-      <div class="panel"><div class="ptitle">Duration distribution<span class="right" id="totaldur"></span></div><div id="histo"></div></div>
-      <div class="panel"><div class="ptitle">Healed locators</div><div id="healsum"></div></div>
-    </div>
-    <div class="grid g2">
-      <div class="panel"><div class="ptitle">Failures</div><div id="failures"></div></div>
-      <div class="panel"><div class="ptitle">Slowest tests</div><div id="slowest"></div></div>
-    </div>
-    <div class="panel"><div class="ptitle">Suites</div><div id="suites"></div></div>
-  </div>
+  <!-- 2. Tests requiring attention: every failure, explained -->
+  <section class="qa-card" id="attention" aria-labelledby="attn-title" hidden>
+    <header class="card-head">
+      <h2 class="section-title" id="attn-title">Tests requiring attention</h2>
+      <span class="section-hint">Open a test to see each step, the screenshot and technical details.</span>
+    </header>
+    <div id="failures"></div>
+  </section>
 
-  <div class="pane" id="pane-tests">
-    <div class="toolbar">
-      <div class="searchbox">🔍<input id="search" placeholder="Search tests, files, errors, markers…"><span class="kbd">/</span></div>
-      <div id="fchips"></div>
-      <select id="marker"><option value="">All markers</option></select>
-      <select id="suite"><option value="">All suites</option></select>
-    </div>
-    <div id="tests"></div>
-  </div>
+  <!-- 3. Test execution details, 4. technical views -->
+  <section class="qa-card" aria-label="Execution details">
+    <nav class="qa-tabs" role="tablist">
+      <button class="qa-tab-btn active" role="tab" aria-selected="true" data-tab="tests">All tests<span class="count" id="tcount"></span></button>
+      <button class="qa-tab-btn" role="tab" aria-selected="false" data-tab="suites">Suites<span class="count" id="scount"></span></button>
+      <button class="qa-tab-btn" role="tab" aria-selected="false" data-tab="timeline">Timeline</button>
+      <button class="qa-tab-btn" role="tab" aria-selected="false" data-tab="console">Console<span class="count" id="ccount"></span></button>
+      <button class="qa-tab-btn" role="tab" aria-selected="false" data-tab="network">Network<span class="count" id="ncount"></span></button>
+      <button class="qa-tab-btn" role="tab" aria-selected="false" data-tab="run">Run details</button>
+    </nav>
 
-  <div class="pane" id="pane-timeline">
-    <div class="panel">
-      <div class="ptitle">Execution timeline<span class="right" id="wallclock"></span></div>
+    <div class="pane active" id="pane-tests" role="tabpanel">
+      <div class="toolbar">
+        <label class="searchbox"><span id="searchicon"></span><input class="form-control" id="search" placeholder="Search tests, suites, errors, tags…  ( / )" aria-label="Search tests"></label>
+        <div class="chips" id="fchips"></div>
+        <select class="form-select" id="suite" aria-label="Filter by area"><option value="">All areas</option></select>
+        <select class="form-select" id="marker" aria-label="Filter by tag"><option value="">All tags</option></select>
+      </div>
+      <div id="tests"></div>
+    </div>
+
+    <div class="pane" id="pane-suites" role="tabpanel">
+      <p class="pane-note">One row per suite (flow file). Select a suite to list its tests.</p>
+      <div id="suites"></div>
+    </div>
+
+    <div class="pane" id="pane-timeline" role="tabpanel">
+      <p class="pane-note">When each test ran, side by side for tests that ran in parallel. <span id="wallclock"></span></p>
       <div id="lanes"></div><div class="ticks" id="ticks"></div>
     </div>
-  </div>
 
-  <div class="pane" id="pane-console">
-    <div class="panel"><div class="ptitle">Console — all tests</div>
-      <div class="minibar"><input class="minisearch" id="gconsearch" placeholder="Search messages…"><span id="gconchips"></span></div>
+    <div class="pane" id="pane-console" role="tabpanel">
+      <p class="pane-note">Browser console messages from every test, in the order they happened.</p>
+      <div class="minibar"><input class="form-control" id="gconsearch" placeholder="Search messages…" aria-label="Search console"><span class="chips" id="gconchips"></span></div>
       <div class="loglist" id="gconlist"></div>
     </div>
-  </div>
 
-  <div class="pane" id="pane-network">
-    <div class="panel"><div class="ptitle">Network — all tests</div>
+    <div class="pane" id="pane-network" role="tabpanel">
+      <p class="pane-note">Network requests from every test. Failed requests are marked in red.</p>
       <div id="gnetsum"></div>
-      <div class="minibar"><input class="minisearch" id="gnetsearch" placeholder="Search URL or endpoint…"><span id="gnetchips"></span></div>
+      <div class="minibar"><input class="form-control" id="gnetsearch" placeholder="Search URL or endpoint…" aria-label="Search network"><span class="chips" id="gnetchips"></span></div>
       <div class="netlist" id="gnetlist"></div>
     </div>
-  </div>
 
-  <div class="pane" id="pane-summary">
-    <div class="grid g3">
-      <div class="panel"><div class="ptitle">Timing</div><div id="sum-timing"></div></div>
-      <div class="panel"><div class="ptitle">Target environment</div><div id="sum-env"></div></div>
-      <div class="panel"><div class="ptitle">Toolchain &amp; run</div><div id="sum-tool"></div></div>
+    <div class="pane" id="pane-run" role="tabpanel">
+      <div class="facts-grid">
+        <div><h3 class="sub-title">Timing</h3><dl class="case-facts" id="sum-timing"></dl></div>
+        <div><h3 class="sub-title">Environment</h3><dl class="case-facts" id="sum-env"></dl></div>
+        <div><h3 class="sub-title">Tooling</h3><dl class="case-facts" id="sum-tool"></dl></div>
+      </div>
+      <div class="two-col">
+        <div><h3 class="sub-title">Slowest tests</h3><div id="slowest"></div></div>
+        <div><h3 class="sub-title">Self-healed steps</h3><div id="healsum"></div></div>
+      </div>
     </div>
-  </div>
+  </section>
   <footer id="foot"></footer>
-</div>
+</main>
 
-<div id="overlay"></div>
-<div id="drawer" role="dialog" aria-modal="true" aria-labelledby="dtitle"></div>
+<div class="side-drawer-backdrop" id="overlay"></div>
+<aside class="side-drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dtitle"></aside>
 
 <script src="assets/data.js"></script>
 <script src="assets/report.js"></script>
+<script src="assets/report-detail.js"></script>
 </body>
 </html>

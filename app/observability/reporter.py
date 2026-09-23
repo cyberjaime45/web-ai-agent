@@ -8,7 +8,9 @@ the whole environment folder is portable):
     ├── report_<build>.json this run's full payload as plain JSON; <build> is the
     │                       BUILD_NAME slug — one JSON per folder, stale ones removed
     ├── assets/report.css   static styles
-    ├── assets/report.js    static rendering code
+    ├── assets/report.js    static rendering code (summary, lists, timeline)
+    ├── assets/report-detail.js  per-test drawer + console/network views
+    ├── assets/nunito.woff2 the Dashboard's font, bundled for offline use
     ├── assets/data.js      slim payload (window.__WEBAGENT_DATA__): run meta +
     │                       per-test steps/errors/artifacts + detail counts
     ├── assets/data/t-<i>.js   per-test console/network detail, loaded lazily
@@ -45,6 +47,7 @@ from typing import Any
 
 from app.config.settings import settings
 from app.schemas.actions import SKILL_ACTIONS
+from app.utils.banner import APP_VERSION
 from app.utils.build import build_slug, get_build_name
 
 # packaged asset name → (folder under the report root, target name)
@@ -52,7 +55,8 @@ _ASSETS = {
     "report.html": ("", "report.html"),
     "report.css": ("assets", "report.css"),
     "report.js": ("assets", "report.js"),
-    "logo.png": ("assets", "logo.png"),
+    "report-detail.js": ("assets", "report-detail.js"),
+    "nunito.woff2": ("assets", "nunito.woff2"),   # Dashboard font, shipped so the report works offline
 }
 
 _RUN_FLOW_RE = re.compile(r"^\s*run_flow\b", re.IGNORECASE)
@@ -573,7 +577,7 @@ def generate_report(
             "os": f"{platform.system()} {platform.release()}",
             "python": platform.python_version(),
             "playwright": _pkg_version("playwright"),
-            "framework": "1.0.0",
+            "framework": APP_VERSION,
             "ci": bool(os.getenv("CI")),
         },
         "totals": {
