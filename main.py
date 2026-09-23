@@ -7,6 +7,7 @@ Usage
   python main.py run --inline '<md>'       Run inline Markdown.
   python main.py run <flow.md> --json      Emit FlowResult JSON to stdout.
   python main.py run <flow.md> --env qa1   Override ENVIRONMENT (report dir).
+  python main.py run <flow.md> --profile mobile   Run under the mobile device profile.
 
 Exit codes
 ----------
@@ -87,6 +88,8 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--env", help="Override ENVIRONMENT (report directory).")
     run.add_argument("--name", default="inline",
                      help="Flow name for --inline (default: inline).")
+    run.add_argument("--profile", default="desktop",
+                     help="Device profile: desktop (default) or mobile.")
     return parser
 
 
@@ -100,7 +103,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     _configure_logging(json_mode=args.as_json)
 
-    orchestrator = Orchestrator()
+    try:
+        orchestrator = Orchestrator(profile=args.profile)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     try:
         if args.inline is not None:

@@ -183,18 +183,38 @@ class RunContext:
 
 
 @dataclass
+class Evidence:
+    """Debugging bundle attached to a failed step (see observability/evidence.py).
+
+    ``layers`` records what each resolution layer did, in order — e.g.
+    ``{"L1 exact": "failed", "L2 fuzzy": "failed", "L3 AI": "skipped: provider
+    not configured"}``. ``screenshots`` maps a kind (``viewport``, ``full_page``,
+    ``element``) to an absolute path; the reporter makes them report-relative.
+    """
+    url:         str = ""
+    title:       str = ""
+    profile:     str = ""                                       # "mobile · iPhone 13 · chromium · 390x664"
+    layers:      dict[str, str] = field(default_factory=dict)
+    screenshots: dict[str, str] = field(default_factory=dict)
+    trace:       Optional[str] = None                           # Playwright trace zip, set at flow end
+    console:     list[dict] = field(default_factory=list)       # error/warning entries since the step started
+    network:     list[dict] = field(default_factory=list)       # failed requests since the step started
+
+
+@dataclass
 class StepResult:
     action:          FlowAction
     success:         bool
     message:         str
     layer_used:      int = 1          # 1=deterministic, 2=fallback, 3=AI
     sub_flow:        str = ""         # non-empty when step belongs to a nested flow
-    screenshot_path: Optional[str] = None
+    screenshot_path: Optional[str] = None   # viewport shot at the failure site (also evidence.screenshots["viewport"])
     error:           Optional[str] = None
     duration:        float = 0.0      # seconds
     skipped:         bool = False     # True when step was skipped due to a prior section failure
     started_at:      float = 0.0      # epoch seconds; 0.0 = never executed
     ended_at:        float = 0.0      # epoch seconds; 0.0 = never executed
+    evidence:        Optional[Evidence] = None   # only on failed (non-skipped) steps
 
 
 @dataclass

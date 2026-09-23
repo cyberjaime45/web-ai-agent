@@ -20,7 +20,6 @@ anything is stored; REPORT_REDACT adds project-specific key substrings.
 
 from __future__ import annotations
 
-import itertools
 import json
 import re
 import time
@@ -110,7 +109,7 @@ class PageRecorder:
         self.console: list[dict[str, Any]] = []
         self.network: list[dict[str, Any]] = []
         self.dropped = {"console": 0, "network": 0}
-        self._seq = itertools.count(1)
+        self._seq = 0      # last sequence number handed out (console and network share it)
         self._n_err = 0    # error/warning/pageerror count
         self._n_info = 0   # info/debug count
         self._starts: dict[int, float] = {}   # id(request) → epoch seconds
@@ -122,6 +121,28 @@ class PageRecorder:
         page.on("response", self._on_response)
         page.on("requestfailed", self._on_request_failed)
         page.on("websocket", self._on_websocket)
+
+    # ── Sequence marks (for "what happened during this step") ────────────
+
+    @property
+    def seq(self) -> int:
+        """Sequence number of the newest entry; take it before a step to mark a window."""
+        return self._seq
+
+    def _next_seq(self) -> int:
+        self._seq += 1
+        return self._seq
+
+    def errors_since(self, seq: int, limit: int = 20) -> list[dict[str, Any]]:
+        """Error/warning/pageerror console entries recorded after *seq* (newest last)."""
+        found = [c for c in self.console
+                 if c["seq"] > seq and c["level"] in ("error", "pageerror", "warning")]
+        return found[-limit:]
+
+    def failures_since(self, seq: int, limit: int = 20) -> list[dict[str, Any]]:
+        """Failed responses (4xx/5xx) and aborted requests recorded after *seq*."""
+        found = [n for n in self.network if n["seq"] > seq and not n["ok"]]
+        return found[-limit:]
 
     # ── Console ──────────────────────────────────────────────────────────
 
@@ -137,7 +158,7 @@ class PageRecorder:
             self._n_info += 1
         self.console.append({
             "level": level, "text": text[:2000], "location": location,
-            "ts": _now_ms(), "seq": next(self._seq),
+            "ts": _now_ms(), "seq": self._next_seq(),
         })
 
     def _on_console(self, msg: Any) -> None:
@@ -173,7 +194,7 @@ class PageRecorder:
         if len(self.network) >= MAX_NETWORK_ENTRIES:
             self.dropped["network"] += 1
             return
-        entry["seq"] = next(self._seq)
+        entry["seq"] = self._next_seq()
         self.network.append(entry)
 
     def _on_response(self, response: Any) -> None:

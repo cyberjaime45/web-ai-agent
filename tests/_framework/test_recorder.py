@@ -209,3 +209,26 @@ def test_inflight_request_map_is_bounded(rec_page):
         page.emit("request", req)
     assert len(rec._starts) == r._MAX_INFLIGHT
     assert id(reqs[0]) not in rec._starts and id(reqs[-1]) in rec._starts   # oldest evicted
+
+
+# ── sequence marks (per-step diagnostics for failure evidence) ───────────────
+
+def test_seq_mark_windows_console_and_network(rec_page):
+    rec, page = rec_page
+    assert rec.seq == 0
+    page.emit("console", console_msg(type_="error", text="before"))
+    mark = rec.seq
+    page.emit("console", console_msg(type_="error", text="during"))
+    page.emit("console", console_msg(type_="info", text="chatter"))
+    page.emit("console", console_msg(type_="warning", text="warned"))
+    bad = make_request(url="https://x.test/api/save")
+    page.emit("request", bad)
+    page.emit("response", make_response(bad, status=500))
+    ok = make_request(url="https://x.test/api/ok")
+    page.emit("request", ok)
+    page.emit("response", make_response(ok, status=200))
+    page.emit("requestfailed", make_request(url="https://x.test/img.png", failure="net::ERR"))
+    assert [c["text"] for c in rec.errors_since(mark)] == ["during", "warned"]
+    assert [n["url"] for n in rec.failures_since(mark)] == [
+        "https://x.test/api/save", "https://x.test/img.png"]
+    assert rec.errors_since(mark, limit=1)[0]["text"] == "warned"   # newest kept

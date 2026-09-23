@@ -57,3 +57,11 @@ def test_marker_lines_are_not_steps():
         'goto: "https://wheelsup.com/"', "wait_load", 'goto: "https://wheelsup.com/"',
     ]
     assert [a.section for a in flow.actions] == ["Test One", "Test One", "Test Two"]
+
+
+def test_config_profiles_line():
+    flow = parse_flow_markdown(
+        "# T\n\n## Config\n- timeout: 15000\n- profiles: Desktop, mobile\n\n## Steps\n- wait_load\n")
+    assert flow.timeout == 15000
+    assert flow.profiles == ["desktop", "mobile"]
+    assert parse_flow_markdown("## Steps\n- wait_load\n").profiles == []

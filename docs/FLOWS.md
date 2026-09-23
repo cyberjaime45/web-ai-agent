@@ -34,7 +34,12 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
 - **`# Title`** — the suite name: the console shows it, and the report groups
   the file's tests under it with the path as secondary text. Without an H1
   the file name is used.
-- **`## Config`** — `timeout` (ms) sets the page's default timeout for waits and assertions. Default 30000.
+- **`## Config`** — `timeout` (ms) sets the page's default timeout for waits
+  and assertions (default 30000). `profiles: desktop, mobile` runs every
+  section of the file under each listed device profile; the report shows one
+  test per section and profile (`Home Page` and `Home Page[mobile]`). Without
+  the line, flows run under `PROFILE` from `.env` (`desktop`), and
+  `pytest --profile …` overrides both.
 - **Every other `## section`** is a run of steps. Section names are free-form
   (`## Login`, `## Home Page`, `## Steps`); each section becomes its own test
   in the report, and a failure stops the rest of that section only — execution
@@ -181,3 +186,37 @@ uv run pytest --flow "# Smoke
 
 `--flow` and `--flow_file` are mutually exclusive. For a single flow driven
 from a script or another agent, prefer the CLI — see [CLI.md](CLI.md).
+
+## Desktop and mobile profiles
+
+A profile only changes how the browser context is created; the flow and every
+step stay the same.
+
+| Profile | Context |
+|---------|---------|
+| `desktop` | The session's own viewport (`VIEWPORT`, or the maximized window in headed Chromium) |
+| `mobile` | Playwright's device descriptor named by `MOBILE_DEVICE` (default `iPhone 13`: 390×664, touch, mobile user agent) |
+
+```bash
+uv run pytest --profile mobile                          # every collected flow, on a phone
+uv run pytest --profile desktop,mobile                  # both — one test per section and profile
+uv run pytest tests/members_site/flows/booking_flow.md --profile mobile
+```
+
+Which profiles a flow runs under is decided in this order: `--profile`, then
+the flow's `## Config` `profiles:` line, then `PROFILE` in `.env`. Under
+`RUNNING_MODE=lambda` the mobile profile emulates the device inside the grid
+browser; it does not pick a real device.
+
+## What a failed step leaves behind
+
+No `screenshot` step is needed for failures. When a step fails, the runner
+collects evidence on the spot and the report shows it under that step:
+
+- viewport, full-page and (when the element can still be located) element
+  screenshots — `images/<flow>__<profile>__<n>__viewport.png`, `…__full.png`, `…__element.png`
+- the page URL and title, and the profile (`mobile · iPhone 13 · chromium · 390x664`)
+- what each layer did — `L1 exact failed · L2 fuzzy failed · L3 AI skipped: provider not configured`
+- the console errors and failed requests that happened during the step
+- a Playwright trace of the whole flow, `traces/<flow>__<profile>.zip`
+  (`TRACE=on-failure`, the default; open it with `npx playwright show-trace <file>`)

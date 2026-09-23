@@ -8,6 +8,7 @@ test_*.py files needed. tests/<app>/flows/ is the convention, not a rule.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import logging
 import time
@@ -19,15 +20,17 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from app.flow.parser import FlowParseError, FlowDefinition, parse_flow_file, parse_flow_markdown
-from app.execution.engine import FlowRunner, capture_failure_screenshot
+from app.execution.engine import FlowRunner
 from app.layers.providers import ConfigError, get_provider
-from app.schemas.actions import FlowResult
+from app.schemas.actions import Evidence, FlowResult
+from app.browser import profiles
 from app.browser.session import create_browser
 from app.config.settings import settings
 from app.observability.console import (
     FLOW_FILE_PROP, FLOW_NAME_PROP, HEALINGS_PROP,
     execution_summary, install_console_reporter,
 )
+from app.observability.evidence import annotate_error_elements, slugify, stop_trace
 from app.observability.recorder import PageRecorder
 from app.observability.reporter import generate_report
 from app.utils.banner import show_banner
@@ -65,13 +68,19 @@ class ProfessionalReportPlugin:
         self.report_path: Path | None = None
         self.json_path: Path | None = None
 
-    def record_flow(self, nodeid: str, flow: FlowDefinition) -> None:
-        """Suite-level facts the report needs: the file's # title and markers."""
+    def record_flow(self, nodeid: str, flow: FlowDefinition, profile: str) -> None:
+        """Suite-level facts the report needs: the file's # title, markers, profile."""
         self.flow_meta[nodeid] = {
             "flow_title": flow.title,
             "flow_markers": list(flow.markers),
             "section_markers": {k: list(v) for k, v in flow.section_markers.items()},
+            "profile": {"name": profile, "label": profile},
         }
+
+    def record_profile_label(self, nodeid: str, label: str) -> None:
+        """``mobile · iPhone 13 · chromium · 390x664`` — known once the page exists."""
+        if nodeid in self.flow_meta:
+            self.flow_meta[nodeid]["profile"]["label"] = label
 
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
@@ -98,6 +107,7 @@ class ProfessionalReportPlugin:
                 "layer": s.layer_used,
                 "ts_start": s.started_at,
                 "ts_end": s.ended_at,
+                "evidence": dataclasses.asdict(s.evidence) if s.evidence else None,
             }
             for s in steps
         ]
@@ -162,6 +172,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="PATH",
         help="Run a flow from an explicit .md file path.",
     )
+    parser.addoption(
+        "--profile",
+        default=None,
+        metavar="NAMES",
+        help="Device profile(s) to run every flow under, comma-separated "
+             f"({', '.join(profiles.BUILTIN)}). Overrides the flows' own `profiles:` config.",
+    )
 
 
 # ── Plugin registration ────────────────────────────────────────
@@ -187,13 +204,14 @@ class _SessionBrowser:
         self._ctx_opts: dict = {}
 
     @contextmanager
-    def page(self, test_name: str):
+    def page(self, test_name: str, profile: str = profiles.DESKTOP):
+        """A fresh page in a context shaped by *profile* (desktop / mobile)."""
         if settings.remote:
             pw = sync_playwright().start()
             try:
                 browser, opts = create_browser(pw, test_name=test_name)
                 try:
-                    yield from self._new_page(browser, opts)
+                    yield from self._new_page(browser, profiles.context_options(profile, opts, pw.devices))
                 finally:
                     browser.close()
             finally:
@@ -202,11 +220,16 @@ class _SessionBrowser:
         if self._browser is None or not self._browser.is_connected():
             self._pw = self._pw or sync_playwright().start()
             self._browser, self._ctx_opts = create_browser(self._pw, test_name=test_name)
-        yield from self._new_page(self._browser, self._ctx_opts)
+        yield from self._new_page(
+            self._browser, profiles.context_options(profile, self._ctx_opts, self._pw.devices))
 
     @staticmethod
     def _new_page(browser, opts: dict):
         ctx = browser.new_context(**opts)
+        # Tracing records for every flow; whether it is kept is decided at
+        # flow end (_keep_trace). Closing the context discards an unstopped trace.
+        if settings.trace_on_failure:
+            ctx.tracing.start(screenshots=True, snapshots=True)
         try:
             yield ctx.new_page()
         finally:
@@ -265,63 +288,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
         terminalreporter.write_line(f"JSON : {plugin.json_path}")
 
 
-# ── Screenshot annotation — draw red rectangles around error elements ──────────
-
-
-def _annotate_failure_screenshot(shot_path: str, page) -> None:
-    """Overlay red rectangles on a failure screenshot at DOM error-element locations."""
-    try:
-        from PIL import Image, ImageDraw  # type: ignore[import]
-
-        rects = page.evaluate("""
-            () => {
-                const selectors = [
-                    '[role="alert"]', '.error', '.alert-danger', '.alert-error',
-                    '[aria-invalid="true"]', '.invalid-feedback', 'p.error',
-                    'span.error', '.flash.error', '.notification-error',
-                    '#error', '.error-message', '.validation-error', '.is-invalid'
-                ];
-                const found = [];
-                for (const sel of selectors) {
-                    try {
-                        for (const el of document.querySelectorAll(sel)) {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0 && r.height > 0 && r.top >= 0)
-                                found.push({x: r.left, y: r.top, w: r.width, h: r.height});
-                        }
-                    } catch(e) {}
-                }
-                return found;
-            }
-        """)
-
-        if not rects:
-            return  # No identifiable error elements — keep screenshot clean
-
-        img = Image.open(shot_path).convert("RGB")
-        draw = ImageDraw.Draw(img)
-
-        if rects:
-            vp_width = (page.viewport_size or {}).get("width", 1280)
-            scale = img.width / vp_width if vp_width else 1.0
-            for rect in rects[:4]:
-                pad = 3
-                x1 = max(0,         int(rect["x"] * scale) - pad)
-                y1 = max(0,         int(rect["y"] * scale) - pad)
-                x2 = min(img.width, int((rect["x"] + rect["w"]) * scale) + pad)
-                y2 = min(img.height, int((rect["y"] + rect["h"]) * scale) + pad)
-                if x2 > x1 and y2 > y1:
-                    for offset in range(3):
-                        draw.rectangle(
-                            [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
-                            outline=(220, 38, 38),
-                        )
-
-        img.save(shot_path)
-    except Exception:
-        pass  # Annotation is best-effort; never block reporting
-
-
 # ── Inline / explicit-path flow injection ─────────────────────
 #
 # Handles --flow "<markdown>" and --flow_file path/to/file.md.
@@ -354,7 +320,7 @@ def pytest_collection_modifyitems(
                 "Check the Markdown format (needs a ## Steps section).",
                 returncode=4,
             )
-        items.append(FlowItem.from_parent(session, name=flow.name, flow=flow))
+        items.extend(_flow_items(session, config, flow))
 
     elif flow_file_path is not None:
         path = Path(flow_file_path)
@@ -372,7 +338,48 @@ def pytest_collection_modifyitems(
                 "Check the Markdown format (needs a ## Steps section).",
                 returncode=4,
             )
-        items.append(FlowItem.from_parent(session, name=flow.name, flow=flow))
+        items.extend(_flow_items(session, config, flow))
+
+
+# ── Device profiles: one FlowItem per profile the flow runs under ────────────
+
+
+def _profiles_for(config: pytest.Config, flow: FlowDefinition) -> list[str]:
+    """``--profile`` wins, then the flow's ``## Config`` line, then PROFILE."""
+    spec = config.getoption("--profile", default=None)
+    if spec:
+        names = profiles.parse_names(spec)
+    else:
+        names = flow.profiles or profiles.parse_names(settings.profile)
+    try:
+        return profiles.validate(names) or [profiles.DESKTOP]
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from exc
+
+
+def _flow_items(parent, config: pytest.Config, flow: FlowDefinition) -> list[FlowItem]:
+    """The desktop item keeps the flow's plain name; others are ``name[profile]``."""
+    return [
+        FlowItem.from_parent(
+            parent, flow=flow, profile=p,
+            name=flow.name if p == profiles.DESKTOP else f"{flow.name}[{p}]",
+        )
+        for p in _profiles_for(config, flow)
+    ]
+
+
+def _keep_trace(page, result: FlowResult | None, flow_name: str, profile: str) -> None:
+    """Stop the context's trace; when the flow failed, keep it on the failure
+    site — the last failed (non-skipped) step."""
+    if not settings.trace_on_failure:
+        return
+    failed = [] if result is None else [s for s in result.steps if not s.success and not s.skipped]
+    path = stop_trace(page, keep=result is None or bool(failed),
+                      traces_dir=settings.traces_dir, stem=f"{slugify(flow_name)}__{profile}")
+    if path and failed:
+        if failed[-1].evidence is None:
+            failed[-1].evidence = Evidence()
+        failed[-1].evidence.trace = path
 
 
 # ── .md flow auto-discovery ────────────────────────────────────
@@ -413,9 +420,11 @@ class _FlowFailure(Exception):
 class FlowItem(pytest.Item):
     """A pytest test item backed by a .md flow file."""
 
-    def __init__(self, name: str, parent, flow: FlowDefinition) -> None:
+    def __init__(self, name: str, parent, flow: FlowDefinition,
+                 profile: str = profiles.DESKTOP) -> None:
         super().__init__(name, parent)
         self.flow = flow
+        self.profile = profile
         self._artifacts = _IMAGES_DIR   # created once in pytest_sessionstart
 
     def runtest(self) -> None:
@@ -423,27 +432,31 @@ class FlowItem(pytest.Item):
         # items are parented to the session (path = rootdir), so no file part.
         file_part = self.path.name if self.path.is_file() else ""
         self.user_properties.append((FLOW_FILE_PROP, file_part))
-        self.user_properties.append((FLOW_NAME_PROP, self.flow.name))
+        self.user_properties.append((FLOW_NAME_PROP, self.name))   # includes [profile]
         plugin = self.config.pluginmanager.get_plugin("professional_report")
         if plugin:
-            plugin.record_flow(self.nodeid, self.flow)
+            plugin.record_flow(self.nodeid, self.flow, self.profile)
         result: FlowResult | None = None
 
-        with self.config._webagent_browser.page(self.flow.name) as page:
+        with self.config._webagent_browser.page(self.flow.name, self.profile) as page:
             page.set_default_timeout(self.flow.timeout)
+            if plugin:
+                plugin.record_profile_label(
+                    self.nodeid, profiles.describe(self.profile, page.viewport_size))
             recorder = PageRecorder()   # console errors/warnings + network, for the report
             recorder.attach(page)
             runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=self.path.parent,
-                                provider=self.config._webagent_provider)
+                                provider=self.config._webagent_provider, profile=self.profile)
             try:
-                result = runner.run(self.flow, page)
+                result = runner.run(self.flow, page, recorder=recorder)
                 healed = sum(1 for s in result.steps if s.success and (s.layer_used or 1) > 1)
                 self.user_properties.append((HEALINGS_PROP, healed))
                 if not result.success:
-                    self._backfill_failure_screenshot(result, page)
+                    self._backfill_evidence(result, page, runner)
             finally:
                 # Whatever happened inside the flow, the report and the remote
                 # dashboard still get what was captured.
+                _keep_trace(page, result, self.flow.name, self.profile)
                 if plugin:
                     if result is not None and result.steps:
                         plugin.record_steps(self.nodeid, result.steps)
@@ -460,22 +473,22 @@ class FlowItem(pytest.Item):
         if not result.success:
             raise _FlowFailure(result)
 
-    def _backfill_failure_screenshot(self, result: FlowResult, page) -> None:
-        """Failure screenshots live on the failing step — single path.
+    @staticmethod
+    def _backfill_evidence(result: FlowResult, page, runner: FlowRunner) -> None:
+        """Failure evidence lives on the failing step — single path.
 
-        The engine captures one at the failure site; only when that was
-        impossible (page navigating, crash) capture the flow-end state here.
-        Skipped steps never get a screenshot.
+        The engine collects it at the failure site; only when the viewport
+        shot was impossible there (page navigating, crash) capture the
+        flow-end state here. Skipped steps never get evidence.
         """
         failed_steps = [s for s in result.steps
                         if not s.success and not getattr(s, "skipped", False)]
         if not failed_steps or failed_steps[-1].screenshot_path:
             return
-        shot_path = capture_failure_screenshot(page, self._artifacts)
-        if shot_path:
-            _annotate_failure_screenshot(shot_path, page)
-            failed_steps[-1].screenshot_path = shot_path
-            result.last_screenshot = shot_path
+        step = runner.attach_evidence(failed_steps[-1], page)
+        if step.screenshot_path:
+            annotate_error_elements(step.screenshot_path, page)
+            result.last_screenshot = step.screenshot_path
 
     def repr_failure(self, excinfo) -> str:
         if isinstance(excinfo.value, FlowParseError):
@@ -516,7 +529,7 @@ class FlowFile(pytest.File):
             import warnings
             warnings.warn(f"Failed to parse flow {self.fspath}: {exc}")
             return
-        yield FlowItem.from_parent(self, name=flow.name, flow=flow)
+        yield from _flow_items(self, self.config, flow)
 
 
 def pytest_collect_file(parent, file_path: Path):

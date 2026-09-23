@@ -60,8 +60,11 @@ reports/staging/
 │   ├── data.js          # Slim payload: run meta + per-test steps/errors/counts
 │   └── data/
 │       └── t-<i>.js     # Per-test console/network detail, lazy-loaded on demand
-└── images/
-    └── *.png            # Screenshots from the run
+├── images/
+│   ├── 001_<name>.png   # `screenshot` steps
+│   └── <flow>__<profile>__<n>__{viewport,full,element}.png   # failure evidence
+└── traces/
+    └── <flow>__<profile>.zip   # Playwright trace of each failed flow (TRACE=on-failure)
 ```
 
 The UI loads only the slim payload upfront; a test's console/network detail
@@ -77,12 +80,22 @@ The report includes:
   by its path. Each `## section` is its own test row under that header, with
   status, markers, duration, and steps — totals count these tests, not files
 - A right-side drawer per test: status, then suite, file, test, duration,
-  start time, reruns, and markers, then the steps in order — action verb and
-  argument, L2/L3 chip when the fallback chain resolved the step, duration,
-  the error card at the failing step, and a clickable screenshot thumbnail —
-  followed by Console and Network tabs. Clicking another test updates the
-  same drawer; `✕`, `Esc`, or the backdrop closes it, and search/filter state
-  is untouched
+  start time, profile, reruns, and markers, then the steps in order — action
+  verb and argument, L2/L3 chip when the fallback chain resolved the step,
+  duration, the error card at the failing step, and a clickable screenshot
+  thumbnail — followed by Console and Network tabs. Clicking another test
+  updates the same drawer; `✕`, `Esc`, or the backdrop closes it, and
+  search/filter state is untouched
+- Failure evidence under the failing step: what each layer did (`L1 exact
+  failed · L2 fuzzy failed · L3 AI skipped: …`), the profile, page URL and
+  title, viewport / full-page / element screenshot thumbnails, a download
+  link for the Playwright trace, and the console errors and failed requests
+  recorded during that step. The JSON carries the same under each failed
+  step's `evidence` and the test's `artifacts` (`screenshot`, `screenshots`,
+  `trace`)
+- A profile chip (`🖥 desktop` / `📱 mobile`) on every test row; a flow run
+  under both profiles appears once per profile, named `Test[mobile]` for the
+  second
 - Console messages (all levels) with level filters, search, repeat grouping, and source locations
 - Network requests with method/status/type/duration/size, filters (Failed/XHR/Doc/JS/CSS/Img), search, sorting, expandable headers/payloads, and Copy cURL/URL actions
 - Console errors and network activity routed to the section and step where they occurred

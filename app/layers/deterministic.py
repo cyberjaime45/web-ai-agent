@@ -9,22 +9,21 @@ Raises if both fail — caller may then try Layer 3 (AI).
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Callable
 
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
 
 from app.config.settings import settings
+from app.layers.blockers import dismiss_blockers
+from app.layers.deterministic_l2 import L2Handlers
 from app.layers.locator import FallbackLocator, _is_selector
 from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
 
 logger = logging.getLogger(__name__)
 
-_DISMISS_BLOCKERS = os.getenv("DISMISS_BLOCKERS", "false").strip().lower() == "true"
 
-
-class DeterministicRunner:
+class DeterministicRunner(L2Handlers):
     # L1 action timeout (ms) — caps Playwright's auto-wait for action calls
     # (click, fill, check, etc.) so L2/L3 can be tried quickly on failure.
     # Playwright still performs all actionability checks (visible, stable,
@@ -39,30 +38,6 @@ class DeterministicRunner:
     _MAX_L1_RETRIES = 1
     _RETRY_PAUSE_MS = 500
 
-    # Common selectors for blocking UI elements (modals, banners, overlays)
-    _BLOCKER_SELECTORS = [
-        '[class*="cookie" i]',
-        '[id*="cookie" i]',
-        '[class*="consent" i]',
-        '[id*="consent" i]',
-        '.modal.show',
-        '[role="dialog"][aria-modal="true"]',
-        '[class*="overlay" i]:not([style*="display: none"])',
-        '[class*="popup" i]',
-        '[class*="banner" i][class*="accept" i]',
-    ]
-
-    # Dismiss button selectors tried inside a detected blocker
-    _DISMISS_SELECTORS = [
-        'button:has-text("Accept")',
-        'button:has-text("OK")',
-        'button:has-text("Close")',
-        'button:has-text("Got it")',
-        'button:has-text("Dismiss")',
-        '[aria-label="Close"]',
-        'button:has-text("×")',
-    ]
-
     def __init__(
         self,
         page: Page,
@@ -76,112 +51,16 @@ class DeterministicRunner:
         self._shot_counter = 0
         self._ctx = ctx
 
-        # ── L1 dispatch table ──────────────────────────────────────
+        # ── L1 dispatch table: one `_h_<keyword>` method per ActionType ──
+        # (AI-native actions live in AIResolver, run_flow in the engine.)
+        # tests/_framework/test_deterministic_registry.py checks coverage.
         self._l1_handlers: dict[ActionType, Callable[[FlowAction], StepResult]] = {
-            # Navigation
-            ActionType.GOTO:            self._h_goto,
-            ActionType.RELOAD:          self._h_reload,
-            ActionType.BACK:            self._h_back,
-            ActionType.WAIT_LOAD:       self._h_wait_load,
-            ActionType.SWITCH_TAB:      self._h_switch_tab,
-            ActionType.SCROLL:          self._h_scroll,
-            # Click
-            ActionType.CLICK:           self._h_click,
-            ActionType.CLICK_LINK_TEXT: self._h_click_link_text,
-            ActionType.DOUBLE_CLICK:    self._h_double_click,
-            ActionType.RIGHT_CLICK:     self._h_right_click,
-            ActionType.HOVER:           self._h_hover,
-            # Input
-            ActionType.FILL:            self._h_fill,
-            ActionType.TYPE:            self._h_type,
-            ActionType.CLEAR:           self._h_clear,
-            ActionType.FOCUS:           self._h_focus,
-            ActionType.SELECT:          self._h_select,
-            ActionType.CHECK:           self._h_check,
-            ActionType.UNCHECK:         self._h_uncheck,
-            # Advanced
-            ActionType.DRAG_TO:         self._h_drag_to,
-            ActionType.UPLOAD:          self._h_upload,
-            # Table/Data
-            ActionType.READ_ROW:        self._h_read_row,
-            ActionType.TABLE_CLICK:     self._h_table_click,
-            ActionType.FIND_ROW:        self._h_find_row,
-            ActionType.COUNT_ELEMENTS:  self._h_count_elements,
-            ActionType.GET_ATTRIBUTE:   self._h_get_attribute,
-            # Assertions
-            ActionType.ASSERT_TEXT:     self._h_assert_text,
-            ActionType.ASSERT_NOT_TEXT: self._h_assert_not_text,
-            ActionType.ASSERT_VISIBLE:  self._h_assert_visible,
-            ActionType.ASSERT_HIDDEN:   self._h_assert_hidden,
-            ActionType.ASSERT_URL:      self._h_assert_url,
-            ActionType.ASSERT_ENABLED:  self._h_assert_enabled,
-            ActionType.ASSERT_DISABLED: self._h_assert_disabled,
-            ActionType.ASSERT_CHECKED:  self._h_assert_checked,
-            # Waits
-            ActionType.WAIT:            self._h_wait,
-            ActionType.WAIT_FOR_ELEMENT:self._h_wait_for_element,
-            ActionType.WAIT_FOR_TEXT:   self._h_wait_for_text,
-            ActionType.WAIT_FOR_URL:    self._h_wait_for_url,
-            # Utilities
-            ActionType.SCREENSHOT:      self._h_screenshot,
-            ActionType.PRESS:           self._h_press,
+            t: getattr(self, f"_h_{t.value}")
+            for t in ActionType if hasattr(self, f"_h_{t.value}")
         }
 
-        # ── L2 dispatch table ──────────────────────────────────────
-        self._l2_handlers: dict[ActionType, Callable[[FlowAction], StepResult | None]] = {
-            ActionType.CLICK:           self._l2_click,
-            ActionType.CLICK_LINK_TEXT: self._l2_click,
-            ActionType.DOUBLE_CLICK:    self._l2_double_click,
-            ActionType.RIGHT_CLICK:     self._l2_right_click,
-            ActionType.HOVER:           self._l2_hover,
-            ActionType.FILL:            self._l2_fill,
-            ActionType.TYPE:            self._l2_type,
-            ActionType.CLEAR:           self._l2_clear_focus,
-            ActionType.FOCUS:           self._l2_clear_focus,
-            ActionType.SELECT:          self._l2_select,
-            ActionType.CHECK:           self._l2_check,
-            ActionType.UNCHECK:         self._l2_uncheck,
-            ActionType.DRAG_TO:         self._l2_drag_to,
-            ActionType.ASSERT_TEXT:     self._l2_assert_text,
-            ActionType.ASSERT_NOT_TEXT: self._l2_assert_not_text,
-            ActionType.ASSERT_VISIBLE:  self._l2_assert_visible,
-            ActionType.ASSERT_HIDDEN:   self._l2_assert_hidden,
-            ActionType.WAIT_FOR_TEXT:   self._l2_wait_for_text,
-            ActionType.SCROLL:          self._l2_scroll,
-        }
-
-    # ── Blocker dismissal ────────────────────────────────────────
-
-    def _dismiss_blockers(self) -> None:
-        """Detect and dismiss common blocking UI elements (modals, banners)."""
-        for selector in self._BLOCKER_SELECTORS:
-            try:
-                blocker = self.page.locator(selector).first
-                if blocker.count() == 0 or not blocker.is_visible():
-                    continue
-            except Exception:
-                continue
-
-            # Try dismiss buttons inside the blocker
-            for dismiss in self._DISMISS_SELECTORS:
-                try:
-                    btn = blocker.locator(dismiss).first
-                    if btn.count() > 0 and btn.is_visible():
-                        btn.click(timeout=2000)
-                        logger.info(f"[L1] Dismissed blocker: {selector} via {dismiss}")
-                        self.page.wait_for_timeout(300)
-                        return
-                except Exception:
-                    continue
-
-            # No dismiss button found — try Escape key
-            try:
-                self.page.keyboard.press("Escape")
-                logger.info(f"[L1] Dismissed blocker: {selector} via Escape")
-                self.page.wait_for_timeout(300)
-                return
-            except Exception:
-                continue
+        # ── L2 dispatch table (handlers live in deterministic_l2.py) ──
+        self._l2_handlers = self._build_l2_handlers()
 
     # ── Public entry point ────────────────────────────────────────
 
@@ -191,8 +70,8 @@ class DeterministicRunner:
 
         for attempt in range(1, self._MAX_L1_RETRIES + 1):
             try:
-                if _DISMISS_BLOCKERS:
-                    self._dismiss_blockers()
+                if settings.dismiss_blockers:
+                    dismiss_blockers(self.page)
                 return self._layer1(action)
             except Exception as exc:
                 last_exc = exc
@@ -213,6 +92,42 @@ class DeterministicRunner:
         if not handler:
             raise ValueError(f"No L1 handler for {action.type.value}")
         return handler(action)
+
+    # Which L1 resolver an action's first argument goes through — for locate().
+    _CLICKABLE = frozenset({ActionType.CLICK, ActionType.CLICK_LINK_TEXT,
+                            ActionType.DOUBLE_CLICK, ActionType.RIGHT_CLICK, ActionType.HOVER})
+    _INPUT = frozenset({ActionType.FILL, ActionType.TYPE, ActionType.CLEAR,
+                        ActionType.FOCUS, ActionType.SELECT})
+    _CHECKABLE = frozenset({ActionType.CHECK, ActionType.UNCHECK, ActionType.ASSERT_CHECKED})
+    _TEXTUAL = frozenset({ActionType.ASSERT_TEXT, ActionType.ASSERT_VISIBLE,
+                          ActionType.ASSERT_HIDDEN, ActionType.WAIT_FOR_TEXT,
+                          ActionType.ASSERT_ENABLED, ActionType.ASSERT_DISABLED})
+
+    def locate(self, action: FlowAction) -> Locator | None:
+        """The element *action* targets, when L1's exact resolver still finds one.
+
+        No waiting — one ``count()`` round-trip. Used for the failed-element
+        screenshot: a click on a covered or disabled button fails, but the
+        button is there to photograph. ``None`` when the action has no
+        element target or nothing matches.
+        """
+        if not action.args:
+            return None
+        target, t = action.args[0], action.type
+        try:
+            if t in self._CLICKABLE:
+                loc = self._resolve_clickable_l1(target)
+            elif t in self._INPUT:
+                loc = self._resolve_input_l1(target)
+            elif t in self._CHECKABLE:
+                loc = self._resolve_checkable_l1(target)
+            elif t in self._TEXTUAL:
+                loc = self._resolve_text_target(target)
+            else:
+                return None
+            return loc.first if loc.count() > 0 else None
+        except Exception:
+            return None
 
     # ── L1 handlers: Navigation ───────────────────────────────────
 
@@ -534,145 +449,6 @@ class DeterministicRunner:
         key = action.args[0] if action.args else "Enter"
         self.page.keyboard.press(key)
         return self._ok(action, f'Pressed key "{key}"', 1)
-
-    # ── Layer 2 — fallback locators ───────────────────────────────
-
-    def _layer2(self, action: FlowAction, original_error: str) -> StepResult:
-        t, a = action.type, action.args
-        logger.debug(f"[L2] Attempting fallback for '{t.value}' target='{a[0] if a else ''}'")
-
-        handler = self._l2_handlers.get(t)
-        if handler:
-            result = handler(action)
-            if result is not None:
-                return result
-
-        raise RuntimeError(
-            f"Layers 1+2 could not resolve step {action.step_num} "
-            f"({t.value} {a}). Original: {original_error}"
-        )
-
-    # ── L2 handlers ───────────────────────────────────────────────
-
-    def _l2_click(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.click(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"[L2] Clicked '{action.args[0]}'", 2)
-        return None
-
-    def _l2_double_click(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.dblclick(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Double-clicked "{action.args[0]}"', 2)
-        return None
-
-    def _l2_right_click(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.click(button="right", timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Right-clicked "{action.args[0]}"', 2)
-        return None
-
-    def _l2_hover(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.hover(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Hovered "{action.args[0]}"', 2)
-        return None
-
-    def _l2_fill(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_input(self.page, action.args[0])
-        if loc:
-            loc.fill(action.args[1] if len(action.args) > 1 else "", timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"[L2] Filled '{action.args[0]}'", 2)
-        return None
-
-    def _l2_type(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_input(self.page, action.args[0])
-        if loc:
-            loc.press_sequentially(action.args[1] if len(action.args) > 1 else "", timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"[L2] Typed into '{action.args[0]}'", 2)
-        return None
-
-    def _l2_clear_focus(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_input(self.page, action.args[0])
-        if loc:
-            if action.type == ActionType.CLEAR:
-                loc.fill("", timeout=self._L1_TIMEOUT)
-                return self._ok(action, f'[L2] Cleared "{action.args[0]}"', 2)
-            else:
-                loc.focus(timeout=self._L1_TIMEOUT)
-                return self._ok(action, f'[L2] Focused "{action.args[0]}"', 2)
-        return None
-
-    def _l2_select(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_input(self.page, action.args[0])
-        if loc:
-            loc.select_option(action.args[1] if len(action.args) > 1 else "", timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"[L2] Selected in '{action.args[0]}'", 2)
-        return None
-
-    def _l2_check(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_checkbox(self.page, action.args[0])
-        if loc:
-            loc.check(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"[L2] Checked '{action.args[0]}'", 2)
-        return None
-
-    def _l2_uncheck(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_checkbox(self.page, action.args[0])
-        if loc:
-            loc.uncheck(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"[L2] Unchecked '{action.args[0]}'", 2)
-        return None
-
-    def _l2_drag_to(self, action: FlowAction) -> StepResult | None:
-        src = self._locator.resolve_clickable(self.page, action.args[0])
-        dst = self._locator.resolve_clickable(self.page, action.args[1])
-        if src and dst:
-            src.drag_to(dst, timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Dragged "{action.args[0]}" to "{action.args[1]}"', 2)
-        return None
-
-    def _l2_assert_text(self, action: FlowAction) -> StepResult | None:
-        if action.args[0].lower() in self.page.content().lower():
-            return self._ok(action, f"[L2] Text '{action.args[0]}' found in HTML", 2)
-        return None
-
-    def _l2_assert_not_text(self, action: FlowAction) -> StepResult | None:
-        if action.args[0].lower() not in self.page.content().lower():
-            return self._ok(action, f'[L2] Text "{action.args[0]}" absent from HTML', 2)
-        return None
-
-    def _l2_assert_visible(self, action: FlowAction) -> StepResult | None:
-        if action.args[0].lower() in self.page.content().lower():
-            return self._ok(action, f'[L2] Element "{action.args[0]}" found in HTML', 2)
-        return None
-
-    def _l2_assert_hidden(self, action: FlowAction) -> StepResult | None:
-        loc = self.page.get_by_text(action.args[0], exact=False)
-        if loc.count() == 0 or loc.first.is_hidden():
-            return self._ok(action, f'[L2] Element "{action.args[0]}" is not visible', 2)
-        return None
-
-    def _l2_wait_for_text(self, action: FlowAction) -> StepResult | None:
-        if action.args[0].lower() in self.page.content().lower():
-            return self._ok(action, f'[L2] Text "{action.args[0]}" found in HTML', 2)
-        return None
-
-    def _l2_scroll(self, action: FlowAction) -> StepResult | None:
-        if not action.args:
-            return None
-        target = action.args[0]
-        # Only fallback for scroll-to-element (text targets)
-        if target.lower() not in ("up", "down", "top", "bottom") and not target.lstrip("-").isdigit():
-            loc = self.page.locator(f':has-text("{target}")').last
-            if loc.count() > 0:
-                loc.scroll_into_view_if_needed()
-                return self._ok(action, f'[L2] Scrolled to "{target}"', 2)
-        return None
 
     # ── helpers ───────────────────────────────────────────────────
 

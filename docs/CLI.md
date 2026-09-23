@@ -21,7 +21,15 @@ uv run python main.py run --inline '# Smoke
 
 # Override the report environment (screenshots go to reports/qa1/images)
 uv run python main.py run tests/marketing_site/flows/home_page.md --env qa1
+
+# Run under the mobile device profile (MOBILE_DEVICE, default iPhone 13)
+uv run python main.py run tests/marketing_site/flows/home_page.md --profile mobile
 ```
+
+Failed steps get the same evidence as under pytest — screenshots under
+`reports/<ENVIRONMENT>/images/` and, in the `--json` output, an `evidence`
+object per failed step (layers, URL, title, profile, screenshot paths). The
+CLI keeps no Playwright trace; that belongs to the pytest report.
 
 ## Exit codes
 

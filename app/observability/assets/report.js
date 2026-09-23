@@ -22,7 +22,7 @@ const T = DATA.tests, TOT = DATA.totals, ENV = DATA.environment;
 T.forEach((t, i) => {
   t._i = i;
   t._title = esc(t.title || t.name);
-  t._hay = [t.title, t.name, t.file, t.file_title, t.error && t.error.message, ...(t.markers||[])].join(' ').toLowerCase();
+  t._hay = [t.title, t.name, t.file, t.file_title, t.error && t.error.message, t.profile && t.profile.name, ...(t.markers||[])].join(' ').toLowerCase();
   t._startMs = t.started_at ? new Date(t.started_at).getTime() : null;
 });
 const titleOf = t => t._title;
@@ -233,8 +233,14 @@ function chips(t){
     nbad ? `<span class="chiplet cbad" title="failed requests">⇅ ${nbad}</span>` : '',
     t.retries ? `<span class="chiplet" style="color:var(--skip)" title="reruns">↻ ${t.retries}</span>` : '',
     (t.healings||[]).length ? `<span class="chiplet" style="color:var(--skip)" title="healed locators">🩹 ${t.healings.length}</span>` : '',
+    profileChip(t),
     ...(t.markers||[]).map(m => `<span class="chiplet">${esc(m)}</span>`)
   ].join('');
+}
+function profileChip(t){
+  const p = t.profile;
+  if (!p || !p.name) return '';
+  return `<span class="chiplet" title="${esc(p.label || p.name)}">${p.name === 'mobile' ? '📱' : '🖥'} ${esc(p.name)}</span>`;
 }
 
 function renderTests(){
@@ -293,6 +299,34 @@ function shotThumb(s){
     ? `<a href="${esc(s.attachment)}" target="_blank"><img class="sthumb" src="${esc(s.attachment)}" alt="Screenshot at failing step" loading="lazy"></a>`
     : '';
 }
+const EV_KIND = {viewport: 'Viewport', full_page: 'Full page', element: 'Element'};
+function evidenceHtml(s){
+  // Failure evidence collected by the engine at the failing step: what each
+  // layer did, where the page was, the screenshots, the trace, and the
+  // console errors / failed requests that happened during the step.
+  const ev = s.evidence;
+  if (!ev) return '';
+  const layers = Object.entries(ev.layers || {}).map(([k, v]) =>
+    `<span class="evlayer ${v === 'failed' ? 'bad' : ''}"><b>${esc(k)}</b>${esc(v)}</span>`).join('');
+  const meta = [ev.profile && ['profile', ev.profile], ev.url && ['url', ev.url], ev.title && ['title', ev.title]]
+    .filter(Boolean).map(([k, v]) => `<span><b>${k}</b>${esc(v)}</span>`).join('');
+  const shots = Object.entries(ev.screenshots || {}).map(([k, p]) =>
+    `<a class="evshot" href="${esc(p)}" target="_blank"><img src="${esc(p)}" alt="${esc(EV_KIND[k] || k)} screenshot" loading="lazy"><span>${esc(EV_KIND[k] || k)}</span></a>`).join('');
+  const trace = ev.trace ? `<a class="evtrace" href="${esc(ev.trace)}" download title="Open with: npx playwright show-trace <file>">⬇ Playwright trace</a>` : '';
+  const cons = ev.console || [], net = ev.network || [];
+  const rows = [
+    ...cons.map(c => conRowHtml(c, null)),
+    ...net.map(n => conRowHtml({level: 'error', ts: n.ts,
+      text: `${n.method} ${n.url} — ${n.failure ? n.failure : 'HTTP ' + n.status}`}, null).replace('>error<', '>net<'))
+  ];
+  const diag = rows.length;
+  return `<div class="evbox">
+    ${layers ? `<div class="evlayers">${layers}</div>` : ''}
+    ${meta ? `<div class="evmeta">${meta}</div>` : ''}
+    ${shots || trace ? `<div class="evgal">${shots}${trace}</div>` : ''}
+    ${diag ? `<details class="evdiag"><summary>${cons.length} console error${cons.length === 1 ? '' : 's'} · ${net.length} failed request${net.length === 1 ? '' : 's'} during this step</summary>${rows.join('')}</details>` : ''}
+  </div>`;
+}
 function failedStep(t){
   // The exception propagates up through nested steps, marking each ancestor
   // failed too — the last failed step is the deepest one: the failure site.
@@ -333,7 +367,7 @@ function stepNodes(t, nodes, nested, errStep){
     }
     return `<div class="srow ${s.status}">
       <span class="sicon ${s.status}">${stepIcon(s.status)}</span>
-      <div class="smain">${label}${nested ? '<span class="hook">↳</span>' : ''}${stepName(s)}${dur}${shotThumb(s)}${err}</div>
+      <div class="smain">${label}${nested ? '<span class="hook">↳</span>' : ''}${stepName(s)}${dur}${err}${s.evidence ? evidenceHtml(s) : shotThumb(s)}</div>
     </div>`;
   }).join('');
 }
@@ -577,6 +611,7 @@ function openTest(i){
         <div><span>test </span><b>${esc(t.name)}</b></div>
         <div><span>duration </span><b>${fmtMs(t.duration_ms)}</b></div>
         <div><span>started </span><b>${t.started_at ? new Date(t.started_at).toLocaleTimeString() : '—'}</b></div>
+        ${t.profile && t.profile.name ? `<div><span>profile </span><b>${esc(t.profile.label || t.profile.name)}</b></div>` : ''}
         ${t.retries ? `<div><span>reruns </span><b>${t.retries}</b></div>` : ''}
         ${(t.markers||[]).length ? `<div><span>markers </span><b>${t.markers.map(esc).join(', ')}</b></div>` : ''}
       </div>

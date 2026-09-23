@@ -18,6 +18,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from app.browser import profiles
 from app.browser.session import create_browser
 from app.execution.engine import FlowRunner
 from app.flow.parser import FlowDefinition, parse_flow_file, parse_flow_markdown
@@ -33,9 +34,11 @@ class Orchestrator:
         self,
         artifacts_dir: str | Path | None = None,
         flows_dir: str | Path = "tests",
+        profile: str = profiles.DESKTOP,
     ) -> None:
         self.artifacts_dir = Path(artifacts_dir) if artifacts_dir else None
         self.flows_dir = Path(flows_dir)
+        self.profile = profiles.validate([profile])[0]
 
     def run_file(self, path: Path) -> FlowResult:
         """Parse a .md file and execute it."""
@@ -54,11 +57,12 @@ class Orchestrator:
         logger.info("[orchestrator] Starting flow: %s (%d actions)", flow.name, len(flow.actions))
         with sync_playwright() as pw:
             browser, ctx_opts = create_browser(pw, test_name=flow.name)
-            ctx = browser.new_context(**ctx_opts)
+            ctx = browser.new_context(**profiles.context_options(self.profile, ctx_opts, pw.devices))
             page = ctx.new_page()
             page.set_default_timeout(flow.timeout)
 
-            runner = FlowRunner(artifacts_dir=self.artifacts_dir, flows_dir=self.flows_dir)
+            runner = FlowRunner(artifacts_dir=self.artifacts_dir, flows_dir=self.flows_dir,
+                                profile=self.profile)
             result = runner.run(flow, page)
 
             ctx.close()

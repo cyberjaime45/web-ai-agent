@@ -14,12 +14,12 @@ from app.observability.reporter import (
 
 def make_step(label="click: \"Login\"", passed=True, skipped=False, msg="",
               duration=0.5, sub_flow="", section="", screenshot="", layer=1,
-              ts_start=0.0, ts_end=0.0, action=None):
+              ts_start=0.0, ts_end=0.0, action=None, evidence=None):
     return {
         "label": label, "name": label, "action": action, "passed": passed,
         "skipped": skipped, "msg": msg, "duration": duration, "sub_flow": sub_flow,
         "section": section, "screenshot": screenshot, "layer": layer,
-        "ts_start": ts_start, "ts_end": ts_end,
+        "ts_start": ts_start, "ts_end": ts_end, "evidence": evidence,
     }
 
 
@@ -545,3 +545,72 @@ def test_leaf_steps_expose_verb_argument_and_fallback_layer():
     assert steps[0]["layer"] == 1 and steps[2]["layer"] == 2   # UI chips only L2/L3
     assert "action" not in steps[3]
     assert "layer" not in steps[4]   # skipped steps never ran on any layer
+
+
+# ── failure evidence + profiles ─────────────────────────────────────────────
+
+def _evidence(**over):
+    ev = {
+        "url": "https://x.test/account", "title": "Account",
+        "profile": "mobile · iPhone 13 · chromium · 390x664",
+        "layers": {"L1 exact": "failed", "L2 fuzzy": "failed", "L3 AI": "skipped: provider not configured"},
+        "screenshots": {"viewport": "/abs/images/f__viewport.png", "full_page": "/abs/images/f__full.png"},
+        "trace": "/abs/traces/f__mobile.zip",
+        "console": [{"level": "error", "text": "boom", "ts": 1, "seq": 1}],
+        "network": [],
+    }
+    ev.update(over)
+    return ev
+
+
+def test_failed_leaf_carries_evidence_and_test_artifacts_list_every_shot():
+    steps = [make_step(passed=False, msg="nope", screenshot="images/f__viewport.png",
+                       evidence=_evidence(screenshots={"viewport": "images/f__viewport.png",
+                                                       "element": "images/f__element.png"},
+                                          trace="traces/f__mobile.zip"))]
+    steps[0]["evidence"] = steps[0].pop("evidence")
+    t = _build_test(make_result(outcome="failed", flow_steps=steps))
+    leaf = t["steps"][0]
+    assert leaf["evidence"]["layers"]["L3 AI"].startswith("skipped")
+    assert leaf["attachment"] == "images/f__viewport.png"
+    assert t["artifacts"] == {
+        "screenshot": "images/f__viewport.png",
+        "screenshots": [{"kind": "viewport", "path": "images/f__viewport.png"},
+                        {"kind": "element", "path": "images/f__element.png"}],
+        "trace": "traces/f__mobile.zip",
+    }
+
+
+def test_passed_and_skipped_leaves_have_no_evidence():
+    steps = [make_step(evidence=_evidence()),
+             make_step(passed=False, skipped=True, evidence=_evidence())]
+    t = _build_test(make_result(flow_steps=steps))
+    assert all("evidence" not in s for s in t["steps"])
+    assert t["artifacts"] == {"screenshot": None, "screenshots": [], "trace": None}
+
+
+def test_profile_is_passed_through_to_each_test():
+    profile = {"name": "mobile", "label": "mobile · iPhone 13 · chromium · 390x664"}
+    r = make_result(flow_steps=sectioned_steps())
+    r["profile"] = profile
+    assert all(t["profile"] == profile for t in _build_tests(r))
+    assert _build_test(make_result())["profile"] is None
+
+
+def test_generate_report_makes_evidence_paths_relative(tmp_path):
+    report_dir = tmp_path / "reports" / "staging"
+    shot = report_dir / "images" / "f__viewport.png"
+    full = report_dir / "images" / "f__full.png"
+    trace = report_dir / "traces" / "f__desktop.zip"
+    steps = [make_step(passed=False, msg="nope", screenshot=str(shot),
+                       evidence=_evidence(screenshots={"viewport": str(shot), "full_page": str(full)},
+                                          trace=str(trace)))]
+    generate_report(results=[make_result(outcome="failed", flow_steps=steps)],
+                    session_start=time.time(), output_path=report_dir / "report.html")
+    payload = json.loads(_json_report(report_dir).read_text())
+    test = payload["tests"][0]
+    assert test["artifacts"]["trace"] == "traces/f__desktop.zip"
+    assert test["steps"][0]["evidence"]["screenshots"] == {
+        "viewport": "images/f__viewport.png", "full_page": "images/f__full.png"}
+    # the caller's step dicts are untouched (a second generate_report still works)
+    assert steps[0]["evidence"]["trace"] == str(trace)

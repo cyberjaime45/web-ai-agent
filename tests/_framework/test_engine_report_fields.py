@@ -67,3 +67,56 @@ def test_failed_section_steps_recorded_as_skipped(monkeypatch, runner):
     assert skipped.duration == 0.0
     # pass/fail math unchanged: skipped steps are not failures
     assert result.failed == 1 and result.skipped == 1
+
+
+# ── failure evidence ─────────────────────────────────────────────────────────
+
+class ShootingPage(FakePage):
+    """FakePage that can be photographed."""
+    viewport_size = {"width": 1920, "height": 1080}
+
+    def screenshot(self, path, full_page=False, timeout=None):
+        from pathlib import Path
+        Path(path).write_bytes(b"png")
+
+
+def test_failed_step_gets_evidence_with_layers_and_screenshots(monkeypatch, runner, tmp_path):
+    _patch_run_step(monkeypatch, fail_raws=('click: "a"',))
+    result = runner.run(parse_flow_markdown(MD), ShootingPage())
+    failed, skipped, ok = result.steps
+    assert failed.evidence is not None
+    assert failed.evidence.layers == {"L1": "failed"}          # the fake gave no layer detail
+    assert failed.evidence.url == "https://x.test/"
+    assert failed.evidence.profile.startswith("desktop")
+    assert failed.evidence.screenshots["viewport"].endswith("__desktop__01__viewport.png")
+    assert failed.screenshot_path == failed.evidence.screenshots["viewport"]
+    assert "full_page" in failed.evidence.screenshots
+    assert skipped.evidence is None and ok.evidence is None
+
+
+def test_evidence_files_are_numbered_per_failure(monkeypatch, runner):
+    _patch_run_step(monkeypatch, fail_raws=('click: "a"', 'click: "c"'))
+    result = runner.run(parse_flow_markdown(MD), ShootingPage())
+    stems = [s.evidence.screenshots["viewport"].rsplit("/", 1)[1]
+             for s in result.steps if s.evidence]
+    assert stems == ["t__desktop__01__viewport.png", "t__desktop__02__viewport.png"]
+
+
+def test_unresolved_placeholder_fails_with_evidence(monkeypatch, runner):
+    monkeypatch.delenv("WEBAGENT_MISSING_VAR", raising=False)
+    flow = parse_flow_markdown('# T\n\n## Steps\n- fill: "Email" | "<WEBAGENT_MISSING_VAR>"\n')
+    result = runner.run(flow, ShootingPage())
+    step = result.steps[0]
+    assert not step.success and "WEBAGENT_MISSING_VAR" in step.message
+    assert step.evidence.layers == {"L1 exact": "not attempted (placeholder unresolved)"}
+    assert step.evidence.screenshots["viewport"]
+
+
+def test_attach_evidence_is_idempotent(monkeypatch, runner):
+    _patch_run_step(monkeypatch, fail_raws=('click: "a"',))
+    page = ShootingPage()
+    result = runner.run(parse_flow_markdown(MD), page)
+    failed = result.steps[0]
+    first = dict(failed.evidence.screenshots)
+    runner.attach_evidence(failed, page)         # conftest's flow-end fallback
+    assert failed.evidence.screenshots == first  # nothing re-shot, nothing renumbered

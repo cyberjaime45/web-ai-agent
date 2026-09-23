@@ -44,3 +44,41 @@ def test_md_outside_a_flows_directory_is_collected():
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "home.md::Home Page" in proc.stdout
     assert "1 test collected" in proc.stdout
+
+
+def _collect(flow_text: str, *extra: str) -> subprocess.CompletedProcess:
+    root = _REPO / "reports" / "_discovery_test"
+    scratch = root / uuid.uuid4().hex
+    scratch.mkdir(parents=True)
+    flow = scratch / "home.md"
+    flow.write_text(flow_text, encoding="utf-8")
+    env = {**os.environ, "AI_PROVIDER": "", "LLM_KEY": "", "LLM_MODEL": "", "PROFILE": ""}
+    try:
+        return subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+             str(flow.relative_to(_REPO)), *extra],
+            cwd=_REPO, env=env, capture_output=True, text=True, timeout=120, check=False,
+        )
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_profile_option_collects_one_item_per_profile():
+    proc = _collect(_FLOW, "--profile", "desktop,mobile")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "home.md::Home Page\n" in proc.stdout           # desktop keeps the plain name
+    assert "home.md::Home Page[mobile]" in proc.stdout
+    assert "2 tests collected" in proc.stdout
+
+
+def test_flow_config_profiles_are_used_without_the_option():
+    proc = _collect(_FLOW.replace("## Test One", "## Config\n- profiles: mobile\n\n## Test One"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "home.md::Home Page[mobile]" in proc.stdout
+    assert "1 test collected" in proc.stdout
+
+
+def test_unknown_profile_is_a_usage_error():
+    proc = _collect(_FLOW, "--profile", "tablet")
+    assert proc.returncode != 0
+    assert "Unknown profile(s): tablet" in proc.stdout + proc.stderr

@@ -62,6 +62,8 @@ class FlowDefinition:
     title:   str | None = None
     markers: list[str] = field(default_factory=list)
     section_markers: dict[str, list[str]] = field(default_factory=dict)
+    # `## Config` → `profiles: desktop, mobile`; empty = the run's default.
+    profiles: list[str] = field(default_factory=list)
 
 
 # ── Section extraction ────────────────────────────────────────────────────────
@@ -332,11 +334,16 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
         if names := _marker_names(body):
             flow.section_markers[heading] = names
 
-    # ── Config: only `timeout` is consumed (page default timeout) ──
+    # ── Config: `timeout` (page default timeout) and `profiles` (device profiles) ──
     for line in _section_lines(text, "Config"):
         m = re.match(r"[-*]?\s*(\w+)\s*:\s*(.+)", line)
-        if m and m.group(1).lower() == "timeout":
-            flow.timeout = int(re.sub(r"[^\d]", "", m.group(2)) or "30000")
+        if not m:
+            continue
+        key, value = m.group(1).lower(), m.group(2).strip()
+        if key == "timeout":
+            flow.timeout = int(re.sub(r"[^\d]", "", value) or "30000")
+        elif key == "profiles":
+            flow.profiles = [p.strip().lower() for p in value.split(",") if p.strip()]
 
     # ── Steps — every non-metadata ## section (Credentials, Notes… are skipped) ──
     for step_num, (section_name, raw) in enumerate(_all_action_sections(text), start=1):

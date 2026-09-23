@@ -57,6 +57,21 @@ class Settings:
     llm_key:       str  = field(default_factory=lambda: _str("LLM_KEY"))
     llm_model:     str  = field(default_factory=lambda: _str("LLM_MODEL"))
 
+    # ── Device profiles ───────────────────────────────────────────
+    # Default profile(s) a flow runs under when neither `--profile` nor the
+    # flow's `## Config` says otherwise; comma-separated (desktop, mobile).
+    profile:       str  = field(default_factory=lambda: _str("PROFILE", "desktop").lower())
+    # Playwright device descriptor behind the `mobile` profile.
+    mobile_device: str  = field(default_factory=lambda: _str("MOBILE_DEVICE", "iPhone 13"))
+
+    # ── Failure evidence ──────────────────────────────────────────
+    # on-failure keeps a Playwright trace (traces/<flow>__<profile>.zip) for
+    # flows that fail; off records nothing. Recording runs for every flow
+    # either way — the decision to keep is only known at the end.
+    trace:         str  = field(default_factory=lambda: _str("TRACE", "on-failure").lower())
+    # Dismiss cookie banners / modals before each L1 attempt.
+    dismiss_blockers: bool = field(default_factory=lambda: _bool("DISMISS_BLOCKERS", "false"))
+
     # ── Reporting ─────────────────────────────────────────────────
     # Extra sensitive key substrings (comma-separated) redacted from
     # report network headers/payloads, on top of the built-in list.
@@ -67,6 +82,10 @@ class Settings:
         return self.running_mode == "lambda"
 
     @property
+    def trace_on_failure(self) -> bool:
+        return self.trace == "on-failure"
+
+    @property
     def report_dir(self) -> Path:
         """reports/<environment>/ — anchored to the project root, not the cwd."""
         return PROJECT_ROOT / "reports" / self.environment
@@ -74,6 +93,10 @@ class Settings:
     @property
     def images_dir(self) -> Path:
         return self.report_dir / "images"
+
+    @property
+    def traces_dir(self) -> Path:
+        return self.report_dir / "traces"
 
     def run_label(self) -> str:
         """``staging · chromium · headless[ · lambda]`` for console and banner."""

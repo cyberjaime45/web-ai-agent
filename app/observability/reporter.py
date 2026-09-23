@@ -93,6 +93,35 @@ def _failure_screenshot(steps: list[dict]) -> str | None:
                  and s.get("screenshot")), None)
 
 
+def _failure_evidence(steps: list[dict]) -> dict | None:
+    """Evidence bundle of the last failed (non-skipped) step, if any."""
+    return next((s["evidence"] for s in reversed(steps)
+                 if not s.get("passed") and not s.get("skipped")
+                 and s.get("evidence")), None)
+
+
+def _artifacts(steps: list[dict]) -> dict:
+    """``artifacts`` block: failure screenshot, every evidence shot, trace."""
+    ev = _failure_evidence(steps) or {}
+    shots = ev.get("screenshots") or {}
+    return {
+        "screenshot": _failure_screenshot(steps),
+        "screenshots": [{"kind": k, "path": p} for k, p in shots.items() if p],
+        "trace": ev.get("trace"),
+    }
+
+
+def _relative_evidence(ev: dict | None, report_dir: Path) -> dict | None:
+    """Copy of an evidence dict with its file paths made report-relative."""
+    if not ev:
+        return ev
+    out = dict(ev)
+    out["screenshots"] = {k: rel for k, p in (ev.get("screenshots") or {}).items()
+                          if (rel := _screenshot_rel_path(p, report_dir))}
+    out["trace"] = _screenshot_rel_path(ev.get("trace"), report_dir)
+    return out
+
+
 def _group_status(children: list[dict]) -> str:
     statuses = {c["status"] for c in children}
     if "failed" in statuses:
@@ -120,6 +149,8 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
         rec["error"] = s["msg"]
     if s.get("screenshot") and rec["status"] != "skipped":
         rec["attachment"] = s["screenshot"]
+    if rec["status"] == "failed" and s.get("evidence"):
+        rec["evidence"] = s["evidence"]
     # Verb + argument text for the drawer. The argument comes from the raw
     # step text (already secret-masked by the engine), never from the
     # resolved action args.
@@ -328,6 +359,7 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
         "file": file,
         "file_title": r.get("flow_title") or None,
         "markers": _markers(r, section),
+        "profile": r.get("profile") or None,
         "status": status,
         "started_at": started_at,
         "duration_ms": round((r.get("duration") or 0.0) * 1000, 1),
@@ -335,10 +367,7 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
         "steps": _build_steps(flow_steps, started_at, runs),
         "console": r.get("console") or [],
         "network": r.get("network") or [],
-        "artifacts": {
-            "screenshot": _failure_screenshot(flow_steps),
-            "screenshots": [],
-        },
+        "artifacts": _artifacts(flow_steps),
         "healings": _healings(flow_steps),
     }
 
@@ -386,6 +415,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "file": file,
         "file_title": r.get("flow_title") or None,
         "markers": _markers(r, name),
+        "profile": r.get("profile") or None,
         "status": status,
         "started_at": started_iso,
         "t0": t0,
@@ -394,7 +424,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "steps": _nest_sub_flows(steps, started_iso, 0),
         "console": [],
         "network": [],
-        "artifacts": {"screenshot": None, "screenshots": []},
+        "artifacts": {"screenshot": None, "screenshots": [], "trace": None},
         "healings": _healings(steps),
     }
     if failed:
@@ -403,7 +433,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
             "kind": "FlowError",
             "traceback": r.get("longrepr") or None,
         }
-        test["artifacts"]["screenshot"] = _failure_screenshot(steps)
+        test["artifacts"] = _artifacts(steps)
     return test
 
 
@@ -467,7 +497,8 @@ def generate_report(
         # Copy the step dicts too: rewriting screenshot paths on the caller's
         # data would make a second generate_report() call lose every image.
         r = dict(r, flow_steps=[
-            dict(s, screenshot=_screenshot_rel_path(s.get("screenshot"), report_dir) or "")
+            dict(s, screenshot=_screenshot_rel_path(s.get("screenshot"), report_dir) or "",
+                 evidence=_relative_evidence(s.get("evidence"), report_dir))
             for s in r.get("flow_steps") or []
         ])
         tests.extend(_build_tests(r))

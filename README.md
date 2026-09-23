@@ -48,7 +48,13 @@ and `FMS_PASSWORD` for `tests/fms/production_smoke.md`) as pipeline variables.
 Flows live beside the suite for the application they exercise —
 `tests/<app>/*.md`, shared sub-flows in `components/` — and pytest picks them
 up without any `test_*.py`. Run one inline with `--flow "<markdown>"`, or any
-file anywhere with `--flow_file=path.md`.
+file anywhere with `--flow_file=path.md`. The same flow runs on a phone with
+`--profile mobile` (or `--profile desktop,mobile` for both).
+
+When a step fails, the report gets the evidence without any `screenshot` step
+in the flow: viewport, full-page and failed-element screenshots, the page URL
+and title, what each layer (L1 / L2 / L3) did, the console errors and failed
+requests of that step, and a Playwright trace of the flow.
 
 ## Documentation
 
@@ -72,8 +78,12 @@ Copy `.env.example` to `.env`. Every variable is read once by
 | `RUNNING_MODE` | `local` | `local` or `lambda` (LambdaTest cloud; needs `LT_USERNAME`, `LT_ACCESS_KEY`) |
 | `BROWSER` | `chromium` | `chromium`, `firefox`, or `webkit` |
 | `HEADLESS` | `true` | `false` shows the browser, maximized |
-| `VIEWPORT` | `1920x1080` | Viewport size (`WIDTHxHEIGHT`) |
+| `VIEWPORT` | `1920x1080` | Viewport size (`WIDTHxHEIGHT`) of the `desktop` profile |
 | `SLOW_MO` | `0` | Milliseconds between actions, for debugging |
+| `PROFILE` | `desktop` | Device profile(s) flows run under by default: `desktop`, `mobile`, or both (comma-separated). `pytest --profile …` and a flow's `## Config` `profiles:` line override it |
+| `MOBILE_DEVICE` | `iPhone 13` | Playwright device descriptor behind the `mobile` profile |
+| `TRACE` | `on-failure` | Keep a Playwright trace under `reports/<ENVIRONMENT>/traces/` for every failed flow; `off` disables recording |
+| `DISMISS_BLOCKERS` | `false` | Dismiss cookie banners and modals before each step |
 | `AI_PROVIDER` | — | Layer 3 provider: `openai`, `gemini`, or `anthropic`; empty disables L3 |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider |

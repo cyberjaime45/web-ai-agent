@@ -64,6 +64,26 @@ each flow gets a fresh `BrowserContext` — that is where cookie and storage
 isolation comes from. With `RUNNING_MODE=lambda` every flow opens its own grid
 session, because the LambdaTest dashboard names and grades tests per session.
 
+## Device profiles
+
+A profile (`app/browser/profiles.py`) is a set of `BrowserContext` options:
+`desktop` is the session's own viewport, `mobile` is Playwright's device
+descriptor named by `MOBILE_DEVICE`. Profiles are applied at context creation
+only — the browser, the flow and every step are shared. pytest collects one
+`FlowItem` per profile a flow runs under (`--profile`, the flow's `## Config`
+`profiles:` line, or `PROFILE`), and the report labels each test with it.
+
+## Failure evidence
+
+When a step fails, `FlowRunner.execute` calls `attach_evidence`, which fills a
+`StepResult.evidence` bundle through `app/observability/evidence.py`: what each
+layer did (recorded by the engine as the chain ran), viewport / full-page /
+element screenshots, page URL and title, profile, and — via the `PageRecorder`
+sequence mark taken before the step — the console errors and failed requests
+of that step. Every capture is best-effort and never raises. conftest keeps a
+Playwright trace per failed flow (`TRACE=on-failure`) and attaches it to the
+failing step; the reporter turns all paths report-relative.
+
 ## Parser pipeline
 
 Each flow step is processed through a 4-stage pipeline:
@@ -102,20 +122,25 @@ web-agent/
 │   ├── schemas/actions.py          # ActionType enum (44), FlowAction, StepResult, FlowResult
 │   ├── flow/parser.py              # 4-stage pipeline: tokenize → normalize → validate → build
 │   ├── layers/
-│   │   ├── deterministic.py        # L1 + L2 dispatch-table runner
+│   │   ├── deterministic.py        # L1 dispatch-table runner (+ locate() for evidence)
+│   │   ├── deterministic_l2.py     # L2 handlers mixed into the runner
+│   │   ├── blockers.py             # Cookie-banner / modal dismissal (DISMISS_BLOCKERS)
 │   │   ├── locator.py              # FallbackLocator — polled strategies + selectolax
 │   │   ├── ai_resolver.py          # L3 resolver + AI-native actions
 │   │   └── providers/              # LLMProvider ABC, factory, OpenAI / Gemini / Claude adapters
-│   ├── execution/engine.py         # FlowRunner: orchestrates L1 → L2 → L3, run_flow
+│   ├── execution/engine.py         # FlowRunner: L1 → L2 → L3, run_flow, execute(), evidence
 │   ├── agent/
 │   │   ├── orchestrator.py         # CLI runtime (one flow, own browser)
 │   │   └── prompts/resolver.py     # LLM prompt templates
-│   ├── browser/session.py          # Browser creation (local + LambdaTest)
+│   ├── browser/
+│   │   ├── session.py              # Browser creation (local + LambdaTest)
+│   │   └── profiles.py             # desktop / mobile context options
 │   ├── config/settings.py          # Typed settings from environment (.env loaded here)
 │   ├── integrations/database/      # MySQL/MariaDB client (optional, unused by flows)
 │   ├── observability/
 │   │   ├── assets/                 # Static report shell, CSS, and JS
 │   │   ├── console.py              # Live terminal output + execution summary
+│   │   ├── evidence.py             # Failure evidence: screenshots, page state, diagnostics
 │   │   ├── recorder.py             # Per-test console + network capture
 │   │   └── reporter.py             # HTML + JSON report generator
 │   └── utils/
@@ -129,7 +154,7 @@ web-agent/
 │   └── fms/flows/
 │
 ├── docs/                           # These guides
-└── reports/<ENVIRONMENT>/          # report.html, report_<build>.json, assets/, images/
+└── reports/<ENVIRONMENT>/          # report.html, report_<build>.json, assets/, images/, traces/
 ```
 
 Adding a new LLM provider means one new file under `app/layers/providers/`
