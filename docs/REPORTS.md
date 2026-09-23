@@ -63,8 +63,10 @@ reports/staging/
 ├── images/
 │   ├── 001_<name>.png   # `screenshot` steps
 │   └── <flow>__<profile>__<n>__{viewport,full,element}.png   # failure evidence
-└── traces/
-    └── <flow>__<profile>.zip   # Playwright trace of each failed flow (TRACE=on-failure)
+├── traces/
+│   └── <flow>__<profile>.zip   # Playwright trace of each failed flow (TRACE=on-failure)
+└── generated/
+    └── <flow>__<profile>__test_page.md   # deterministic flow written by test_page / explore_page
 ```
 
 The UI loads only the slim payload upfront; a test's console/network detail
@@ -96,6 +98,18 @@ The report includes:
 - A profile chip (`🖥 desktop` / `📱 mobile`) on every test row; a flow run
   under both profiles appears once per profile, named `Test[mobile]` for the
   second
+- An **Agent** panel for autonomous runs (`test_page`, `explore_page`, `--agent-test`):
+  page type and how it was classified, discovered components, the plan, actions
+  executed, plan steps the validator rejected, controls skipped by the safety
+  policy, AI calls, and a link to the generated Markdown flow under
+  `generated/`. Skills nested inside `test_page` appear as groups within its
+  group. A `🤖` chip marks such tests in the list
+- Automatic checks under navigation steps and skill findings on skill groups:
+  a collapsed line (`✓ 8 checks passed`, `⚠ 1 warning in 8 checks`,
+  `✕ 1 of 8 checks failed`) that expands to one row per check with its
+  detail. A `⚑ n` chip on the test row counts flagged checks. Skill groups
+  (`test_form`, `test_responsive`…) show their checks and screenshots above
+  the child steps they ran; the JSON carries `checks` on each step
 - Console messages (all levels) with level filters, search, repeat grouping, and source locations
 - Network requests with method/status/type/duration/size, filters (Failed/XHR/Doc/JS/CSS/Img), search, sorting, expandable headers/payloads, and Copy cURL/URL actions
 - Console errors and network activity routed to the section and step where they occurred

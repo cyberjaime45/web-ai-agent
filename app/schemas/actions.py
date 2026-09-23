@@ -74,6 +74,14 @@ class ActionType(str, Enum):
     SCREENSHOT            = "screenshot"
     PRESS                 = "press"
 
+    # ── QA skills (orchestrate actions; see app/skills/) ─────────
+    INSPECT_PAGE          = "inspect_page"
+    CHECK_CONSOLE_NETWORK = "check_console_network"
+    TEST_RESPONSIVE       = "test_responsive"
+    TEST_FORM             = "test_form"
+    EXPLORE_PAGE          = "explore_page"
+    TEST_PAGE             = "test_page"
+
 # Argument count spec: (min_args, max_args)
 ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
     ActionType.GOTO:            (1, 1),
@@ -129,6 +137,14 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
 
     ActionType.SCREENSHOT:      (0, 1),
     ActionType.PRESS:           (1, 1),
+
+    # Skills take `key=value` options; see app/skills/__init__.py
+    ActionType.INSPECT_PAGE:          (0, 4),
+    ActionType.CHECK_CONSOLE_NETWORK: (0, 4),
+    ActionType.TEST_RESPONSIVE:       (0, 4),
+    ActionType.TEST_FORM:             (0, 4),
+    ActionType.EXPLORE_PAGE:          (0, 6),
+    ActionType.TEST_PAGE:             (0, 8),
 }
 
 # Actions that bypass L1/L2 and go directly to L3 (AI)
@@ -137,6 +153,17 @@ AI_ONLY_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.AI_EXTRACT,
     ActionType.AI_ASSERT,
     ActionType.AI_SUMMARIZE,
+})
+
+# Skills: handled by the engine like run_flow — a marker step followed by
+# the child actions they execute through FlowRunner.execute. Never L1/L2/L3.
+SKILL_ACTIONS: frozenset[ActionType] = frozenset({
+    ActionType.INSPECT_PAGE,
+    ActionType.CHECK_CONSOLE_NETWORK,
+    ActionType.TEST_RESPONSIVE,
+    ActionType.TEST_FORM,
+    ActionType.EXPLORE_PAGE,
+    ActionType.TEST_PAGE,
 })
 
 @dataclass
@@ -199,6 +226,22 @@ class Evidence:
     trace:       Optional[str] = None                           # Playwright trace zip, set at flow end
     console:     list[dict] = field(default_factory=list)       # error/warning entries since the step started
     network:     list[dict] = field(default_factory=list)       # failed requests since the step started
+    files:       dict[str, str] = field(default_factory=dict)   # label → other artifact (generated flow…)
+
+
+@dataclass
+class Check:
+    """One automatic QA check — from the oracle after a step, or a skill's finding.
+
+    ``severity`` says what a failed check means: ``error`` (a defect —
+    fails the step in strict mode, always fails an explicit skill step),
+    ``warn`` (worth a look, never fails), ``info`` (an observation;
+    ``passed`` is always True).
+    """
+    name:     str
+    passed:   bool = True
+    severity: str = "error"
+    detail:   str = ""
 
 
 @dataclass
@@ -215,6 +258,10 @@ class StepResult:
     started_at:      float = 0.0      # epoch seconds; 0.0 = never executed
     ended_at:        float = 0.0      # epoch seconds; 0.0 = never executed
     evidence:        Optional[Evidence] = None   # only on failed (non-skipped) steps
+    checks:          list[Check] = field(default_factory=list)   # oracle / skill checks
+    group:           bool = False     # marker step whose children follow (run_flow, skills)
+    url:             str = ""         # page URL after the step (for generated flows)
+    agent:           Optional[dict] = None   # autonomous-run facts: page type, plan, skipped, ai_calls…
 
 
 @dataclass

@@ -73,6 +73,54 @@ only — the browser, the flow and every step are shared. pytest collects one
 `FlowItem` per profile a flow runs under (`--profile`, the flow's `## Config`
 `profiles:` line, or `PROFILE`), and the report labels each test with it.
 
+## Skills, observer and oracle
+
+A skill (`app/skills/`) is a function that looks at the page and acts only
+through `FlowRunner.execute`, the same L1 → L2 → L3 path a Markdown step
+takes. The engine runs a skill keyword like `run_flow`: a marker step carrying
+the skill's checks, then the child steps it executed, nested in the report.
+Skills never enter the layer chain themselves, so a skill as a whole cannot
+be "healed".
+
+The observer (`app/agent/observer.py`) turns Playwright's accessibility
+snapshot plus one form-metadata `evaluate` into a small structured
+`Observation`: headings and interactive controls with stable refs, forms with
+field types and required flags, counts of tables, dialogs and navigation, and
+a coarse page type. Deterministic skills consume it directly; its `to_prompt`
+rendering (a few KB, never the DOM) is what the Phase 3 planner will send to
+an LLM.
+
+The planner (`app/agent/planner.py`) is the only place an LLM decides *what*
+to do. It receives the observation's prompt rendering, a goal and what was
+already done, and returns JSON steps that are validated before anything runs:
+known flow keywords only, element targets that exist in the observation (by
+ref or name), and the safety policy applied to each. Rejected steps are kept
+for the report. `explore_page` uses it only to order the controls the
+observer found; without a provider every skill runs deterministically.
+
+`test_page` (`app/skills/test_page.py`) composes the rest: it classifies the
+page from the observation (deterministic signals; an LLM tie-break only for
+`CONTENT` / `UNKNOWN`), runs the skills that fit the type as nested groups,
+optionally executes a short validated AI plan, and writes what ran as a plain
+flow through `app/flow/writer.py` — the path from autonomous exploration to
+deterministic regression. `explore_page` writes its graph the same way.
+
+The safety policy (`app/agent/safety.py`) is deterministic and consulted before
+any click a skill chose by itself: a destructive verb in the control's name, a
+neutral confirm button inside a destructive or payment dialog / form (the
+observer records each control's landmark), or a confirm button on a delete /
+checkout / unsubscribe URL blocks the press. `allow_destructive` and
+`allow_actions` in a flow's `## Config`, or `ALLOW_DESTRUCTIVE=true`, are the
+only overrides; AI never is.
+
+The oracle (`app/execution/oracle.py`) runs after successful navigation-class
+steps: recorder-based checks (page errors, console errors, failed / 401 /
+403 / 4xx requests since the step's sequence mark) plus one render-state
+probe (blank page, stuck spinner, blocking dialog, horizontal overflow).
+`ORACLE=warn` records, `strict` fails the step on an error-severity check,
+`off` skips it. `check_console_network` and `test_responsive` reuse the same
+functions explicitly.
+
 ## Failure evidence
 
 When a step fails, `FlowRunner.execute` calls `attach_evidence`, which fills a
@@ -119,7 +167,7 @@ web-agent/
 ├── pyproject.toml / requirements.txt
 │
 ├── app/
-│   ├── schemas/actions.py          # ActionType enum (44), FlowAction, StepResult, FlowResult
+│   ├── schemas/actions.py          # ActionType enum (50), FlowAction, StepResult, Check, FlowResult
 │   ├── flow/parser.py              # 4-stage pipeline: tokenize → normalize → validate → build
 │   ├── layers/
 │   │   ├── deterministic.py        # L1 dispatch-table runner (+ locate() for evidence)
@@ -128,10 +176,19 @@ web-agent/
 │   │   ├── locator.py              # FallbackLocator — polled strategies + selectolax
 │   │   ├── ai_resolver.py          # L3 resolver + AI-native actions
 │   │   └── providers/              # LLMProvider ABC, factory, OpenAI / Gemini / Claude adapters
-│   ├── execution/engine.py         # FlowRunner: L1 → L2 → L3, run_flow, execute(), evidence
+│   ├── execution/
+│   │   ├── engine.py               # FlowRunner: L1 → L2 → L3, run_flow, skills, execute(), evidence
+│   │   └── oracle.py               # Automatic checks after steps (diagnostics + render probe)
+│   ├── skills/                     # inspect_page, check_console_network, test_responsive, test_form, explore_page, test_page
+│   │   └── base.py                 # SkillContext (observe / run / run_skill through the engine), run_skill
+│   ├── flow/writer.py              # StepResults / explore graph → deterministic Markdown flow
+│   ├── planner_bridge.py           # Execute validated planner steps through a SkillContext
 │   ├── agent/
+│   │   ├── observer.py             # Structured page observation from the accessibility tree
+│   │   ├── planner.py              # LLM plan → validated known actions on observed targets
+│   │   ├── safety.py               # Safety policy: destructive names, dialog/form context, URL
 │   │   ├── orchestrator.py         # CLI runtime (one flow, own browser)
-│   │   └── prompts/resolver.py     # LLM prompt templates
+│   │   └── prompts/                # LLM prompt templates (resolver, planner)
 │   ├── browser/
 │   │   ├── session.py              # Browser creation (local + LambdaTest)
 │   │   └── profiles.py             # desktop / mobile context options
@@ -154,7 +211,7 @@ web-agent/
 │   └── fms/flows/
 │
 ├── docs/                           # These guides
-└── reports/<ENVIRONMENT>/          # report.html, report_<build>.json, assets/, images/, traces/
+└── reports/<ENVIRONMENT>/          # report.html, report_<build>.json, assets/, images/, traces/, generated/
 ```
 
 Adding a new LLM provider means one new file under `app/layers/providers/`

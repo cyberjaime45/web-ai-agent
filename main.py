@@ -8,6 +8,7 @@ Usage
   python main.py run <flow.md> --json      Emit FlowResult JSON to stdout.
   python main.py run <flow.md> --env qa1   Override ENVIRONMENT (report dir).
   python main.py run <flow.md> --profile mobile   Run under the mobile device profile.
+  python main.py agent-test https://example.com/members   Autonomous test of one page.
 
 Exit codes
 ----------
@@ -90,6 +91,17 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Flow name for --inline (default: inline).")
     run.add_argument("--profile", default="desktop",
                      help="Device profile: desktop (default) or mobile.")
+
+    agent = sub.add_parser("agent-test", help="Autonomous test of one page (goto + test_page).")
+    agent.add_argument("url", help="Page to test (http:// or https://).")
+    agent.add_argument("--depth", type=int, default=1, help="Link hops explore_page may follow (default 1).")
+    agent.add_argument("--max-actions", type=int, default=12, help="Clicks the agent may perform (default 12).")
+    agent.add_argument("--max-ai-calls", type=int, default=3, help="LLM calls when a provider is configured.")
+    agent.add_argument("--destructive", action="store_true",
+                       help="Allow controls the safety policy blocks (needs ALLOW_DESTRUCTIVE=true).")
+    agent.add_argument("--json", dest="as_json", action="store_true", help="Emit FlowResult JSON to stdout.")
+    agent.add_argument("--env", help="Override ENVIRONMENT (report directory).")
+    agent.add_argument("--profile", default="desktop", help="Device profile: desktop (default) or mobile.")
     return parser
 
 
@@ -138,16 +150,36 @@ def _cmd_run(args: argparse.Namespace) -> int:
         status = "PASSED" if result.success else "FAILED"
         print(f"\n[{status}] {result.flow_name} — "
               f"{result.passed}/{len(result.steps)} steps passed")
+        for step in result.steps:
+            if step.evidence and step.evidence.files.get("generated flow"):
+                print(f"generated flow: {step.evidence.files['generated flow']}")
         if result.error:
             print(f"error: {result.error}", file=sys.stderr)
 
     return 0 if result.success else 1
 
 
+def _cmd_agent_test(args: argparse.Namespace) -> int:
+    """Build the two-step flow (goto + test_page) and run it like `run --inline`."""
+    url = args.url.strip()
+    if not url.startswith(("http://", "https://", "file://")):
+        print(f"error: agent-test needs an http(s) URL, got {url!r}", file=sys.stderr)
+        return 2
+    options = " | ".join(f'"{o}"' for o in (
+        f"depth={args.depth}", f"max_actions={args.max_actions}", f"max_ai_calls={args.max_ai_calls}",
+        *(["destructive=true"] if args.destructive else []),
+    ))
+    args.inline = f'# Agent test — {url}\n\n## Steps\n- goto: "{url}"\n- test_page: {options}\n'
+    args.flow_file, args.name = None, "agent-test"
+    return _cmd_run(args)
+
+
 def main() -> int:
     args = _build_parser().parse_args()
     if args.command == "run":
         return _cmd_run(args)
+    if args.command == "agent-test":
+        return _cmd_agent_test(args)
     return 0
 
 

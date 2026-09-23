@@ -34,7 +34,7 @@ _SUFFIX = {"viewport": "viewport", "full_page": "full", "element": "element"}
 
 def slugify(text: str) -> str:
     """``"FMS MVC Smoke Tests"`` → ``"fms_mvc_smoke_tests"`` (file-name safe)."""
-    return _SLUG_RE.sub("_", (text or "").lower()).strip("_") or "flow"
+    return _SLUG_RE.sub("_", (text or "").lower()).strip("_")[:80].rstrip("_") or "flow"
 
 
 def _viewport(page: Any) -> dict | None:

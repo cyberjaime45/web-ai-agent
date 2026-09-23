@@ -18,7 +18,10 @@ Page title: {title}
 Action:     {action_type} {args}
 Error:      {error}
 
-Suggest a Playwright locator. Respond with JSON only:
+Interactive elements on the page (role "accessible name"):
+{elements}
+
+Suggest a Playwright locator for one of the elements above. Respond with JSON only:
 {{
   "strategy": "css" | "text" | "role" | "label" | "placeholder",
   "value": "<selector or text value>",
@@ -39,6 +42,8 @@ PROMPTS: dict[str, dict[str, str]] = {
         "user": """\
 Page URL:   {url}
 Page title: {title}
+Interactive elements (role "accessible name"):
+{elements}
 Visible text (truncated): {page_text}
 
 Target to click: {target}

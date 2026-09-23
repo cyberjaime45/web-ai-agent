@@ -198,6 +198,29 @@ select{background:var(--card);border:1px solid var(--border);border-radius:9px;p
 .evshot img{width:120px;max-height:90px;object-fit:cover;object-position:top;border:1px solid var(--border);border-radius:6px;display:block;background:var(--card)}
 .evtrace{font:11.5px var(--mono);align-self:center;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 9px;text-decoration:none}
 .evdiag{margin-top:8px} .evdiag summary{cursor:pointer;color:var(--fail);font:600 11.5px var(--mono)}
+.evbox.ok{border-left-color:var(--border)}
+/* automatic checks (oracle) and skill findings under a step */
+.chk{margin:6px 0 2px;font:11.5px var(--mono)}
+.chk summary{cursor:pointer;list-style:none;display:inline-block;border:1px solid var(--border);border-radius:5px;padding:1px 8px;color:var(--muted)}
+.chk summary::-webkit-details-marker{display:none}
+.chk.ok summary{color:var(--pass);border-color:var(--pass)}
+.chk.warn summary{color:var(--skip);border-color:var(--skip)}
+.chk.bad summary{color:var(--fail);border-color:var(--fail)}
+.chkrow{display:flex;gap:8px;align-items:baseline;padding:3px 0 3px 4px;border-bottom:1px solid var(--border2)}
+.chkrow:last-child{border-bottom:none}
+.chkicon{width:12px;text-align:center;font-weight:700;flex:none}
+.chkrow.ok .chkicon{color:var(--pass)} .chkrow.bad .chkicon,.chkrow.bad .chkname{color:var(--fail)}
+.chkrow.warn .chkicon,.chkrow.warn .chkname{color:var(--skip)} .chkrow.info .chkicon{color:var(--muted)}
+.chkname{white-space:nowrap} .chkdetail{color:var(--muted);word-break:break-word;white-space:pre-wrap}
+/* agent panel — autonomous run facts */
+.agentbox{border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:10px;padding:10px 14px;background:var(--card2);font-size:12.5px}
+.arow{display:flex;gap:14px;padding:5px 0;border-bottom:1px solid var(--border2)}
+.arow:last-child{border-bottom:none}
+.ak{color:var(--muted);font:600 10.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;width:130px;flex:none;padding-top:3px}
+.av{min-width:0;flex:1;word-break:break-word}
+.av ul,.av ol{margin:0 0 0 18px} .av li{margin:2px 0}
+.av ul.abad li{color:var(--fail)} .av ul.awarn li{color:var(--skip)}
+.amuted{color:var(--muted)}
 .sgroup{margin:2px 0}
 .sghead{display:flex;gap:9px;align-items:baseline;padding:4.5px 0;cursor:pointer;user-select:none}
 .sghead .chev{color:var(--grp);font-size:10px;transition:transform .12s;flex:none}

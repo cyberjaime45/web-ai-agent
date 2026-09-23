@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config.settings import settings
+from app.schemas.actions import SKILL_ACTIONS
 from app.utils.build import build_slug, get_build_name
 
 # packaged asset name → (folder under the report root, target name)
@@ -55,6 +56,7 @@ _ASSETS = {
 }
 
 _RUN_FLOW_RE = re.compile(r"^\s*run_flow\b", re.IGNORECASE)
+_SKILL_NAMES = {t.value for t in SKILL_ACTIONS}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -100,6 +102,12 @@ def _failure_evidence(steps: list[dict]) -> dict | None:
                  and s.get("evidence")), None)
 
 
+def _agent(steps: list[dict]) -> dict | None:
+    """Facts of the outermost autonomous step (test_page / explore_page), if any."""
+    return next((s["agent"] for s in steps if s.get("agent") and not s.get("sub_flow")), None) \
+        or next((s["agent"] for s in steps if s.get("agent")), None)
+
+
 def _artifacts(steps: list[dict]) -> dict:
     """``artifacts`` block: failure screenshot, every evidence shot, trace."""
     ev = _failure_evidence(steps) or {}
@@ -119,6 +127,17 @@ def _relative_evidence(ev: dict | None, report_dir: Path) -> dict | None:
     out["screenshots"] = {k: rel for k, p in (ev.get("screenshots") or {}).items()
                           if (rel := _screenshot_rel_path(p, report_dir))}
     out["trace"] = _screenshot_rel_path(ev.get("trace"), report_dir)
+    out["files"] = {k: rel for k, p in (ev.get("files") or {}).items()
+                    if (rel := _screenshot_rel_path(p, report_dir))}
+    return out
+
+
+def _relative_agent(agent: dict | None, report_dir: Path) -> dict | None:
+    if not agent:
+        return agent
+    out = dict(agent)
+    if agent.get("generated"):
+        out["generated"] = _screenshot_rel_path(agent["generated"], report_dir)
     return out
 
 
@@ -149,8 +168,12 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
         rec["error"] = s["msg"]
     if s.get("screenshot") and rec["status"] != "skipped":
         rec["attachment"] = s["screenshot"]
-    if rec["status"] == "failed" and s.get("evidence"):
-        rec["evidence"] = s["evidence"]
+    if s.get("evidence") and rec["status"] != "skipped":
+        rec["evidence"] = s["evidence"]          # failure bundle, or a skill's screenshots
+    if s.get("checks"):
+        rec["checks"] = s["checks"]
+    if s.get("agent"):
+        rec["agent"] = s["agent"]
     # Verb + argument text for the drawer. The argument comes from the raw
     # step text (already secret-masked by the engine), never from the
     # resolved action args.
@@ -164,48 +187,72 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
     return rec
 
 
-def _group(name: str, children: list[dict], started_at: str, depth: int) -> dict:
-    return {
+def _group(name: str, children: list[dict], started_at: str, depth: int,
+           marker: dict | None = None) -> dict:
+    """A group node. A skill marker contributes its own checks, evidence and
+    verdict: its status is failed when the skill judged so, even if every
+    child step passed."""
+    rec = {
         "name": name,
         "status": _group_status(children),
         "started_at": started_at,
         "duration_ms": round(sum(c["duration_ms"] for c in children if c["depth"] == depth + 1), 1),
         "depth": depth,
     }
+    if marker:
+        leaf = _leaf(marker, started_at, depth)
+        for key in ("action", "args", "checks", "evidence", "agent", "error", "ts", "layer"):
+            if key in leaf:
+                rec[key] = leaf[key]
+        rec.pop("layer", None)
+        if leaf["status"] == "failed":
+            rec["status"] = "failed"
+        if not children:
+            rec["duration_ms"] = leaf["duration_ms"]
+    return rec
 
 
-def _nest_sub_flows(steps: list[dict], started_at: str, depth: int) -> list[dict]:
-    """Turn run_flow markers + sub_flow-tagged steps into nested groups."""
+def _nest_sub_flows(steps: list[dict], started_at: str, depth: int, prefix: str = "") -> list[dict]:
+    """Turn markers + sub_flow-tagged steps into nested groups, any depth.
+
+    A step *belongs to this level* when its ``sub_flow`` equals *prefix* (""
+    at the top). A marker (``group``, or a legacy ``run_flow`` name) followed
+    by steps of another level owns them until this level resumes; deeper
+    steps without a marker get a synthesized group.
+    """
     out: list[dict] = []
     i = 0
+
+    def level(s: dict) -> str:
+        return s.get("sub_flow") or ""
+
     while i < len(steps):
         s = steps[i]
-        sub = s.get("sub_flow") or ""
-        if not sub:
-            is_marker = _RUN_FLOW_RE.match(s.get("name") or "")
-            next_sub = steps[i + 1].get("sub_flow") if i + 1 < len(steps) else ""
-            if is_marker and next_sub:
-                # The engine's marker step becomes the group node.
-                children = []
-                j = i + 1
-                while j < len(steps) and steps[j].get("sub_flow") == next_sub:
-                    children.append(_leaf(steps[j], started_at, depth + 1))
+        if level(s) == prefix:
+            name = s.get("name") or ""
+            is_marker = s.get("group") or _RUN_FLOW_RE.match(name)
+            j = i + 1
+            if is_marker:
+                while j < len(steps) and level(steps[j]) != prefix:
                     j += 1
-                out.append(_group(s.get("name") or "",
-                                  children, started_at, depth))
+            if is_marker and j > i + 1:
+                children = _nest_sub_flows(steps[i + 1:j], started_at, depth + 1, level(steps[i + 1]))
+                out.append(_group(name, children, started_at, depth, marker=s))
                 out.extend(children)
                 i = j
                 continue
             out.append(_leaf(s, started_at, depth))
             i += 1
             continue
-        # Sub-flow steps without a preceding marker: synthesize the group.
-        children = []
+        # Deeper steps with no marker at this level: synthesize the group.
+        child = level(s)
         j = i
-        while j < len(steps) and steps[j].get("sub_flow") == sub:
-            children.append(_leaf(steps[j], started_at, depth + 1))
+        while j < len(steps) and level(steps[j]) != prefix:
             j += 1
-        out.append(_group(f"run_flow: {sub}", children, started_at, depth))
+        children = _nest_sub_flows(steps[i:j], started_at, depth + 1, child)
+        leaf_name = child.rsplit("/", 1)[-1]
+        label = leaf_name if leaf_name in _SKILL_NAMES else f"run_flow: {leaf_name}"
+        out.append(_group(label, children, started_at, depth))
         out.extend(children)
         i = j
     return out
@@ -369,6 +416,7 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
         "network": r.get("network") or [],
         "artifacts": _artifacts(flow_steps),
         "healings": _healings(flow_steps),
+        "agent": _agent(flow_steps),
     }
 
     stamped = [s for s in flow_steps if s.get("ts_start")]
@@ -426,6 +474,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "network": [],
         "artifacts": {"screenshot": None, "screenshots": [], "trace": None},
         "healings": _healings(steps),
+        "agent": _agent(steps),
     }
     if failed:
         test["error"] = {
@@ -498,7 +547,8 @@ def generate_report(
         # data would make a second generate_report() call lose every image.
         r = dict(r, flow_steps=[
             dict(s, screenshot=_screenshot_rel_path(s.get("screenshot"), report_dir) or "",
-                 evidence=_relative_evidence(s.get("evidence"), report_dir))
+                 evidence=_relative_evidence(s.get("evidence"), report_dir),
+                 agent=_relative_agent(s.get("agent"), report_dir))
             for s in r.get("flow_steps") or []
         ])
         tests.extend(_build_tests(r))
@@ -560,6 +610,7 @@ def generate_report(
             encoding="utf-8",
         )
         slim = {k: v for k, v in t.items() if k not in ("console", "network")}
+        checks = [c for s in t.get("steps") or [] for c in s.get("checks") or []]
         slim["counts"] = {
             "console": len(console),
             "con_err": sum(1 for c in console
@@ -567,6 +618,8 @@ def generate_report(
             "con_warn": sum(1 for c in console if c.get("level") == "warning"),
             "network": len(network),
             "net_bad": sum(1 for n in network if not n.get("ok")),
+            "checks": len([c for c in checks if c.get("severity") != "info"]),
+            "checks_flagged": sum(1 for c in checks if not c.get("passed")),
         }
         slim_tests.append(slim)
 

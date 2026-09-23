@@ -72,6 +72,16 @@ class Settings:
     # Dismiss cookie banners / modals before each L1 attempt.
     dismiss_blockers: bool = field(default_factory=lambda: _bool("DISMISS_BLOCKERS", "false"))
 
+    # ── Safety (autonomous skills) ────────────────────────────────
+    # true lets explore_page / the planner press controls that look
+    # destructive (delete, pay, send…) — for disposable test environments.
+    allow_destructive: bool = field(default_factory=lambda: _bool("ALLOW_DESTRUCTIVE", "false"))
+
+    # ── Oracle (automatic checks after navigation-class steps) ────
+    # warn: record checks on the step, never fail it. strict: a failed
+    # error-severity check fails the step. off: no automatic checks.
+    oracle:        str  = field(default_factory=lambda: _str("ORACLE", "warn").lower())
+
     # ── Reporting ─────────────────────────────────────────────────
     # Extra sensitive key substrings (comma-separated) redacted from
     # report network headers/payloads, on top of the built-in list.

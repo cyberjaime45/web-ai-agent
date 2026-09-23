@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Members — QA fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; }
+  nav ul { list-style: none; display: flex; gap: 12px; padding: 0; }
+  #menu-toggle { display: none; }
+  @media (max-width: 767px) {
+    nav ul { display: none; }
+    nav ul.open { display: block; }
+    #menu-toggle { display: inline-block; }
+  }
+  .error { color: #b00; }
+  label { display: block; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav aria-label="Main">
+  <button id="menu-toggle" aria-label="Open menu" aria-expanded="false">☰</button>
+  <ul id="nav-links"><li><a href="members.html">Members</a></li><li><a href="#settings">Settings</a></li></ul>
+</nav>
+<h1>Members</h1>
+<p>Manage the people in your account.</p>
+<button id="add">Add Member</button>
+<form id="member-form" aria-label="Add member" novalidate>
+  <label>Full name <input type="text" name="name" required minlength="3"></label>
+  <label>Email <input type="email" name="email" required></label>
+  <label>Role
+    <select name="role"><option value="">Select…</option><option>Viewer</option><option>Editor</option></select>
+  </label>
+  <label><input type="checkbox" name="active"> Active</label>
+  <p class="error" id="form-error" hidden></p>
+  <button type="submit">Save member</button>
+</form>
+<table><tr><th>Name</th><th></th></tr><tr><td>John Smith</td><td><button>Edit</button></td></tr></table>
+<script>
+  // JS validation (novalidate on the form): mark invalid fields with aria-invalid and show a message.
+  const form = document.getElementById('member-form'), err = document.getElementById('form-error');
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const problems = [];
+    for (const el of form.querySelectorAll('input[required]')) {
+      const bad = !el.value || (el.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(el.value))
+        || (el.minLength > 0 && el.value.length < el.minLength);
+      el.setAttribute('aria-invalid', bad ? 'true' : 'false');
+      if (bad) problems.push(el.name);
+    }
+    err.hidden = problems.length === 0;
+    err.textContent = problems.length ? 'Please fix: ' + problems.join(', ') : '';
+    if (!problems.length) { document.title = 'Saved'; form.reset(); }
+  });
+  document.getElementById('menu-toggle').addEventListener('click', function () {
+    const ul = document.getElementById('nav-links');
+    ul.classList.toggle('open');
+    this.setAttribute('aria-expanded', ul.classList.contains('open'));
+  });
+  console.error('fixture: a console error for the oracle');
+  // Served over HTTP by the tests: a 404 (warning) and a 500 (error) for the diagnostics checks.
+  fetch('/api/does-not-exist').catch(() => {});
+  fetch('/api/boom').catch(() => {});
+</script>
+</body>
+</html>

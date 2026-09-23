@@ -74,3 +74,17 @@ and exit is `2`.
 
 The CLI runs a flow without the HTML report; pytest produces the report
 described in [REPORTS.md](REPORTS.md).
+
+## Autonomous page test — `agent-test`
+
+```bash
+uv run python main.py agent-test https://example.com/members
+uv run python main.py agent-test https://example.com/members --depth 2 --max-actions 20 --profile mobile
+uv run python main.py agent-test https://example.com/members --json
+```
+
+Runs a two-step flow — `goto` the URL, then `test_page` — and prints the
+path of the generated Markdown flow. Options map to `test_page`'s
+`depth`, `max_actions`, `max_ai_calls` and `destructive`; `--destructive`
+only has effect with `ALLOW_DESTRUCTIVE=true`. Under pytest the same is
+`pytest --agent-test URL`, with the HTML report and its Agent panel.

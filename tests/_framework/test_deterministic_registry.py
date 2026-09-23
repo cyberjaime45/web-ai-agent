@@ -5,9 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.layers.deterministic import DeterministicRunner
-from app.schemas.actions import AI_ONLY_ACTIONS, ActionType, FlowAction
+from app.schemas.actions import AI_ONLY_ACTIONS, SKILL_ACTIONS, ActionType, FlowAction
 
-_NOT_L1 = AI_ONLY_ACTIONS | {ActionType.RUN_FLOW}
+_NOT_L1 = AI_ONLY_ACTIONS | SKILL_ACTIONS | {ActionType.RUN_FLOW}
 
 
 class _Loc:

@@ -1,6 +1,6 @@
 # Supported Actions — Full Reference
 
-Every keyword a flow step can use, grouped by purpose. 44 actions in total.
+Every keyword a flow step can use, grouped by purpose. 50 keywords in total (44 actions + 6 QA skills).
 For the file format around the steps, see [FLOWS.md](FLOWS.md).
 
 ## Step syntax
@@ -504,3 +504,150 @@ that contains the `run_flow` step. Shared sub-flows go in that app's `components
 - Sub-flows can call other sub-flows (nested `run_flow` supported)
 
 See [FLOWS.md](FLOWS.md#reusable-sub-flows) for a worked login example.
+
+---
+
+## QA skills (6)
+
+Skills are higher-level checks that orchestrate ordinary actions. The engine
+runs one as a group: a marker step carrying the skill's **checks** (each
+passed / failed with a severity), followed by the child steps it executed —
+every `fill`, `click` or `select` a skill performs goes through the same
+L1 → L2 → L3 path as a hand-written step and shows up nested under it in the
+report. A skill step fails when a child step failed or an `error`-severity
+check did not pass; `warn` checks never fail it. Options are `key=value`
+arguments.
+
+None of the four needs an LLM.
+
+#### `inspect_page`
+Describe what is on the page: type (`LOGIN`, `FORM`, `TABLE`, `LIST`,
+`CONTENT`), headings, buttons, links, inputs, forms with their fields,
+tables, dialogs, navigation. Every finding is an info check; the compact
+observation is kept in the run context for later skills.
+
+```markdown
+1. goto: "https://example.com/members"
+2. inspect_page
+```
+
+#### `check_console_network`
+JavaScript page errors, console errors, failed requests and 4xx/5xx
+responses recorded since the previous `check_console_network` step (or the
+start of the flow). Page errors, 5xx, aborted requests and 401/403 fail the
+step; console errors and other 4xx are warnings. `console=strict` makes
+console errors fail it too. Noise is excluded with `ignore_console` /
+`ignore_network` in `## Config`.
+
+```markdown
+1. goto: "https://example.com/dashboard"
+2. wait_load
+3. check_console_network
+4. check_console_network: "console=strict"
+```
+
+#### `test_responsive`
+Layout checks at several viewport widths — the current one plus `390x664`
+and `768x1024` by default, or `viewports=…`. Per viewport: no horizontal
+overflow, controls on screen, form fields fit, dialog fits; on narrow widths
+also tap targets ≥ 24px and text ≥ 12px (warnings). When a navigation
+landmark hides its links on a narrow width, the menu toggle is clicked to
+check the mobile menu opens. A screenshot per viewport is kept on the step
+and the original viewport is restored.
+
+```markdown
+1. goto: "https://example.com/members"
+2. test_responsive
+3. test_responsive: "viewports=390x664,1024x768"
+```
+
+Viewport switching is layout-only. For real device emulation (user agent,
+touch) run the flow under the `mobile` profile — see [FLOWS.md](FLOWS.md).
+
+#### `test_form`
+Inspect the first visible form (or `form=<name>`) and run the usual
+validation checks: empty submission rejected, invalid email rejected, value
+shorter than `minlength` rejected, valid sample input accepted. By default
+the valid input is **not** submitted; `submit=true` submits it and checks
+the outcome (no error messages, no failed requests). A submit button whose
+name looks destructive (pay, send, delete…) is never pressed.
+
+```markdown
+1. goto: "https://example.com/contact"
+2. test_form
+3. test_form: "form=Newsletter" | "submit=true"
+```
+
+#### `explore_page`
+Bounded, safe exploration from the current page. Every control the observer
+reports — links on the same site, buttons, tabs, menu items — is pressed once
+as a `click` child step and the outcome recorded: navigates to a page (queued
+for the next depth), opens a dialog (closed with Escape), changes the page in
+place, or nothing observable. The result is a page/action graph on the step,
+plus checks: `no broken pages` (4xx/5xx documents, failed render), `controls
+respond`, `controls pressable`, the controls skipped by the safety policy and
+the external links found.
+
+```markdown
+1. goto: "<APP_URL>/members"
+2. explore_page
+3. explore_page: "depth=2" | "max_actions=20" | "max_pages=8" | "max_ai_calls=3"
+```
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `depth` | `2` | Link hops from the start page |
+| `max_actions` | `20` | Clicks in total |
+| `max_pages` | `8` | Distinct pages visited |
+| `max_ai_calls` | `3` | Planner calls when an LLM provider is configured; `0` keeps it deterministic |
+| `destructive` | `false` | `true` presses controls the safety policy would block — only with `allow_destructive` in `## Config` or `ALLOW_DESTRUCTIVE=true` |
+
+Without a provider the order is deterministic (navigation, tabs, buttons,
+links). With one, the planner only *orders* the observed controls; it can
+never add a target the observer did not see, and the safety policy is applied
+to every plan step. Controls whose name carries a destructive verb (delete,
+remove, pay, send, publish, cancel…), neutral confirm buttons inside a
+destructive or payment dialog / form, and confirm buttons on delete /
+checkout / unsubscribe pages are never pressed unless configuration allows it.
+
+#### `test_page`
+The autonomous page test: give it a page and it decides what to check.
+Observe → classify (`LOGIN`, `FORM`, `WIZARD`, `SETTINGS`, `TABLE`, `LIST`,
+`SEARCH`, `DASHBOARD`, `DETAIL`, `CONTENT`) → plan by type → run the other
+skills and ordinary actions → judge → write a deterministic Markdown flow of
+what ran under `reports/<ENVIRONMENT>/generated/`.
+
+```markdown
+1. goto: "<APP_URL>/members"
+2. test_page
+3. test_page: "depth=1" | "max_actions=12" | "max_ai_calls=3" | "submit=false"
+```
+
+| Page type | What runs (besides `check_console_network` and `test_responsive`) |
+|-----------|--------------------------------------------------------------------|
+| `LOGIN` | `test_form` without submitting; password field masked; no sign-in attempted |
+| `FORM`, `WIZARD` | `test_form` (`submit=true` only when passed through) |
+| `TABLE`, `LIST`, `SEARCH`, `DASHBOARD`, `DETAIL`, `CONTENT` | search field exercised, pagination pressed once, then `explore_page` within `depth` / `max_actions` |
+| `SETTINGS` | nothing that changes data: toggles and save buttons are left alone |
+
+With an LLM provider, `max_ai_calls` bounds two uses: a classification
+tie-break when the deterministic type is `CONTENT` or `UNKNOWN`, and an
+adaptive plan of a few extra steps — each validated against the observation
+and the safety policy before it runs; rejected steps are listed in the report.
+Without a provider everything above still runs.
+
+The report's **Agent** panel shows the page type, discovered components, the
+plan, actions executed, controls skipped by safety, AI calls and a link to
+the generated flow. Run one page without writing a flow:
+
+```bash
+uv run pytest --agent-test https://example.com/members            # with the HTML report
+uv run python main.py agent-test https://example.com/members      # CLI, --depth / --max-actions / --profile
+```
+
+The generated flow replays the actions that ran (`fill`, `click`, `select`,
+`press`, `back`…) with an `assert_url` after each navigation; the steps
+`test_responsive` performed at other viewports are left out.
+
+`profiles=` is not a `test_page` option: list profiles under `## Config` (or
+pass `--profile`) to run the whole flow on desktop and mobile.

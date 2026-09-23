@@ -420,9 +420,9 @@ def test_generate_report_shards_detail_per_test(tmp_path):
     # detail arrays never ship in the upfront payload — counts replace them
     assert all("console" not in t and "network" not in t for t in slim["tests"])
     assert [t["counts"] for t in slim["tests"]] == [
-        {"console": 1, "con_err": 1, "con_warn": 0, "network": 0, "net_bad": 0},
-        {"console": 1, "con_err": 0, "con_warn": 1, "network": 0, "net_bad": 0},
-        {"console": 0, "con_err": 0, "con_warn": 0, "network": 1, "net_bad": 0},
+        {"console": 1, "con_err": 1, "con_warn": 0, "network": 0, "net_bad": 0, "checks": 0, "checks_flagged": 0},
+        {"console": 1, "con_err": 0, "con_warn": 1, "network": 0, "net_bad": 0, "checks": 0, "checks_flagged": 0},
+        {"console": 0, "con_err": 0, "con_warn": 0, "network": 1, "net_bad": 0, "checks": 0, "checks_flagged": 0},
     ]
     # one JSONP-style shard per test, holding the routed events
     assert [c["text"] for c in _shard(tmp_path, 0)["console"]] == ["boom"]
@@ -442,7 +442,7 @@ def test_generate_report_counts_pageerror_and_failed_requests(tmp_path):
     )
     generate_report([r], time.time(), tmp_path / "report.html", "staging")
     assert _slim_payload(tmp_path)["tests"][0]["counts"] == {
-        "console": 1, "con_err": 1, "con_warn": 0, "network": 2, "net_bad": 1,
+        "console": 1, "con_err": 1, "con_warn": 0, "network": 2, "net_bad": 1, "checks": 0, "checks_flagged": 0,
     }
 
 
@@ -581,11 +581,11 @@ def test_failed_leaf_carries_evidence_and_test_artifacts_list_every_shot():
     }
 
 
-def test_passed_and_skipped_leaves_have_no_evidence():
-    steps = [make_step(evidence=_evidence()),
+def test_skipped_leaves_drop_evidence_and_artifacts_come_from_failures_only():
+    steps = [make_step(evidence=_evidence()),                          # a skill's screenshots
              make_step(passed=False, skipped=True, evidence=_evidence())]
     t = _build_test(make_result(flow_steps=steps))
-    assert all("evidence" not in s for s in t["steps"])
+    assert "evidence" in t["steps"][0] and "evidence" not in t["steps"][1]
     assert t["artifacts"] == {"screenshot": None, "screenshots": [], "trace": None}
 
 
@@ -614,3 +614,87 @@ def test_generate_report_makes_evidence_paths_relative(tmp_path):
         "viewport": "images/f__viewport.png", "full_page": "images/f__full.png"}
     # the caller's step dicts are untouched (a second generate_report still works)
     assert steps[0]["evidence"]["trace"] == str(trace)
+
+
+# ── skill groups and checks ─────────────────────────────────────────────────
+
+def test_skill_marker_becomes_a_group_with_its_checks():
+    checks = [{"name": "empty submission rejected", "passed": False, "severity": "error", "detail": "posted"},
+              {"name": "fields", "passed": True, "severity": "info", "detail": "2 fields"}]
+    raw = [
+        make_step(label='test_form: "submit=false"', action="test_form", passed=False, msg="test_form: 1 of 1 checks failed"),
+        make_step(label='fill: "Email" | "x"', action="fill", sub_flow="test_form"),
+        make_step(label='click: "Save"', action="click", sub_flow="test_form"),
+        make_step(label='assert_text: "done"', action="assert_text"),
+    ]
+    raw[0]["checks"], raw[0]["group"] = checks, True
+    steps = _build_steps(raw, "t")
+    group = steps[0]
+    assert group["depth"] == 0 and group["status"] == "failed"      # the skill's verdict, children passed
+    assert group["action"] == "test_form" and group["args"] == '"submit=false"'
+    assert group["checks"] == checks and group["error"] == "test_form: 1 of 1 checks failed"
+    assert [(s["name"], s["depth"]) for s in steps[1:]] == [
+        ('fill: "Email" | "x"', 1), ('click: "Save"', 1), ('assert_text: "done"', 0)]
+
+
+def test_skill_without_children_is_a_leaf_with_checks():
+    raw = [make_step(label="check_console_network", action="check_console_network")]
+    raw[0]["checks"], raw[0]["group"] = [{"name": "no page errors", "passed": True, "severity": "error", "detail": ""}], True
+    (leaf,) = _build_steps(raw, "t")
+    assert leaf["depth"] == 0 and leaf["checks"][0]["name"] == "no page errors"
+
+
+def test_skill_screenshots_ride_on_a_passed_group():
+    raw = [make_step(label="test_responsive", action="test_responsive",
+                     evidence={"screenshots": {"390x664": "/abs/images/r.png"}, "trace": None, "layers": {}}),
+           make_step(label='click: "Open menu"', action="click", sub_flow="test_responsive")]
+    raw[0]["group"] = True
+    group = _build_steps(raw, "t")[0]
+    assert group["status"] == "passed" and group["evidence"]["screenshots"] == {"390x664": "/abs/images/r.png"}
+
+
+def test_check_counts_in_slim_payload(tmp_path):
+    report_dir = tmp_path / "reports" / "staging"
+    step = make_step(label='goto: "x"', action="goto")
+    step["checks"] = [{"name": "page rendered", "passed": True, "severity": "error", "detail": ""},
+                      {"name": "no console errors", "passed": False, "severity": "warn", "detail": "boom"},
+                      {"name": "url", "passed": True, "severity": "info", "detail": "x"}]
+    generate_report(results=[make_result(flow_steps=[step])], session_start=time.time(),
+                    output_path=report_dir / "report.html")
+    data = (report_dir / "assets" / "data.js").read_text()
+    assert '"checks": 2' in data and '"checks_flagged": 1' in data
+
+
+def test_nested_skill_groups_two_levels_deep():
+    raw = [
+        make_step(label="test_page", action="test_page"),
+        make_step(label="check_console_network", action="check_console_network", sub_flow="test_page"),
+        make_step(label='test_form: "submit=false"', action="test_form", sub_flow="test_page"),
+        make_step(label='fill: "Email" | "x"', action="fill", sub_flow="test_page/test_form"),
+        make_step(label='click: "Save"', action="click", sub_flow="test_page/test_form"),
+        make_step(label='goto: "https://x"', action="goto", sub_flow="test_page"),
+        make_step(label='assert_text: "done"', action="assert_text"),
+    ]
+    raw[0]["group"] = raw[1]["group"] = raw[2]["group"] = True
+    raw[0]["agent"] = {"page_type": "FORM", "plan": ["a"], "generated": "/abs/generated/f.md"}
+    steps = _build_steps(raw, "t")
+    assert [(s["name"], s["depth"]) for s in steps] == [
+        ("test_page", 0), ("check_console_network", 1), ('test_form: "submit=false"', 1),
+        ('fill: "Email" | "x"', 2), ('click: "Save"', 2), ('goto: "https://x"', 1), ('assert_text: "done"', 0)]
+    assert steps[0]["agent"]["page_type"] == "FORM"
+    t = _build_test(make_result(flow_steps=raw))
+    assert t["agent"]["plan"] == ["a"]
+
+
+def test_generate_report_relativizes_agent_and_evidence_files(tmp_path):
+    report_dir = tmp_path / "reports" / "staging"
+    gen = report_dir / "generated" / "f.md"
+    step = make_step(label="test_page", action="test_page",
+                     evidence={"screenshots": {}, "trace": None, "layers": {}, "files": {"generated flow": str(gen)}})
+    step["group"], step["agent"] = True, {"page_type": "FORM", "generated": str(gen)}
+    generate_report(results=[make_result(flow_steps=[step])], session_start=time.time(),
+                    output_path=report_dir / "report.html")
+    payload = json.loads(_json_report(report_dir).read_text())
+    test = payload["tests"][0]
+    assert test["agent"]["generated"] == "generated/f.md"
+    assert test["steps"][0]["evidence"]["files"] == {"generated flow": "generated/f.md"}

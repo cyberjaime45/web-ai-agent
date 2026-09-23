@@ -82,3 +82,12 @@ def test_unknown_profile_is_a_usage_error():
     proc = _collect(_FLOW, "--profile", "tablet")
     assert proc.returncode != 0
     assert "Unknown profile(s): tablet" in proc.stdout + proc.stderr
+
+
+def test_agent_test_option_collects_a_two_step_flow():
+    proc = _collect(_FLOW, "--agent-test", "https://example.com/members")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "home.md::Home Page" in proc.stdout       # normal collection still happens
+    assert "::Agent test — https://example.com/members" in proc.stdout
+    # (pytest's "N tests collected" line does not count items appended during
+    # collection — the same holds for --flow; the node id above is the check)

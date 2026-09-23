@@ -64,6 +64,14 @@ class FlowDefinition:
     section_markers: dict[str, list[str]] = field(default_factory=dict)
     # `## Config` → `profiles: desktop, mobile`; empty = the run's default.
     profiles: list[str] = field(default_factory=list)
+    # `## Config` → `ignore_console: "pattern" | "pattern"` — substrings of
+    # console messages / request URLs the oracle and check_console_network skip.
+    ignore_console: list[str] = field(default_factory=list)
+    ignore_network: list[str] = field(default_factory=list)
+    # `## Config` → `allow_destructive: true` (None = ALLOW_DESTRUCTIVE setting)
+    # and `allow_actions: "Send message" | "Publish"` — safety overrides for skills.
+    allow_destructive: bool | None = None
+    allow_actions: list[str] = field(default_factory=list)
 
 
 # ── Section extraction ────────────────────────────────────────────────────────
@@ -344,6 +352,12 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
             flow.timeout = int(re.sub(r"[^\d]", "", value) or "30000")
         elif key == "profiles":
             flow.profiles = [p.strip().lower() for p in value.split(",") if p.strip()]
+        elif key in ("ignore_console", "ignore_network", "allow_actions"):
+            patterns = [(_QUOTED_RE.search(p) or re.match(r"\s*(.*?)\s*$", p)).group(1)
+                        for p in value.split("|")]
+            setattr(flow, key, [p for p in patterns if p])
+        elif key == "allow_destructive":
+            flow.allow_destructive = value.strip('"').lower() in ("true", "yes", "1", "on")
 
     # ── Steps — every non-metadata ## section (Credentials, Notes… are skipped) ──
     for step_num, (section_name, raw) in enumerate(_all_action_sections(text), start=1):

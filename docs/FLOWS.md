@@ -39,7 +39,13 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
   section of the file under each listed device profile; the report shows one
   test per section and profile (`Home Page` and `Home Page[mobile]`). Without
   the line, flows run under `PROFILE` from `.env` (`desktop`), and
-  `pytest --profile …` overrides both.
+  `pytest --profile …` overrides both. `ignore_console: "ResizeObserver" | "third-party"`
+  and `ignore_network: "/analytics/"` list substrings of console messages
+  and request URLs that the automatic checks and `check_console_network`
+  leave out. `allow_destructive: true` lets autonomous skills press controls
+  the safety policy blocks (delete, pay, send… — only for disposable
+  environments), and `allow_actions: "Send message" | "Publish"` whitelists
+  named controls.
 - **Every other `## section`** is a run of steps. Section names are free-form
   (`## Login`, `## Home Page`, `## Steps`); each section becomes its own test
   in the report, and a failure stops the rest of that section only — execution
@@ -207,6 +213,57 @@ Which profiles a flow runs under is decided in this order: `--profile`, then
 the flow's `## Config` `profiles:` line, then `PROFILE` in `.env`. Under
 `RUNNING_MODE=lambda` the mobile profile emulates the device inside the grid
 browser; it does not pick a real device.
+
+## Automatic checks and QA skills
+
+After every navigation-class step (`goto`, `click`, `select`, `press`…) the
+runner records a few checks without an assertion in the flow: page rendered,
+no page errors, no console errors, no failed or 401/403/4xx requests, no
+stuck spinner, no blocking dialog, no horizontal overflow. They appear as a
+collapsed row under the step. `ORACLE=warn` (default) only records them;
+`ORACLE=strict` fails the step on an error-severity check; `ORACLE=off`
+disables them.
+
+Four skills go further and can replace a page of hand-written assertions:
+
+```markdown
+# Members
+
+## Config
+- profiles: desktop, mobile
+- ignore_console: "ResizeObserver loop"
+
+## Overview
+- goto: "<APP_URL>/members"
+- inspect_page
+- check_console_network
+
+## Add member form
+- click: "Add Member"
+- test_form: "submit=false"
+
+## Layout
+- goto: "<APP_URL>/members"
+- test_responsive
+
+## Explore
+- goto: "<APP_URL>/members"
+- explore_page: "depth=2" | "max_actions=20"
+
+## Autonomous
+- goto: "<APP_URL>/members"
+- test_page: "depth=1" | "max_actions=12"
+```
+
+Each skill is a group in the report: its checks on the group row, the
+`fill` / `click` steps it ran nested underneath. `explore_page` presses every
+safe control once and records a page/action graph; it never presses anything
+the safety policy blocks. `test_page` classifies the page, runs the skills
+that fit it, and writes what it did as a plain flow under
+`reports/<ENVIRONMENT>/generated/` for review — the intended lifecycle is:
+the agent explores once, QA reviews the generated Markdown, and from then on
+it runs deterministically. See [ACTIONS.md → QA skills](ACTIONS.md#qa-skills-6)
+for what each one checks and its options.
 
 ## What a failed step leaves behind
 

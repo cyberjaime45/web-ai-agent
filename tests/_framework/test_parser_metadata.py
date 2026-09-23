@@ -65,3 +65,20 @@ def test_config_profiles_line():
     assert flow.timeout == 15000
     assert flow.profiles == ["desktop", "mobile"]
     assert parse_flow_markdown("## Steps\n- wait_load\n").profiles == []
+
+
+def test_config_ignore_patterns():
+    flow = parse_flow_markdown(
+        '# T\n\n## Config\n- ignore_console: "ResizeObserver loop" | third-party\n'
+        '- ignore_network: "/analytics/"\n\n## Steps\n- wait_load\n')
+    assert flow.ignore_console == ["ResizeObserver loop", "third-party"]
+    assert flow.ignore_network == ["/analytics/"]
+    assert parse_flow_markdown("## Steps\n- wait_load\n").ignore_console == []
+
+
+def test_config_safety_overrides():
+    flow = parse_flow_markdown(
+        '# T\n\n## Config\n- allow_destructive: true\n- allow_actions: "Send message" | Publish\n\n## Steps\n- wait_load\n')
+    assert flow.allow_destructive is True
+    assert flow.allow_actions == ["Send message", "Publish"]
+    assert parse_flow_markdown("## Steps\n- wait_load\n").allow_destructive is None

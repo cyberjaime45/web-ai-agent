@@ -102,3 +102,8 @@ def test_collect_never_raises_on_a_dead_page(tmp_path):
     )
     ev = collect(dead, tmp_path, "s", recorder=object(), since_seq=0)
     assert ev.screenshots == {} and ev.title == "" and ev.console == []
+
+
+def test_slugify_caps_very_long_names():
+    slug = slugify("file:///" + "x/" * 100 + "page.html")
+    assert len(slug) <= 80 and not slug.endswith("_")

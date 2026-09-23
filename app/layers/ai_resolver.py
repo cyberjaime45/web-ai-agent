@@ -19,6 +19,7 @@ import logging
 
 from playwright.sync_api import Locator, Page
 
+from app.agent.observer import observe
 from app.agent.prompts.resolver import (
     SYSTEM as _SYSTEM,
     USER_TEMPLATE as _USER_TMPL,
@@ -40,6 +41,21 @@ def _get_page_text(page: Page) -> str:
         return text[:_MAX_PAGE_TEXT] if text else ""
     except Exception:
         return ""
+
+
+_MAX_ELEMENTS = 120
+
+
+def _elements_block(page: Page) -> str:
+    """The page's interactive controls from the observer — refs, roles, names —
+    so a locator suggestion is grounded in what is actually there."""
+    try:
+        ob = observe(page)
+    except Exception:
+        return "(unavailable)"
+    lines = [f'- {n.role} "{n.name}"' + (f" in {n.container}" if n.container else "")
+             for n in ob.nodes[:_MAX_ELEMENTS]]
+    return "\n".join(lines) or "(none found)"
 
 
 def _history_block(ctx: RunContext | None) -> str:
@@ -103,6 +119,7 @@ class AIResolver:
                 action_type=action.type.value,
                 args=action.args,
                 error=error,
+                elements=_elements_block(page),
             ) + _history_block(ctx)
 
             raw = self._provider.complete(
@@ -151,6 +168,7 @@ class AIResolver:
                 title=page.title(),
                 page_text=page_text,
                 target=target,
+                elements=_elements_block(page) if action.type == ActionType.AI_CLICK else "",
             ) + _history_block(ctx)
 
             raw_response = self._provider.complete(

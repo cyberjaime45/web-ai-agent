@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Members list</title>
+<style>body { font-family: sans-serif; padding: 16px; } nav ul { list-style: none; display: flex; gap: 12px; padding: 0; }</style>
+</head>
+<body>
+<nav aria-label="Main">
+  <ul><li><a href="form_page.html">Home</a></li><li><a href="members.html">Members</a></li></ul>
+</nav>
+<h1>Members list</h1>
+<table><tr><th>Name</th><th></th></tr><tr><td>John Smith</td><td><button onclick="document.getElementById('dlg').showModal()">Edit</button></td></tr></table>
+<button>Delete member</button>
+<button id="refresh">Refresh</button>
+<a href="https://example.com/">Docs (external)</a>
+<a href="missing.html">Broken link</a>
+<dialog id="dlg" aria-label="Edit member">
+  <p>Edit John Smith</p>
+  <button onclick="document.getElementById('dlg').close()">Close</button>
+  <button>Save changes</button>
+</dialog>
+</body>
+</html>

@@ -21,10 +21,13 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
+from app.agent.safety import SafetyPolicy
 from app.config.settings import settings
+from app.execution import oracle
 from app.observability import evidence as evidence_mod
 from app.schemas.actions import (
     AI_ONLY_ACTIONS,
+    SKILL_ACTIONS,
     ActionType,
     Evidence,
     FlowAction,
@@ -36,6 +39,7 @@ from app.flow.parser import parse_flow_file, resolve_flow_path
 from app.layers.ai_resolver import AIResolver
 from app.layers.deterministic import DeterministicRunner
 from app.layers.providers import LLMProvider, get_provider
+from app.skills import run_skill
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +138,7 @@ class FlowRunner:
         self.profile = profile
         if provider is _RESOLVE_PROVIDER:
             provider = get_provider()
+        self.provider = provider           # shared by L3 and the skills' planner
         self._ai = AIResolver(provider=provider)
         # Created once here; evidence capture only formats names.
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -143,20 +148,29 @@ class FlowRunner:
         self._recorder = None          # PageRecorder for the current run (optional)
         self._flow_slug = "flow"
         self._n_failures = 0           # numbers the evidence files of one run
+        self._ignore = oracle.IgnoreRules()
+        self._policy = SafetyPolicy()
 
     def run(self, flow, page: Page, recorder=None) -> FlowResult:
         """
         Execute all actions in *flow* against *page*.
         Each section (## heading) is independent: a failure stops the remaining
         steps in that section but execution resumes at the next section boundary.
-        *recorder* (a PageRecorder attached to *page*) lets failure evidence
-        include the console errors and failed requests of the failing step.
+        *recorder* (a PageRecorder attached to *page*) lets failure evidence and
+        the oracle see the console errors and failed requests of each step.
         """
         result = FlowResult(flow_name=flow.name)
         ctx = RunContext()
         runner = DeterministicRunner(page, artifacts_dir=self.artifacts_dir, ctx=ctx)
         self._recorder = recorder
         self._flow_slug = evidence_mod.slugify(flow.name)
+        self._ignore = oracle.IgnoreRules(list(getattr(flow, "ignore_console", [])),
+                                          list(getattr(flow, "ignore_network", [])))
+        allow = getattr(flow, "allow_destructive", None)
+        self._policy = SafetyPolicy(
+            destructive_allowed=settings.allow_destructive if allow is None else allow,
+            allow=tuple(getattr(flow, "allow_actions", [])),
+        )
 
         if not flow.actions:
             result.error = "No parsed actions — check flow file format"
@@ -180,9 +194,9 @@ class FlowRunner:
                 ))
                 continue
 
-            # ── Sub-flow execution ──
-            if action.type == ActionType.RUN_FLOW:
-                sub_results = self._run_sub_flow(action, page, runner, ctx)
+            # ── Sub-flow and skill execution: a marker step plus child steps ──
+            if action.type == ActionType.RUN_FLOW or action.type in SKILL_ACTIONS:
+                sub_results = self._run_group(action, page, runner, ctx)
                 for sr in sub_results:
                     result.steps.append(sr)
                     if sr.screenshot_path:
@@ -210,6 +224,30 @@ class FlowRunner:
 
         result.success = result.failed == 0
         return result
+
+    # ── Grouped steps: run_flow and skills ─────────────────────────
+
+    def run_group(self, action, page, runner, ctx) -> list[StepResult]:
+        """Run a run_flow or skill action: marker step + child steps. Skills
+        composing other skills (test_page) call this through SkillContext."""
+        return self._run_group(action, page, runner, ctx)
+
+    def _run_group(self, action, page, runner, ctx) -> list[StepResult]:
+        if action.type == ActionType.RUN_FLOW:
+            return self._run_sub_flow(action, page, runner, ctx)
+        return run_skill(self, action, page, runner, ctx, recorder=self._recorder,
+                         ignore=self._ignore, profile=self.profile, policy=self._policy,
+                         provider=self.provider)
+
+    def evidence_path(self, name: str) -> Path:
+        """Where a skill keeps an extra screenshot: ``images/<flow>__<profile>__<name>``."""
+        return self._artifacts_abs / f"{self._flow_slug}__{self.profile}__{name}"
+
+    def generated_path(self, name: str) -> Path:
+        """Where a skill writes a generated flow: ``reports/<env>/generated/<flow>__<profile>__<name>.md``."""
+        folder = self._artifacts_abs.parent / "generated"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / f"{self._flow_slug}__{self.profile}__{name}.md"
 
     # ── Failure evidence ───────────────────────────────────────────
 
@@ -278,7 +316,7 @@ class FlowRunner:
         marker = StepResult(
             action=action, success=True,
             message=f"Running sub-flow: {sub_flow.name}",
-            layer_used=0, duration=0.0,
+            layer_used=0, duration=0.0, group=True,
             started_at=time.time(), ended_at=time.time(),
         )
 
@@ -287,9 +325,9 @@ class FlowRunner:
         results: list[StepResult] = [marker]
 
         for sub_action in sub_flow.actions:
-            # Support nested run_flow
-            if sub_action.type == ActionType.RUN_FLOW:
-                nested = self._run_sub_flow(sub_action, page, runner, ctx)
+            # Support nested run_flow and skills inside a sub-flow
+            if sub_action.type == ActionType.RUN_FLOW or sub_action.type in SKILL_ACTIONS:
+                nested = self._run_group(sub_action, page, runner, ctx)
                 for sr in nested:
                     sr.sub_flow = sr.sub_flow or sub_flow.name
                     results.append(sr)
@@ -335,13 +373,32 @@ class FlowRunner:
 
         t0 = time.monotonic()
         sr = self._run_step(resolved, page, runner, ctx)
+        if sr.success:
+            self._oracle(sr, page, since_seq)
         sr.duration = round(time.monotonic() - t0, 3)
         sr.started_at = w0
         sr.ended_at = time.time()
+        try:
+            sr.url = page.url
+        except Exception:
+            sr.url = ""
         if not sr.success:
             self.attach_evidence(sr, page, runner, since_seq)
-        ctx.record(action, sr, page.url)
+        ctx.record(action, sr, sr.url)
         return sr
+
+    def _oracle(self, sr: StepResult, page: Page, since_seq: int) -> None:
+        """Automatic checks after a navigation-class step (ORACLE=warn|strict)."""
+        if settings.oracle == "off" or sr.action.type not in oracle.ORACLE_AFTER:
+            return
+        sr.checks = oracle.run_checks(page, self._recorder, since_seq, self._ignore)
+        errors = oracle.failed(sr.checks)
+        if errors and settings.oracle == "strict":
+            sr.success = False
+            sr.layer_used = sr.layer_used or 1
+            sr.error = "; ".join(f"{c.name}: {c.detail}" if c.detail else c.name for c in errors)
+            sr.message = f"{sr.message} — oracle: {oracle.summary(sr.checks)}"
+            sr.evidence = Evidence(layers={"oracle": "strict check failed"})
 
     def _run_step(
         self,

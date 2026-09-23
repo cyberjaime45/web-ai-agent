@@ -231,6 +231,8 @@ function chips(t){
     cerr ? `<span class="chiplet cbad" title="console errors">⚠ ${cerr}</span>` : '',
     cwarn ? `<span class="chiplet cwarn" title="console warnings">⚠ ${cwarn}</span>` : '',
     nbad ? `<span class="chiplet cbad" title="failed requests">⇅ ${nbad}</span>` : '',
+    t.counts.checks_flagged ? `<span class="chiplet cwarn" title="flagged QA checks">⚑ ${t.counts.checks_flagged}</span>` : '',
+    t.agent ? `<span class="chiplet" title="autonomous run${t.agent.ai_calls ? ` · ${t.agent.ai_calls} AI call(s)` : ''}">🤖 ${esc(t.agent.page_type || 'agent')}</span>` : '',
     t.retries ? `<span class="chiplet" style="color:var(--skip)" title="reruns">↻ ${t.retries}</span>` : '',
     (t.healings||[]).length ? `<span class="chiplet" style="color:var(--skip)" title="healed locators">🩹 ${t.healings.length}</span>` : '',
     profileChip(t),
@@ -300,6 +302,25 @@ function shotThumb(s){
     : '';
 }
 const EV_KIND = {viewport: 'Viewport', full_page: 'Full page', element: 'Element'};
+function checksHtml(s){
+  // Oracle checks after a step, or a skill's findings: collapsed one-liner,
+  // rows on expand. info rows are observations, never flagged.
+  const cs = s.checks || [];
+  if (!cs.length) return '';
+  const flagged = cs.filter(c => !c.passed);
+  const bad = flagged.filter(c => c.severity === 'error').length, warn = flagged.length - bad;
+  const counted = cs.filter(c => c.severity !== 'info').length;
+  const cls = bad ? 'bad' : warn ? 'warn' : 'ok';
+  const head = bad ? `✕ ${bad} of ${counted} checks failed${warn ? `, ${warn} warning${warn > 1 ? 's' : ''}` : ''}`
+    : warn ? `⚠ ${warn} warning${warn > 1 ? 's' : ''} in ${counted} checks`
+    : counted ? `✓ ${counted} checks passed` : `${cs.length} observations`;
+  const rows = cs.map(c => {
+    const icon = c.severity === 'info' ? '·' : c.passed ? '✓' : c.severity === 'error' ? '✕' : '!';
+    const rcls = c.severity === 'info' ? 'info' : c.passed ? 'ok' : c.severity === 'error' ? 'bad' : 'warn';
+    return `<div class="chkrow ${rcls}"><span class="chkicon">${icon}</span><span class="chkname">${esc(c.name)}</span>${c.detail ? `<span class="chkdetail">${esc(c.detail)}</span>` : ''}</div>`;
+  }).join('');
+  return `<details class="chk ${cls}"><summary>${head}</summary>${rows}</details>`;
+}
 function evidenceHtml(s){
   // Failure evidence collected by the engine at the failing step: what each
   // layer did, where the page was, the screenshots, the trace, and the
@@ -312,7 +333,8 @@ function evidenceHtml(s){
     .filter(Boolean).map(([k, v]) => `<span><b>${k}</b>${esc(v)}</span>`).join('');
   const shots = Object.entries(ev.screenshots || {}).map(([k, p]) =>
     `<a class="evshot" href="${esc(p)}" target="_blank"><img src="${esc(p)}" alt="${esc(EV_KIND[k] || k)} screenshot" loading="lazy"><span>${esc(EV_KIND[k] || k)}</span></a>`).join('');
-  const trace = ev.trace ? `<a class="evtrace" href="${esc(ev.trace)}" download title="Open with: npx playwright show-trace <file>">⬇ Playwright trace</a>` : '';
+  const trace = (ev.trace ? `<a class="evtrace" href="${esc(ev.trace)}" download title="Open with: npx playwright show-trace <file>">⬇ Playwright trace</a>` : '')
+    + Object.entries(ev.files || {}).map(([k, p]) => `<a class="evtrace" href="${esc(p)}" target="_blank">📄 ${esc(k)}</a>`).join('');
   const cons = ev.console || [], net = ev.network || [];
   const rows = [
     ...cons.map(c => conRowHtml(c, null)),
@@ -320,7 +342,7 @@ function evidenceHtml(s){
       text: `${n.method} ${n.url} — ${n.failure ? n.failure : 'HTTP ' + n.status}`}, null).replace('>error<', '>net<'))
   ];
   const diag = rows.length;
-  return `<div class="evbox">
+  return `<div class="evbox${s.status === 'failed' ? '' : ' ok'}">
     ${layers ? `<div class="evlayers">${layers}</div>` : ''}
     ${meta ? `<div class="evmeta">${meta}</div>` : ''}
     ${shots || trace ? `<div class="evgal">${shots}${trace}</div>` : ''}
@@ -356,18 +378,20 @@ function stepNodes(t, nodes, nested, errStep){
     const label = `<span class="slabel">Step ${i + 1}</span>`;
     const dur = `<span class="sdur">${fmtMs(s.duration_ms)}</span>`;
     const err = stepErr(t, n, errStep);
+    const extras = `${checksHtml(s)}${s.evidence ? evidenceHtml(s) : shotThumb(s)}`;
     if (n.children.length){
+      // a skill group carries its own checks / screenshots above its child steps
       return `<div class="sgroup ${s.status}">
         <div class="sghead" onclick="this.parentElement.classList.toggle('closed')">
           <span class="sicon grp ${s.status}">${stepIcon(s.status)}</span><span class="chev">▼</span>
           ${label}<span class="sgname">${esc(s.name)}</span>${dur}
         </div>
-        <div class="sgbody">${stepNodes(t, n.children, true, errStep)}${err}</div>
+        <div class="sgbody">${extras}${stepNodes(t, n.children, true, errStep)}${err}</div>
       </div>`;
     }
     return `<div class="srow ${s.status}">
       <span class="sicon ${s.status}">${stepIcon(s.status)}</span>
-      <div class="smain">${label}${nested ? '<span class="hook">↳</span>' : ''}${stepName(s)}${dur}${err}${s.evidence ? evidenceHtml(s) : shotThumb(s)}</div>
+      <div class="smain">${label}${nested ? '<span class="hook">↳</span>' : ''}${stepName(s)}${dur}${err}${extras}</div>
     </div>`;
   }).join('');
 }
@@ -389,6 +413,25 @@ function errorHtml(t){
   // covers failures outside any step (fixture setup, bare asserts).
   if (!t.error || failedStep(t)) return '';
   return `<div class="sec"><h3>Error</h3>${errCard(t.error, false)}</div>`;
+}
+function agentHtml(t){
+  // Autonomous run facts (test_page / explore_page): what the agent saw,
+  // planned, skipped, and left behind. Lists are data from the run.
+  const a = t.agent;
+  if (!a) return '';
+  const list = (items, cls) => items && items.length
+    ? `<ul class="${cls || ''}">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+  const row = (k, v) => v ? `<div class="arow"><span class="ak">${k}</span><div class="av">${v}</div></div>` : '';
+  return `<div class="sec"><h3>🤖 Agent</h3><div class="agentbox">
+    ${row('page type', a.page_type ? esc(a.page_type) + (a.classification ? ` <span class="amuted">(${esc(a.classification)})</span>` : '') : '')}
+    ${row('components', list(a.components))}
+    ${row('plan', a.plan && a.plan.length ? `<ol>${a.plan.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : '')}
+    ${row('rejected plan steps', list(a.plan_rejected, 'abad'))}
+    ${row('skipped by safety', list(a.skipped, 'awarn'))}
+    ${row('actions executed', a.actions && a.actions.length ? `<span class="amuted">${a.actions.length}</span> — ` + esc(a.actions.slice(0, 8).join(' · ')) + (a.actions.length > 8 ? ' …' : '') : '')}
+    ${row('AI calls', a.ai_calls != null ? String(a.ai_calls) : '')}
+    ${row('generated flow', a.generated ? `<a href="${esc(a.generated)}" target="_blank">${esc(a.generated)}</a> <span class="amuted">— review, then add it to the suite</span>` : '')}
+  </div></div>`;
 }
 function healHtml(t){
   const h = t.healings || [];
@@ -619,6 +662,7 @@ function openTest(i){
     <div class="dbody">
       ${errorHtml(t)}
       <div id="d-rel">${hasDetail(t) ? relatedHtml(t) : ''}</div>
+      ${agentHtml(t)}
       ${healHtml(t)}
       <div class="sec"><h3>Steps</h3>${stepsHtml(t)}</div>
       <div class="sec">

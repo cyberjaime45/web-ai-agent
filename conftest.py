@@ -108,6 +108,10 @@ class ProfessionalReportPlugin:
                 "ts_start": s.started_at,
                 "ts_end": s.ended_at,
                 "evidence": dataclasses.asdict(s.evidence) if s.evidence else None,
+                "checks": [dataclasses.asdict(c) for c in s.checks],
+                "group": s.group,
+                "url": s.url,
+                "agent": s.agent,
             }
             for s in steps
         ]
@@ -171,6 +175,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         metavar="PATH",
         help="Run a flow from an explicit .md file path.",
+    )
+    parser.addoption(
+        "--agent-test",
+        default=None,
+        metavar="URL",
+        help="Autonomous test of one page: runs `goto` + `test_page` on the URL with the report.",
     )
     parser.addoption(
         "--profile",
@@ -302,12 +312,16 @@ def pytest_collection_modifyitems(
 ) -> None:
     inline_md       = config.getoption("--flow",      default=None)
     flow_file_path  = config.getoption("--flow_file", default=None)
+    agent_url       = config.getoption("--agent-test", default=None)
 
-    if inline_md and flow_file_path:
+    if sum(x is not None for x in (inline_md, flow_file_path, agent_url)) > 1:
         pytest.exit(
-            "ERROR: --flow and --flow_file are mutually exclusive; use only one.",
+            "ERROR: --flow, --flow_file and --agent-test are mutually exclusive; use only one.",
             returncode=4,
         )
+
+    if agent_url is not None:
+        inline_md = agent_test_markdown(agent_url)
 
     if inline_md is not None:
         inline_md = inline_md.strip()
@@ -339,6 +353,15 @@ def pytest_collection_modifyitems(
                 returncode=4,
             )
         items.extend(_flow_items(session, config, flow))
+
+
+def agent_test_markdown(url: str, options: str = "") -> str:
+    """The flow behind ``--agent-test URL`` (and the CLI's ``agent-test``)."""
+    url = url.strip()
+    if not url.startswith(("http://", "https://", "file://")):
+        pytest.exit(f"ERROR: --agent-test needs an http(s) URL, got {url!r}", returncode=4)
+    step = f"test_page: {options}" if options else "test_page"
+    return f'# Agent test — {url}\n\n## Steps\n- goto: "{url}"\n- {step}\n'
 
 
 # ── Device profiles: one FlowItem per profile the flow runs under ────────────
