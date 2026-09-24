@@ -76,11 +76,11 @@ def diagnostics_checks(recorder: Any, since_seq: int, ignore: IgnoreRules | None
         return f"{n['method']} {n['url']} → {n['failure'] or n['status']}"
 
     return [
-        Check("no page errors", not page_errors, "error", _detail(page_errors)),
-        Check("no console errors", not errors, "warn", _detail(errors)),
-        Check("no failed requests", not server, "error", _detail([req(n) for n in server])),
-        Check("no 401/403 responses", not auth, "error", _detail([req(n) for n in auth])),
-        Check("no 4xx responses", not client, "warn", _detail([req(n) for n in client])),
+        Check("no page errors", not page_errors, "error", _detail(page_errors), len(page_errors)),
+        Check("no console errors", not errors, "warn", _detail(errors), len(errors)),
+        Check("no failed requests", not server, "error", _detail([req(n) for n in server]), len(server)),
+        Check("no 401/403 responses", not auth, "error", _detail([req(n) for n in auth]), len(auth)),
+        Check("no 4xx responses", not client, "warn", _detail([req(n) for n in client]), len(client)),
     ]
 
 
@@ -114,7 +114,7 @@ def probe_checks(page: Any) -> list[Check]:
         Check("page rendered", p["readyState"] != "loading" and p["textLength"] > 0, "error",
               "" if p["textLength"] else "no visible text on the page"),
         Check("no stuck spinner", not p["spinner"], "warn",
-              f"{p['spinner']} loading indicator(s) visible" if p["spinner"] else ""),
+              f"{p['spinner']} loading indicator(s) visible" if p["spinner"] else "", p["spinner"]),
         Check("no blocking dialog", not p["dialog"], "warn",
               f"modal dialog open: {p['dialog']}" if p["dialog"] else ""),
         Check("no horizontal overflow", p["overflow"] <= 1, "warn",

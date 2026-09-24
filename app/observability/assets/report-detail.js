@@ -76,6 +76,16 @@ function stepTree(steps){
   });
   return root.children;
 }
+// "no console errors" → "Console errors" once some were found; a skill check
+// keeps its own name, since its icon already says how it went.
+const checkKey = name => name.replace(/^\[[^\]]*\]\s*/, '').toLowerCase();
+const CHECK_PANE = {'no page errors': 'd-con', 'no console errors': 'd-con',
+  'no failed requests': 'd-net', 'no 401/403 responses': 'd-net', 'no 4xx responses': 'd-net'};
+function checkLabel(c){
+  if (c.passed || c.severity === 'info') return cap(c.name);
+  const prefix = (c.name.match(/^\[[^\]]*\]\s*/) || [''])[0], key = checkKey(c.name);
+  return prefix + (key === 'page rendered' ? 'Page not rendered' : cap(key.replace(/^no\s+/, '')));
+}
 function checksHtml(s){
   // Oracle checks after a step, or a skill's findings: collapsed one-liner,
   // rows on expand. info rows are observations, never flagged.
@@ -88,8 +98,14 @@ function checksHtml(s){
     : warn ? `${plural(warn, 'warning')} in ${counted} checks` : counted ? `${counted} checks passed` : plural(cs.length, 'observation');
   const kind = bad ? ['danger', 'x'] : warn ? ['warning', 'warn'] : counted ? ['success', 'check'] : ['neutral', 'info'];
   const rows = cs.map(c => {
-    const r = c.severity === 'info' ? ['info', 'info'] : c.passed ? ['ok', 'check'] : c.severity === 'error' ? ['bad', 'x'] : ['warn', 'warn'];
-    return `<div class="chkrow ${r[0]}">${icon(r[1])}<span class="chkname">${esc(c.name)}</span>${c.detail ? `<span class="chkdetail">${esc(c.detail)}</span>` : ''}</div>`;
+    const r = c.severity === 'info' ? ['info', 'info'] : c.passed ? ['ok', 'check'] : c.severity === 'error' ? ['bad', 'x', 'danger'] : ['warn', 'warn', 'warning'];
+    // A summary, not a log: a flagged row names what was found and how many;
+    // the messages themselves live in Technical details (and the tooltip).
+    const flagged = !c.passed && c.severity !== 'info', pane = flagged && CHECK_PANE[checkKey(c.name)];
+    return `<div class="chkrow ${r[0]}"${flagged && c.detail ? ` title="${esc(c.detail.slice(0, 600))}"` : ''}>${icon(r[1])}
+      <span class="chkname">${esc(checkLabel(c))}</span>${flagged && c.count ? badge(String(c.count), r[2]) : ''}
+      ${!flagged && c.detail ? `<span class="chkdetail" title="${esc(c.detail)}">${esc(c.detail)}</span>` : ''}
+      ${pane ? `<button class="link-btn chk-link" data-goto="${pane}">Details</button>` : ''}</div>`;
   }).join('');
   return `<details class="chk"><summary>${badge(icon(kind[1]) + head, kind[0])}</summary><div class="chk-list">${rows}</div></details>`;
 }
@@ -386,6 +402,12 @@ function openTest(i){
   activate(tabs.find(x => x.dataset.t === lastDtab) || tabs[0]);
   tabs.forEach(tab => tab.onclick = () => activate(tab));
   drawer.querySelector('.side-drawer-close').onclick = closeDrawer;
+  drawer.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => {
+    const tech = drawer.querySelector('.tech');
+    tech.open = true;
+    drawer.querySelector(`[data-t="${b.dataset.goto}"]`).click();
+    tech.scrollIntoView({behavior: 'smooth', block: 'start'});
+  });
   if (hasDetail(t)) wireDrawerPanes(t);
   else {
     const seq = ++drawerSeq;

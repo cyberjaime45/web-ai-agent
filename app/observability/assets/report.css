@@ -356,12 +356,14 @@ body.drawer-open { overflow: hidden; }
 .chk > summary { list-style: none; cursor: pointer; display: inline-flex; }
 .chk > summary::-webkit-details-marker { display: none; }
 .chk-list { margin-top: .35rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.chkrow { display: flex; gap: .5rem; align-items: baseline; padding: .3rem .6rem; border-top: 1px solid var(--border); }
+.chkrow { display: flex; gap: .5rem; align-items: center; padding: .25rem .6rem; border-top: 1px solid var(--border); min-width: 0; }
 .chkrow:first-child { border-top: 0; }
-.chkrow .ico { align-self: center; }
+.chkrow .ico { flex: none; }
 .chkrow.ok .ico { color: var(--good); } .chkrow.bad { color: var(--bad-text); } .chkrow.warn { color: var(--warn-text); } .chkrow.info .ico { color: var(--muted); }
-.chkname { font-weight: 700; white-space: nowrap; }
-.chkdetail { color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap; }
+.chkname { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.chkrow .qa-badge { flex: none; }
+.chkdetail { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 0; }
+.chk-link { margin-left: auto; flex: none; font-size: 11px; }
 
 .fact-strip { display: flex; flex-wrap: wrap; gap: .6rem 1.75rem; margin: 0; }
 .fact-strip > div { min-width: 0; }

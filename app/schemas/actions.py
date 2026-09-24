@@ -242,6 +242,7 @@ class Check:
     passed:   bool = True
     severity: str = "error"
     detail:   str = ""
+    count:    int = 0      # how many issues a failed check found, when it counts them
 
 
 @dataclass

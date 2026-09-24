@@ -121,7 +121,11 @@ Selecting a test opens a side drawer, which reads the same way:
   the keyword on hover), its duration, the self-healed lightning icon when L2/L3
   found the element, screenshots, and automatic checks / skill findings as one
   collapsed line (`9 checks passed`, `1 warning in 9 checks`, `1 of 8 checks
-  failed`) that expands to one row per check. In a failing test, passing
+  failed`) that expands to one row per check. The list is a
+  summary: a passed check keeps its wording (`No failed requests`), a flagged
+  one names what was found with a count (`Failed requests 9`, `Console errors
+  2`); the messages are in the tooltip, and **Details** opens Technical
+  details on the Console or Network tab. In a failing test, passing
   groups fold so the failing one stands out
 - **Technical details** (folded; stays open across tests once opened) — the raw
   error output and full traceback, how each layer attempted the step

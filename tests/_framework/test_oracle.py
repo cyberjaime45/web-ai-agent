@@ -33,6 +33,16 @@ def test_diagnostics_split_by_severity():
     assert not checks["no 4xx responses"].passed and "analytics" in checks["no 4xx responses"].detail
 
 
+def test_diagnostics_count_what_they_found():
+    # The report shows "Console errors · 2" from the count, never by splitting
+    # the detail text (console messages contain "; " themselves).
+    counts = {c.name: c.count for c in oracle.diagnostics_checks(_rec(), 0)}
+    assert counts == {"no page errors": 1, "no console errors": 2, "no failed requests": 2,
+                      "no 401/403 responses": 1, "no 4xx responses": 1}
+    assert {c.count for c in oracle.probe_checks(_Page(spinner=3))} >= {3}
+    assert all(c.count == 0 for c in oracle.diagnostics_checks(_rec(), _rec().seq))
+
+
 def test_ignore_rules_drop_known_noise():
     ignore = oracle.IgnoreRules(console=["ResizeObserver"], network=["/analytics/"])
     checks = {c.name: c for c in oracle.diagnostics_checks(_rec(), 0, ignore)}
