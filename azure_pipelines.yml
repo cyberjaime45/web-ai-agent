@@ -79,14 +79,14 @@ stages:
               FMS_EMAIL: $(FMS_EMAIL)
               FMS_PASSWORD: $(FMS_PASSWORD)
 
-          # - task: PublishTestResults@2
-          #   displayName: 'Publish test results'
-          #   condition: always()
-          #   inputs:
-          #     testResultsFormat: 'JUnit'
-          #     testResultsFiles: 'reports/junit.xml'
-          #     searchFolder: '$(Build.SourcesDirectory)'
-          #     testRunTitle: '${{ parameters.TEST }} Production Smoke'
+          - task: PublishTestResults@2
+            displayName: 'Publish test results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'reports/junit.xml'
+              searchFolder: '$(Build.SourcesDirectory)'
+              testRunTitle: '${{ parameters.TEST }} Production Smoke'
 
           - task: PublishPipelineArtifact@1
             displayName: 'Publish HTML report'
