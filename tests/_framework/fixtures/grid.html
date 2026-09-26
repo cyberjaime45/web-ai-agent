@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Member directory</title>
+<style>body { font-family: sans-serif; padding: 16px; } th button { all: unset; cursor: pointer; font-weight: bold; }</style>
+</head>
+<body>
+<main>
+<h1>Member directory</h1>
+<label for="q">Search members</label> <input id="q" type="search">
+<table id="grid">
+  <thead><tr>
+    <th aria-sort="none"><button data-key="name">Name</button></th>
+    <th aria-sort="none"><button data-key="flights">Flights</button></th>
+    <th>Joined</th><th></th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+<p id="empty" hidden>No members found</p>
+<nav aria-label="Pages"><button id="prev">Previous</button> <button id="next">Next</button></nav>
+</main>
+<dialog id="dlg"><h2 id="dlg-title">Member</h2><button onclick="this.closest('dialog').close()">Close</button></dialog>
+<script>
+const MEMBERS = [
+  ["Olivia Park", 12, "2021-04-03"], ["Ben Hughes", 3, "2020-01-15"], ["Chloe Diaz", 27, "2023-07-21"],
+  ["Adam Wolfe", 8, "2019-11-02"], ["Grace Lin", 15, "2022-02-28"], ["Evan Price", 1, "2024-05-10"],
+  ["Hana Sato", 22, "2018-09-09"], ["Ivan Petrov", 5, "2021-12-12"], ["Dina Moss", 9, "2020-06-30"],
+];
+const PAGE = 4;
+let page = 0, sortKey = null, dir = 1, query = "";
+function rows() {
+  let r = MEMBERS.filter(m => m[0].toLowerCase().includes(query.toLowerCase()));
+  if (sortKey !== null) r = [...r].sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * dir);
+  return r;
+}
+function render() {
+  const all = rows(), body = document.querySelector('#grid tbody');
+  page = Math.min(page, Math.max(Math.ceil(all.length / PAGE) - 1, 0));
+  body.innerHTML = all.slice(page * PAGE, page * PAGE + PAGE).map(m =>
+    `<tr><td>${m[0]}</td><td>${m[1]}</td><td>${m[2]}</td><td><button class="view">View</button></td></tr>`).join('');
+  body.querySelectorAll('.view').forEach((b, i) => b.onclick = () => {
+    document.getElementById('dlg-title').textContent = 'Member profile';
+    document.getElementById('dlg').showModal();
+  });
+  document.getElementById('empty').hidden = all.length > 0;
+  document.getElementById('prev').disabled = page === 0;
+  document.getElementById('next').disabled = (page + 1) * PAGE >= all.length;
+}
+document.querySelectorAll('th button').forEach(b => b.onclick = () => {
+  const key = b.dataset.key === 'name' ? 0 : 1;
+  dir = sortKey === key ? -dir : 1; sortKey = key; page = 0;
+  document.querySelectorAll('th').forEach(th => th.hasAttribute('aria-sort') && th.setAttribute('aria-sort', 'none'));
+  b.closest('th').setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending');
+  render();
+});
+document.getElementById('next').onclick = () => { page++; render(); };
+document.getElementById('prev').onclick = () => { page--; render(); };
+document.getElementById('q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { query = e.target.value; page = 0; render(); }
+});
+render();
+</script>
+</body>
+</html>

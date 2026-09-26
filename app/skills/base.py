@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agent.observer import Observation, observe
+from app.agent.observer import Observation, landmarks, observe
 from app.agent.planner import Planner
 from app.agent.safety import SafetyPolicy
 from app.execution import oracle
@@ -96,6 +96,8 @@ class SkillContext:
                         step_num=self.action.step_num, section=self.action.section)
         sr = self.engine.execute(fa, self.page, self.runner, self.ctx)
         sr.sub_flow = self.action.type.value
+        if sr.success and action_type in oracle.ORACLE_AFTER:
+            sr.after = landmarks(self.page)      # raw material for suggested assertions
         self.steps.append(sr)
         self._ob = None          # the page may have changed
         return sr

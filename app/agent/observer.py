@@ -31,6 +31,12 @@ STRUCTURAL_ROLES = frozenset({"heading", "dialog", "alertdialog", "navigation", 
 # Landmarks whose name gives their children context (safety: "OK" inside "Delete member?").
 CONTAINER_ROLES = frozenset({"dialog", "alertdialog", "form", "navigation", "region", "main", "banner", "contentinfo"})
 MAX_LINES = 600          # aria lines parsed (a huge page yields a partial, still useful picture)
+NEXT_NAMES = ("next", "next page", "›", "»", ">", "load more", "show more")
+PREV_NAMES = ("previous", "prev", "previous page", "‹", "«", "<")
+# A list or table telling the user there is nothing to show.
+EMPTY_STATE_RE = re.compile(
+    r"\bno (matching )?(results|records|data|items|entries|matches|members|users|rows)\b|\bno match|"
+    r"nothing (found|to show)|\b0 (results|records|items|matches)\b|\bempty\b", re.IGNORECASE)
 MAX_TEXT = 300           # chars of visible text kept as a summary
 
 # `- role "name" [attr=…] [attr]:`  — name and attrs optional; trailing ':' opens children
@@ -109,6 +115,18 @@ class Observation:
     @property
     def headings(self) -> list[Node]:
         return self.by_role("heading")
+
+    def search_box(self) -> Node | None:
+        """The page's search field: a searchbox, or a textbox named like one."""
+        boxes = self.by_role("searchbox") or [n for n in self.by_role("textbox") if "search" in n.name.lower()]
+        return boxes[0] if boxes else None
+
+    def paging_control(self, names: tuple[str, ...] = NEXT_NAMES) -> Node | None:
+        """An enabled button or link named like a pager (``NEXT_NAMES`` / ``PREV_NAMES``)."""
+        for n in self.by_role("button", "link"):
+            if n.name.strip().lower() in names and "disabled" not in n.attrs:
+                return n
+        return None
 
     @property
     def page_type(self) -> str:
@@ -281,6 +299,34 @@ def observe(page: Any) -> Observation:
     except Exception as exc:
         logger.debug("[observer] text unavailable: %s", exc)
     return ob
+
+
+# What the page shows right after a step — the raw material for suggested
+# assertions (app/flow/writer.py). One evaluate; skills call it after a
+# navigation-class child step, never the per-step loop.
+_LANDMARKS_JS = r"""
+() => {
+  const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const text = el => (el && (el.innerText || el.textContent) || '').replace(/\s+/g, ' ').trim();
+  const first = sel => [...document.querySelectorAll(sel)].find(vis);
+  const dialog = first('[role="dialog"], [role="alertdialog"], dialog[open]');
+  const alert = first('[role="alert"], [role="status"]');
+  return {
+    heading: text(first('main h1, h1') || first('main h2, h2')),
+    dialog: dialog ? text(dialog.querySelector('h1, h2, h3, [role="heading"]')) : '',
+    alert: text(alert),
+  };
+}
+"""
+
+
+def landmarks(page: Any) -> dict[str, str]:
+    """``{"heading", "dialog", "alert"}`` visible on the page now; empty on failure."""
+    try:
+        return page.evaluate(_LANDMARKS_JS) or {}
+    except Exception as exc:
+        logger.debug("[observer] landmarks unavailable: %s", exc)
+        return {}
 
 
 PAGE_TYPES = ("LOGIN", "WIZARD", "SETTINGS", "FORM", "TABLE", "SEARCH", "DASHBOARD",

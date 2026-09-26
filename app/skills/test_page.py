@@ -10,12 +10,17 @@
 
 Plan by type (deterministic, no provider needed):
 
-    every page      check_console_network, test_responsive
+    every page      check_console_network, check_accessibility, test_responsive
     LOGIN           test_form (never submits), password field masked
     FORM / WIZARD   test_form (submit only with submit=true)
-    TABLE / LIST /  search field exercised, pagination pressed once,
-    SEARCH / …      then explore_page (depth, max_actions)
+    TABLE / LIST /  test_table when there is a table (else pagination pressed
+    SEARCH / …      once), test_search when there is a search field, then
+                    explore_page (depth, max_actions)
     SETTINGS        no toggles pressed (they change data); explore skipped
+
+The generated flow asserts the headings, dialog titles and alerts the run
+brought up (``writer.suggested_assertions``); the report's Agent panel lists
+them.
 
 With a provider, ``max_ai_calls`` bounds two uses: a classification tie-break
 when the deterministic type is CONTENT / UNKNOWN, and an adaptive plan of
@@ -29,7 +34,7 @@ from __future__ import annotations
 import logging
 
 from app.agent.observer import Observation
-from app.flow.writer import steps_to_markdown
+from app.flow.writer import steps_to_markdown, suggested_assertions
 from app.planner_bridge import run_planned_steps
 from app.schemas.actions import ActionType, Check
 from app.skills.base import SkillContext, info, skill
@@ -38,7 +43,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULTS = {"depth": 1, "max_actions": 12, "max_ai_calls": 3}
 LISTY = ("TABLE", "LIST", "SEARCH", "DASHBOARD", "DETAIL", "CONTENT", "UNKNOWN")
-NEXT_NAMES = ("next", "next page", "›", "»", ">", "load more", "show more")
 GOAL = ("Test this {kind} page beyond what was already done: exercise one or two more "
         "primary features (filters, sorting, opening details, tabs) and add assertions "
         "that prove the page works. Never change or delete data.")
@@ -65,32 +69,21 @@ def _components(ob: Observation) -> list[str]:
     return out
 
 
-def _search_box(ob: Observation):
-    boxes = ob.by_role("searchbox") or [n for n in ob.by_role("textbox") if "search" in n.name.lower()]
-    return boxes[0] if boxes else None
-
-
-def _next_control(ob: Observation):
-    for n in ob.by_role("button", "link"):
-        if n.name.strip().lower() in NEXT_NAMES and "disabled" not in n.attrs:
-            return n
-    return None
-
-
 def _listy_checks(sc: SkillContext, ob: Observation, start_url: str, plan: list[str]) -> list[Check]:
+    """test_table / test_search as nested skills; a bare pager when there is no table."""
     checks: list[Check] = []
-    box = _search_box(ob)
-    if box is not None and box.name:
-        plan.append(f"search for 'test' in '{box.name}'")
-        before = ob.fingerprint()
-        sc.run(ActionType.FILL, box.name, "test")
-        sc.run(ActionType.PRESS, "Enter")
-        after = sc.observe(fresh=True)
-        checks.append(Check("search responds", after.fingerprint() != before, "warn",
-                            "" if after.fingerprint() != before else "nothing changed after searching"))
-        if after.url.split("#", 1)[0] != start_url.split("#", 1)[0]:
+    if ob.tables:
+        plan.append("test the table: sorting, pagination, row details")
+        sc.run_skill(ActionType.TEST_TABLE)
+        if sc.page.url.split("#", 1)[0] != start_url.split("#", 1)[0]:
             sc.run(ActionType.GOTO, start_url)
-    nxt = _next_control(sc.observe())
+    box = ob.search_box()
+    if box is not None and box.name:
+        plan.append(f"search '{box.name}' for a value the page shows")
+        sc.run_skill(ActionType.TEST_SEARCH)
+    if ob.tables:
+        return checks
+    nxt = sc.observe(fresh=True).paging_control()
     if nxt is not None:
         plan.append(f"press '{nxt.name}' (pagination)")
         before = sc.observe().fingerprint()
@@ -130,6 +123,8 @@ def test_page(sc: SkillContext) -> list[Check]:
                                        "list profiles under `## Config` to run the flow on each"))
 
     sc.run_skill(ActionType.CHECK_CONSOLE_NETWORK)
+    plan.append("check accessibility basics")
+    sc.run_skill(ActionType.CHECK_ACCESSIBILITY)
 
     if kind == "LOGIN":
         plan += ["validate the login form without submitting", "check the password field is masked"]
@@ -179,6 +174,7 @@ def test_page(sc: SkillContext) -> list[Check]:
         # test_responsive's clicks (menu toggle…) only make sense at the viewport
         # it set, so they stay out of the replayable flow.
         replayable = [s for s in sc.leaf_steps if "test_responsive" not in s.sub_flow]
+        sc.agent["assertions"] = suggested_assertions(replayable)
         path = sc.engine.generated_path("test_page")
         path.write_text(steps_to_markdown(f"{ob.title or kind} — agent test", replayable, start_url),
                         encoding="utf-8")

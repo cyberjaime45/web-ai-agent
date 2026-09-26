@@ -45,7 +45,8 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
   leave out. `allow_destructive: true` lets autonomous skills press controls
   the safety policy blocks (delete, pay, send… — only for disposable
   environments), and `allow_actions: "Send message" | "Publish"` whitelists
-  named controls.
+  named controls. `rerun: false` keeps `RERUN_FAILED` from running the file a
+  second time — for flows whose steps create or submit data.
 - **Every other `## section`** is a run of steps. Section names are free-form
   (`## Login`, `## Home Page`, `## Steps`); each section becomes its own test
   in the report, and a failure stops the rest of that section only — execution
@@ -224,7 +225,7 @@ collapsed row under the step. `ORACLE=warn` (default) only records them;
 `ORACLE=strict` fails the step on an error-severity check; `ORACLE=off`
 disables them.
 
-Four skills go further and can replace a page of hand-written assertions:
+QA skills go further and can replace a page of hand-written assertions:
 
 ```markdown
 # Members
@@ -237,6 +238,13 @@ Four skills go further and can replace a page of hand-written assertions:
 - goto: "<APP_URL>/members"
 - inspect_page
 - check_console_network
+- check_accessibility
+- check_links
+
+## Table and search
+- goto: "<APP_URL>/members"
+- test_table
+- test_search
 
 ## Add member form
 - click: "Add Member"
@@ -245,6 +253,13 @@ Four skills go further and can replace a page of hand-written assertions:
 ## Layout
 - goto: "<APP_URL>/members"
 - test_responsive
+- test_widgets
+
+## Regression
+- goto: "<APP_URL>/members"
+- wait_load: "load"
+- snapshot_page: "members"
+- check_performance
 
 ## Explore
 - goto: "<APP_URL>/members"
@@ -262,7 +277,7 @@ the safety policy blocks. `test_page` classifies the page, runs the skills
 that fit it, and writes what it did as a plain flow under
 `reports/<ENVIRONMENT>/generated/` for review — the intended lifecycle is:
 the agent explores once, QA reviews the generated Markdown, and from then on
-it runs deterministically. See [ACTIONS.md → QA skills](ACTIONS.md#qa-skills-7)
+it runs deterministically. See [ACTIONS.md → QA skills](ACTIONS.md#qa-skills-13)
 for what each one checks and its options.
 
 ## What a failed step leaves behind
@@ -277,3 +292,26 @@ collects evidence on the spot and the report shows it under that step:
 - the console errors and failed requests that happened during the step
 - a Playwright trace of the whole flow, `traces/<flow>__<profile>.zip`
   (`TRACE=on-failure`, the default; open it with `npx playwright show-trace <file>`)
+- a **likely cause**: `application` (a 5xx or failed request, a JavaScript
+  error, a blank page or a stuck loading indicator during the step or earlier
+  in its section), `test` (the target was covered, ambiguous or disabled, or a
+  control with a very similar name is on the page — the text changed),
+  `environment` (network or browser errors, an unset `<PLACEHOLDER>`, a
+  sign-in page or a 401/403 — the session is gone) or `unclassified`, with the
+  signals behind it. It is a hint for triage, not a result; no LLM is involved
+
+### Flaky or consistent? — `RERUN_FAILED`
+
+With `RERUN_FAILED=true` (pytest runs), a flow with a failed section runs once
+more, whole, in a fresh browser context — sections often depend on earlier
+ones, such as a login section. Each section then keeps one outcome:
+
+| First run | Rerun | Report |
+|-----------|-------|--------|
+| passed | — | the first run (a rerun never turns a pass into a failure) |
+| failed | passed | **Passed on retry**: the rerun's steps, with the first attempt's error |
+| failed | failed | **Failed**, with 1 rerun: a consistent failure |
+
+A flow whose sections all passed on retry passes the pytest run; the console
+summary counts them under `Passed on retry`. The rerun's screenshots and trace
+carry a `__retry` suffix. A flow opts out with `rerun: false` in `## Config`.

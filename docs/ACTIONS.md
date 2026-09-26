@@ -1,6 +1,6 @@
 # Supported Actions — Full Reference
 
-Every keyword a flow step can use, grouped by purpose. 52 keywords in total (45 actions + 7 QA skills).
+Every keyword a flow step can use, grouped by purpose. 58 keywords in total (45 actions + 13 QA skills).
 For the file format around the steps, see [FLOWS.md](FLOWS.md).
 
 ## Step syntax
@@ -525,7 +525,7 @@ See [FLOWS.md](FLOWS.md#reusable-sub-flows) for a worked login example.
 
 ---
 
-## QA skills (7)
+## QA skills (13)
 
 Skills are higher-level checks that orchestrate ordinary actions. The engine
 runs one as a group: a marker step carrying the skill's **checks** (each
@@ -642,11 +642,11 @@ what ran under `reports/<ENVIRONMENT>/generated/`.
 3. test_page: "depth=1" | "max_actions=12" | "max_ai_calls=3" | "submit=false"
 ```
 
-| Page type | What runs (besides `check_console_network` and `test_responsive`) |
+| Page type | What runs (besides `check_console_network`, `check_accessibility` and `test_responsive`) |
 |-----------|--------------------------------------------------------------------|
 | `LOGIN` | `test_form` without submitting; password field masked; no sign-in attempted |
 | `FORM`, `WIZARD` | `test_form` (`submit=true` only when passed through) |
-| `TABLE`, `LIST`, `SEARCH`, `DASHBOARD`, `DETAIL`, `CONTENT` | search field exercised, pagination pressed once, then `explore_page` within `depth` / `max_actions` |
+| `TABLE`, `LIST`, `SEARCH`, `DASHBOARD`, `DETAIL`, `CONTENT` | `test_table` when there is a table (else a pager pressed once), `test_search` when there is a search field, then `explore_page` within `depth` / `max_actions` |
 | `SETTINGS` | nothing that changes data: toggles and save buttons are left alone |
 
 With an LLM provider, `max_ai_calls` bounds two uses: a classification
@@ -665,8 +665,11 @@ uv run python main.py agent-test https://example.com/members      # CLI, --depth
 ```
 
 The generated flow replays the actions that ran (`fill`, `click`, `select`,
-`press`, `back`…) with an `assert_url` after each navigation; the steps
-`test_responsive` performed at other viewports are left out.
+`press`, `back`…) with an `assert_url` after each navigation and an
+`assert_text` for each new page heading, dialog title or alert a step brought
+up — skipping text that changes between runs (dates, times, amounts, long
+numbers, emails). The steps `test_responsive` performed at other viewports are
+left out. The Agent panel lists the assertions under *Suggested assertions*.
 
 `profiles=` is not a `test_page` option: list profiles under `## Config` (or
 pass `--profile`) to run the whole flow on desktop and mobile.
@@ -701,3 +704,144 @@ Logout links, and links whose path looks destructive (delete, unsubscribe,
 checkout…), are never requested unless the flow allows destructive actions;
 they are listed under `links not requested`. The requests are not part of
 the report's network log.
+
+#### `check_accessibility`
+A basic accessibility pass in one page evaluation; nothing is clicked. Each
+rule is a check with a count and the offending elements (`img src=…`,
+`input[name=email] (placeholder "Email" only)`, `button.icon`):
+
+| Check | Flags |
+|-------|-------|
+| `images have alt text` | visible images with no `alt` attribute (`alt=""` marks a decorative image and is fine) |
+| `fields have labels` | inputs, selects and textareas with no label, `aria-label`, `aria-labelledby` or `title` — a placeholder is not a label |
+| `controls have names` | buttons and links with no text, `aria-label`, `title` or image alt |
+| `page language set` | `<html>` without `lang` |
+| `page has an h1` / `heading levels in order` | no visible `<h1>`; a skipped level such as `h2 → h4` |
+| `referenced ids are unique` | an id used twice that a label or ARIA reference points to |
+| `no positive tabindex` | `tabindex` above 0 |
+| `dialog holds focus` | an open modal dialog that does not contain keyboard focus |
+
+```markdown
+1. check_accessibility
+2. check_accessibility: "level=strict"
+```
+
+Findings are warnings; `level=strict` makes them fail the step. It is not a
+WCAG audit — colour contrast and the rest need a dedicated tool — but a
+control without a name is also one a flow cannot target by name.
+
+#### `test_table`
+Exercise the first visible table (`<table>`, `role=grid` or `role=table`;
+`table=2` for another) through ordinary child steps:
+
+- **structure** — a header row with text; rows, or an empty-state message
+- **sorting** — click the first sortable header (`aria-sort`, a button inside
+  it, a sort class or a pointer cursor) and check that column is now in
+  ascending or descending order, comparing numbers, dates and text as such
+- **pagination** — press *Next*: the rows change; press *Previous*: the first
+  page comes back
+- **row details** — press the first link or button in the first row: the URL
+  changes or a dialog opens; then *Back* or *Escape*
+
+```markdown
+1. goto: "<APP_URL>/members"
+2. test_table
+3. test_table: "table=2" | "sort=false" | "paginate=false" | "open=false"
+```
+
+Every finding is a warning: equal values, server-side paging and virtualised
+rows can look unchanged, and are reported as such. A control the safety policy
+blocks (a row's *Delete*) is never pressed.
+
+#### `test_search`
+Search for a value the page already shows — the first cell of the first table
+row, else the first list item — so no test data is needed:
+
+- **finds a visible value** — the term is on the page afterwards; an
+  `assert_text` step is added so the generated flow keeps the check
+- **narrows the results** — the result count did not grow
+- **no match shows no results** — a nonsense term leaves no rows, or an
+  empty-state message
+- **clearing restores the results** — clearing the field brings back the count
+
+```markdown
+1. goto: "<APP_URL>/members"
+2. test_search
+3. test_search: "term=John Smith" | "search=Find a member"
+```
+
+`term=` searches for a given value; `search=` names the field when there are
+several. Findings are warnings: a search can match on fields the page does not
+show. When searching opens another page, the skill returns to the start page
+before the next search.
+
+#### `snapshot_page`
+Structural regression without pixels: save what the page is made of, and on
+later runs report what disappeared.
+
+```markdown
+1. goto: "<APP_URL>/members"
+2. snapshot_page: "members_list"
+3. snapshot_page: "members_list" | "update=true"
+4. snapshot_page: "members_list" | "strict=true" | "ignore=Promo,Chat"
+```
+
+The structure is a list of `role: name` items — headings, buttons, links,
+tabs, menu items, form fields (`field: Email (email)`), table columns
+(`column: Name`). Controls inside table rows and names that look like data
+(numbers, dates, amounts) are left out: they change with the data, not the UI.
+The first run saves `<flow folder>/baselines/<name>__<profile>.json`
+(`reports/<ENVIRONMENT>/baselines/` for a flow from outside the project); later
+runs compare against it. Removed items are a warning — an error with
+`strict=true` — and added ones are listed. `update=true` saves the current page
+as the new baseline; `ignore=` drops items containing any of the given words.
+Commit the baselines with the flows so a reviewer sees structural changes.
+
+#### `test_widgets`
+Check that tabs, disclosures and dialogs behave as their ARIA roles promise,
+through ordinary child steps:
+
+- **tabs** — each tab that is not selected: after a click it is
+  `aria-selected` and the panel it controls is visible; the original tab is
+  selected again at the end
+- **disclosures** — buttons with `aria-expanded` (accordions, *show more*,
+  menus): a click flips the state and shows or hides the region it controls; a
+  second click restores it
+- **dialogs** — buttons with `aria-haspopup="dialog"` or Bootstrap's
+  `data-bs-toggle="modal"`: the dialog opens, holds keyboard focus, Escape
+  closes it, and focus returns to the button
+
+```markdown
+1. test_widgets
+2. test_widgets: "max=3" | "dialog=Edit profile"
+```
+
+`max=` limits the widgets of each kind (default 5); `dialog=` names an opener
+that has no ARIA hint. Disabled controls and controls the safety policy blocks
+are left alone. Findings are warnings; widgets without ARIA are reported as not
+found rather than failed.
+
+#### `check_performance`
+Read the browser's own timing for the current document and compare it with
+budgets. Nothing is clicked, and nothing fails: over-budget metrics are
+warnings, because test machines and networks are noisy.
+
+```markdown
+1. goto: "<APP_URL>/members"
+2. wait_load: "load"
+3. check_performance
+4. check_performance: "lcp=4000" | "load=8000"
+```
+
+| Option | Default | Metric |
+|--------|---------|--------|
+| `ttfb` | `800` | Time to first byte (ms) |
+| `dcl` | `3000` | DOMContentLoaded finished (ms) |
+| `load` | `5000` | Load event finished (ms) |
+| `lcp` | `2500` | Largest Contentful Paint (ms) |
+| `cls` | `0.1` | Cumulative Layout Shift (a score) |
+
+The `performance` check lists every value plus the number and size of the
+resources fetched, so the report doubles as a trend record. The timings
+describe the last full page load: after in-page navigation in a single-page
+app they still show the initial load.

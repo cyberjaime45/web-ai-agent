@@ -20,6 +20,7 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from app.flow.parser import FlowParseError, FlowDefinition, parse_flow_file, parse_flow_markdown
+from app.execution import rerun
 from app.execution.engine import FlowRunner
 from app.layers.providers import ConfigError, get_provider
 from app.schemas.actions import Evidence, FlowResult
@@ -27,7 +28,7 @@ from app.browser import profiles
 from app.browser.session import create_browser
 from app.config.settings import settings
 from app.observability.console import (
-    FLOW_FILE_PROP, FLOW_NAME_PROP, HEALINGS_PROP,
+    FLAKY_PROP, FLOW_FILE_PROP, FLOW_NAME_PROP, HEALINGS_PROP,
     execution_summary, install_console_reporter,
 )
 from app.observability.evidence import annotate_error_elements, slugify, stop_trace
@@ -63,6 +64,7 @@ class ProfessionalReportPlugin:
         self.flow_meta: dict[str, dict] = {}
         self.flow_steps: dict[str, list[dict]] = {}
         self.flow_errors: dict[str, str] = {}
+        self.flow_retries: dict[str, dict[str, str]] = {}
         self.captures: dict[str, dict] = {}
         self.session_start = time.time()
         self.report_path: Path | None = None
@@ -84,6 +86,10 @@ class ProfessionalReportPlugin:
 
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
+
+    def record_retries(self, nodeid: str, retried: dict[int, str]) -> None:
+        """Sections (by index) a RERUN_FAILED rerun retried → first attempt's error."""
+        self.flow_retries[nodeid] = {str(i): err for i, err in retried.items()}
 
     def record_capture(self, nodeid: str, console: list[dict],
                        network: list[dict], dropped: dict | None = None) -> None:
@@ -145,6 +151,7 @@ class ProfessionalReportPlugin:
             nodeid = r["nodeid"]
             r.update(self.flow_meta.get(nodeid, {}))
             r["error"] = self.flow_errors.get(nodeid, "")
+            r["retried"] = self.flow_retries.get(nodeid, {})
             r["flow_steps"] = self.flow_steps.get(nodeid, [])
             capture = self.captures.get(nodeid, {})
             r["console"] = capture.get("console", [])
@@ -391,14 +398,16 @@ def _flow_items(parent, config: pytest.Config, flow: FlowDefinition) -> list[Flo
     ]
 
 
-def _keep_trace(page, result: FlowResult | None, flow_name: str, profile: str) -> None:
+def _keep_trace(page, result: FlowResult | None, flow_name: str, profile: str,
+                retry: bool = False) -> None:
     """Stop the context's trace; when the flow failed, keep it on the failure
     site — the last failed (non-skipped) step."""
     if not settings.trace_on_failure:
         return
     failed = [] if result is None else [s for s in result.steps if not s.success and not s.skipped]
+    stem = f"{slugify(flow_name)}__{profile}" + ("__retry" if retry else "")
     path = stop_trace(page, keep=result is None or bool(failed),
-                      traces_dir=settings.traces_dir, stem=f"{slugify(flow_name)}__{profile}")
+                      traces_dir=settings.traces_dir, stem=stem)
     if path and failed:
         if failed[-1].evidence is None:
             failed[-1].evidence = Evidence()
@@ -459,8 +468,23 @@ class FlowItem(pytest.Item):
         plugin = self.config.pluginmanager.get_plugin("professional_report")
         if plugin:
             plugin.record_flow(self.nodeid, self.flow, self.profile)
-        result: FlowResult | None = None
 
+        attempts: list[list] = []   # [FlowResult | None, PageRecorder] per attempt
+        try:
+            result = self._attempt(1, attempts, plugin)
+            rerun_allowed = settings.rerun_failed if self.flow.rerun is None else self.flow.rerun
+            if not result.success and rerun_allowed and rerun.failed_sections(result):
+                self._attempt(2, attempts, plugin)
+        finally:
+            # Whatever happened inside the flow, the report still gets what was captured.
+            result = self._record(plugin, attempts)
+
+        if not result.success:
+            raise _FlowFailure(result)
+
+    def _attempt(self, n: int, attempts: list[list], plugin) -> FlowResult:
+        """Run the flow once in a fresh context; the slot in *attempts* is
+        filled before the run so a crash still leaves its recorder behind."""
         with self.config._webagent_browser.page(self.flow.name, self.profile) as page:
             page.set_default_timeout(self.flow.timeout)
             if plugin:
@@ -468,33 +492,52 @@ class FlowItem(pytest.Item):
                     self.nodeid, profiles.describe(self.profile, page.viewport_size))
             recorder = PageRecorder()   # console errors/warnings + network, for the report
             recorder.attach(page)
+            slot: list = [None, recorder]
+            attempts.append(slot)
             runner = FlowRunner(artifacts_dir=str(self._artifacts), flows_dir=self.path.parent,
-                                provider=self.config._webagent_provider, profile=self.profile)
+                                provider=self.config._webagent_provider, profile=self.profile,
+                                attempt=n)
+            result: FlowResult | None = None
             try:
                 result = runner.run(self.flow, page, recorder=recorder)
-                healed = sum(1 for s in result.steps if s.success and (s.layer_used or 1) > 1)
-                self.user_properties.append((HEALINGS_PROP, healed))
                 if not result.success:
                     self._backfill_evidence(result, page, runner)
+                slot[0] = result
             finally:
-                # Whatever happened inside the flow, the report and the remote
-                # dashboard still get what was captured.
-                _keep_trace(page, result, self.flow.name, self.profile)
-                if plugin:
-                    if result is not None and result.steps:
-                        plugin.record_steps(self.nodeid, result.steps)
-                    if result is not None and not result.success:
-                        plugin.record_error(self.nodeid, result.error)
-                    plugin.record_capture(self.nodeid, recorder.console,
-                                          recorder.network, recorder.dropped)
+                _keep_trace(page, result, self.flow.name, self.profile, retry=n > 1)
                 _set_lambdatest_status(
                     page,
                     result.success if result is not None else False,
                     result.error if result is not None else "flow crashed before completing",
                 )
+        return result
 
-        if not result.success:
-            raise _FlowFailure(result)
+    def _record(self, plugin, attempts: list[list]) -> FlowResult | None:
+        """Report one attempt as is, or the section-by-section merge of two."""
+        if not attempts:
+            return None
+        result, recorder = attempts[0]
+        console, network = recorder.console, recorder.network
+        retried: dict[int, str] = {}
+        if len(attempts) == 2 and result is not None and attempts[1][0] is not None:
+            second, rec2 = attempts[1]
+            merged = rerun.merge(result, (recorder.console, recorder.network),
+                                 second, (rec2.console, rec2.network))
+            result, retried = merged.result, merged.retried
+            console, network = merged.console, merged.network
+            self.user_properties.append((FLAKY_PROP, merged.passed_on_retry))
+        if result is not None:
+            healed = sum(1 for s in result.steps if s.success and (s.layer_used or 1) > 1)
+            self.user_properties.append((HEALINGS_PROP, healed))
+        if plugin:
+            if result is not None and result.steps:
+                plugin.record_steps(self.nodeid, result.steps)
+            if result is not None and not result.success:
+                plugin.record_error(self.nodeid, result.error)
+            if retried:
+                plugin.record_retries(self.nodeid, retried)
+            plugin.record_capture(self.nodeid, console, network, recorder.dropped)
+        return result
 
     @staticmethod
     def _backfill_evidence(result: FlowResult, page, runner: FlowRunner) -> None:
@@ -535,6 +578,8 @@ class FlowItem(pytest.Item):
                 lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {prefix}{s.action.raw}  ({dur})")
                 if not s.success and not getattr(s, "skipped", False):
                     lines.append(f"       {s.message}")
+                    if s.evidence and s.evidence.diagnosis:
+                        lines.append(f"       likely cause: {s.evidence.diagnosis['summary']}")
             return "\n".join(lines)
         return str(excinfo.value)
 

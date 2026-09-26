@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Widgets</title>
+<style>body { font-family: sans-serif; padding: 16px; } [role=tab][aria-selected=true] { font-weight: bold; }</style>
+</head>
+<body>
+<h1>Account</h1>
+<div role="tablist" aria-label="Sections">
+  <button role="tab" id="t1" aria-selected="true" aria-controls="p1">Profile</button>
+  <button role="tab" id="t2" aria-selected="false" aria-controls="p2">Billing</button>
+  <button role="tab" id="t3" aria-selected="false" aria-controls="p3">Security</button>
+  <button role="tab" id="t4" aria-selected="false" aria-controls="p4" disabled>Archive</button>
+</div>
+<div role="tabpanel" id="p1">Profile details</div>
+<div role="tabpanel" id="p2" hidden>Billing details</div>
+<div role="tabpanel" id="p3" hidden>Security details</div>
+<div role="tabpanel" id="p4" hidden>Archive</div>
+
+<h2>Help</h2>
+<button aria-expanded="false" aria-controls="faq1" id="q1">Shipping questions</button>
+<div id="faq1" hidden>We ship worldwide.</div>
+<button aria-expanded="false" aria-controls="faq2" id="q2">Returns questions</button>
+<div id="faq2" hidden>Returns within 30 days.</div>
+
+<h2>Profile</h2>
+<button aria-haspopup="dialog" id="edit">Edit profile</button>
+<dialog id="dlg" aria-label="Edit profile">
+  <h2>Edit profile</h2>
+  <label>Display name <input autofocus></label>
+  <button id="close">Close</button>
+</dialog>
+<script>
+document.querySelectorAll('[role=tab]').forEach(tab => tab.onclick = () => {
+  document.querySelectorAll('[role=tab]').forEach(t => {
+    t.setAttribute('aria-selected', String(t === tab));
+    document.getElementById(t.getAttribute('aria-controls')).hidden = t !== tab;
+  });
+});
+// Shipping works; Returns shows its answer but never updates aria-expanded (the defect to find).
+document.getElementById('q1').onclick = e => {
+  const open = e.target.getAttribute('aria-expanded') !== 'true';
+  e.target.setAttribute('aria-expanded', String(open));
+  document.getElementById('faq1').hidden = !open;
+};
+document.getElementById('q2').onclick = () => {
+  const a = document.getElementById('faq2'); a.hidden = !a.hidden;
+};
+document.getElementById('edit').onclick = () => document.getElementById('dlg').showModal();
+document.getElementById('close').onclick = () => document.getElementById('dlg').close();
+</script>
+</body>
+</html>

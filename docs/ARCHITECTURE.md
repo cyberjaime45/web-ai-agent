@@ -167,7 +167,7 @@ web-agent/
 ├── pyproject.toml / requirements.txt
 │
 ├── app/
-│   ├── schemas/actions.py          # ActionType enum (52), FlowAction, StepResult, Check, FlowResult
+│   ├── schemas/actions.py          # ActionType enum (58), FlowAction, StepResult, Check, FlowResult
 │   ├── flow/parser.py              # 4-stage pipeline: tokenize → normalize → validate → build
 │   ├── flow/lint.py                # Static flow checks + healed-steps report (main.py lint)
 │   ├── layers/
@@ -180,8 +180,11 @@ web-agent/
 │   │   └── providers/              # LLMProvider ABC, factory, OpenAI / Gemini / Claude adapters
 │   ├── execution/
 │   │   ├── engine.py               # FlowRunner: L1 → L2 → L3, run_flow, skills, execute(), evidence
+│   │   ├── rerun.py                # RERUN_FAILED: merge a failed flow with its rerun per section
 │   │   └── oracle.py               # Automatic checks after steps (diagnostics + render probe)
-│   ├── skills/                     # inspect_page, check_console_network, test_responsive, test_form, explore_page, test_page, check_links
+│   ├── skills/                     # inspect_page, check_console_network, test_responsive, test_form, explore_page, test_page,
+│   │                               # check_links, check_accessibility, test_table, test_search,
+│   │                               # snapshot_page, test_widgets, check_performance
 │   │   └── base.py                 # SkillContext (observe / run / run_skill through the engine), run_skill
 │   ├── flow/writer.py              # StepResults / explore graph → deterministic Markdown flow
 │   ├── planner_bridge.py           # Execute validated planner steps through a SkillContext
@@ -200,6 +203,7 @@ web-agent/
 │   │   ├── assets/                 # Static report shell, CSS, and JS
 │   │   ├── console.py              # Live terminal output + execution summary
 │   │   ├── evidence.py             # Failure evidence: screenshots, page state, diagnostics
+│   │   ├── diagnosis.py            # Likely cause of a failed step (application / test / environment)
 │   │   ├── recorder.py             # Per-test console + network capture
 │   │   └── reporter.py             # HTML + JSON report generator
 │   └── utils/

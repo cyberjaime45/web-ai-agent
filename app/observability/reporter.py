@@ -414,7 +414,7 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
         "status": status,
         "started_at": started_at,
         "duration_ms": round((r.get("duration") or 0.0) * 1000, 1),
-        "retries": 0,
+        "retries": 1 if r.get("retried") else 0,
         "steps": _build_steps(flow_steps, started_at, runs),
         "console": r.get("console") or [],
         "network": r.get("network") or [],
@@ -433,6 +433,8 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
     if dropped.get("network"):
         test["network_dropped"] = dropped["network"]
 
+    if r.get("retried"):
+        test["retry_error"] = next(iter(r["retried"].values()))
     if status in ("failed", "error"):
         message = r.get("error") or (r.get("longrepr") or "").split("\n")[0] or "Flow failed"
         test["error"] = {
@@ -472,7 +474,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "started_at": started_iso,
         "t0": t0,
         "duration_ms": float(t_end - t0) if t0 is not None else 0.0,
-        "retries": 0,
+        "retries": 1 if str(idx - 1) in (r.get("retried") or {}) else 0,
         "steps": _nest_sub_flows(steps, started_iso, 0),
         "console": [],
         "network": [],
@@ -480,6 +482,8 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "healings": _healings(steps),
         "agent": _agent(steps),
     }
+    if test["retries"]:
+        test["retry_error"] = r["retried"][str(idx - 1)]
     if failed:
         test["error"] = {
             "message": failed[-1].get("msg") or r.get("error") or "Section failed",

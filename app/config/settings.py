@@ -71,6 +71,10 @@ class Settings:
     trace:         str  = field(default_factory=lambda: _str("TRACE", "on-failure").lower())
     # Dismiss cookie banners / modals before each L1 attempt.
     dismiss_blockers: bool = field(default_factory=lambda: _bool("DISMISS_BLOCKERS", "false"))
+    # Run a flow with a failed section once more (pytest); a section that
+    # passes then is reported "passed on retry", one that fails again is a
+    # consistent failure. A flow opts out with `rerun: false` in ## Config.
+    rerun_failed: bool = field(default_factory=lambda: _bool("RERUN_FAILED", "false"))
 
     # ── Safety (autonomous skills) ────────────────────────────────
     # true lets explore_page / the planner press controls that look

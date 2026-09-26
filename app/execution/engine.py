@@ -22,9 +22,10 @@ from pathlib import Path
 from playwright.sync_api import Page
 
 from app.agent.safety import SafetyPolicy
-from app.config.settings import settings
+from app.config.settings import PROJECT_ROOT, settings
 from app.execution import oracle
 from app.observability import evidence as evidence_mod
+from app.observability.diagnosis import diagnose
 from app.schemas.actions import (
     AI_ONLY_ACTIONS,
     SKILL_ACTIONS,
@@ -129,13 +130,17 @@ class FlowRunner:
         flows_dir: str | Path = "tests",
         provider: LLMProvider | None | object = _RESOLVE_PROVIDER,
         profile: str = "desktop",
+        attempt: int = 1,
     ):
         """*provider*: an LLMProvider to share across runs (one client per
         session), ``None`` to disable L3, or omitted to resolve from settings.
-        *profile*: the device profile name, used to label evidence files."""
+        *profile*: the device profile name, used to label evidence files.
+        *attempt*: 2 for a RERUN_FAILED rerun — its evidence files get a
+        ``__retry`` suffix so they do not overwrite the first attempt's."""
         self.artifacts_dir = Path(artifacts_dir) if artifacts_dir else settings.images_dir
         self.flows_dir = Path(flows_dir)
         self.profile = profile
+        self.attempt = attempt
         if provider is _RESOLVE_PROVIDER:
             provider = get_provider()
         self.provider = provider           # shared by L3 and the skills' planner
@@ -148,6 +153,7 @@ class FlowRunner:
         self._recorder = None          # PageRecorder for the current run (optional)
         self._flow_slug = "flow"
         self._n_failures = 0           # numbers the evidence files of one run
+        self._section_seq = 0          # recorder mark at the current section's start (diagnosis)
         self._ignore = oracle.IgnoreRules()
         self._policy = SafetyPolicy()
 
@@ -162,7 +168,7 @@ class FlowRunner:
         result = FlowResult(flow_name=flow.name)
         ctx = RunContext()
         self._recorder = recorder
-        self._flow_slug = evidence_mod.slugify(flow.name)
+        self._flow_slug = evidence_mod.slugify(flow.name) + ("__retry" if self.attempt > 1 else "")
         self._ignore = oracle.IgnoreRules(list(getattr(flow, "ignore_console", [])),
                                           list(getattr(flow, "ignore_network", [])))
         runner = DeterministicRunner(page, artifacts_dir=self.artifacts_dir, ctx=ctx,
@@ -185,6 +191,7 @@ class FlowRunner:
             if action.section != current_section:
                 current_section = action.section
                 section_failed = False
+                self._section_seq = recorder.seq if recorder is not None else 0
 
             # ── Record remaining steps of a failed section as skipped ──
             if section_failed:
@@ -250,6 +257,15 @@ class FlowRunner:
         folder.mkdir(parents=True, exist_ok=True)
         return folder / f"{self._flow_slug}__{self.profile}__{name}.md"
 
+    def baseline_path(self, name: str) -> Path:
+        """Where snapshot_page keeps a baseline: ``<flow folder>/baselines/<name>__<profile>.json``,
+        reviewed with the flow; ``reports/<env>/baselines/`` for a flow from outside the project."""
+        root = self.flows_dir.resolve()
+        inside = root != PROJECT_ROOT and root.is_relative_to(PROJECT_ROOT)
+        folder = (root if inside else settings.report_dir) / "baselines"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / f"{evidence_mod.slugify(name)}__{self.profile}.json"
+
     # ── Failure evidence ───────────────────────────────────────────
 
     def attach_evidence(self, sr: StepResult, page: Page,
@@ -273,6 +289,12 @@ class FlowRunner:
         )
         if not sr.screenshot_path:
             sr.screenshot_path = sr.evidence.screenshots.get("viewport")
+        if not sr.evidence.diagnosis and not sr.group:
+            section: tuple[list, list] = ([], [])
+            if self._recorder is not None:
+                section = (self._recorder.errors_since(self._section_seq, 50),
+                           self._recorder.failures_since(self._section_seq, 50))
+            sr.evidence.diagnosis = diagnose(sr, page, section)
         return sr
 
     # ── Sub-flow handling ──────────────────────────────────────────

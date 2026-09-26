@@ -65,3 +65,36 @@ def test_graph_without_navigations_still_yields_a_flow():
     flow = parse_flow_markdown(md)
     assert [(a.type.value, a.args) for a in flow.actions] == [
         ("goto", ["https://x.test/"]), ("assert_text", ["Home"])]
+
+
+def test_assertions_follow_what_each_step_brought_up():
+    from app.flow.writer import steps_to_markdown, suggested_assertions
+    from app.schemas.actions import ActionType, FlowAction, StepResult
+
+    def step(kind, *args, after=None, url="https://x.test/members"):
+        return StepResult(action=FlowAction(type=kind, args=list(args)), success=True, message="",
+                          url=url, after=after or {})
+
+    steps = [
+        step(ActionType.CLICK, "Members", after={"heading": "Members", "dialog": "", "alert": ""}),
+        step(ActionType.CLICK, "Sort", after={"heading": "Members", "dialog": "", "alert": ""}),   # nothing new
+        step(ActionType.CLICK, "View", after={"heading": "Members", "dialog": "Member profile", "alert": ""}),
+        step(ActionType.PRESS, "Escape", after={"heading": "Members", "dialog": "", "alert": "Saved 3 min ago"}),
+        step(ActionType.CLICK, "View", after={"heading": "Members", "dialog": "Member profile", "alert": ""}),
+        step(ActionType.FILL, "Search", "x"),                                   # no capture: changes nothing
+        step(ActionType.PRESS, "Enter", after={"heading": "Members", "dialog": "Member profile",
+                                               "alert": "Showing 1 to 10 of 57 entries"}),
+    ]
+    assert suggested_assertions(steps) == [
+        'assert_text: "Members"', 'assert_text: "Member profile"', 'assert_text: "Member profile"']
+    md = steps_to_markdown("T", steps, "https://x.test/members")
+    assert md.count('- assert_text: "Member profile"') == 2 and "Saved 3 min ago" not in md
+
+
+def test_stable_text_rejects_volatile_values():
+    from app.flow.writer import stable_text
+    assert stable_text("Member Details")
+    for volatile in ("Order #12345", "Updated 2 min ago", "3/14/2026", "Total: $40", "a@b.com",
+                     "Showing 1 to 10 of 57 entries", "Step 2 of 4",
+                     'He said "hi"', "x" * 61, ""):
+        assert not stable_text(volatile), volatile

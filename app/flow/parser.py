@@ -72,6 +72,9 @@ class FlowDefinition:
     # and `allow_actions: "Send message" | "Publish"` — safety overrides for skills.
     allow_destructive: bool | None = None
     allow_actions: list[str] = field(default_factory=list)
+    # `## Config` → `rerun: false` keeps RERUN_FAILED from running this flow twice
+    # (flows whose steps create or submit data). None = follow the setting.
+    rerun: bool | None = None
 
 
 # ── Section extraction ────────────────────────────────────────────────────────
@@ -358,6 +361,8 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
             setattr(flow, key, [p for p in patterns if p])
         elif key == "allow_destructive":
             flow.allow_destructive = value.strip('"').lower() in ("true", "yes", "1", "on")
+        elif key == "rerun":
+            flow.rerun = value.strip('"').lower() in ("true", "yes", "1", "on")
 
     # ── Steps — every non-metadata ## section (Credentials, Notes… are skipped) ──
     for step_num, (section_name, raw) in enumerate(_all_action_sections(text), start=1):

@@ -254,6 +254,22 @@ def test_split_produces_one_test_per_section():
     assert tests[0]["duration_ms"] == pytest.approx(2000.0)
 
 
+def test_retried_sections_carry_retries_and_the_first_error():
+    r = make_result(outcome="failed", flow_steps=sectioned_steps())
+    r["retried"] = {"0": "first try: timeout", "1": "first try: nope"}
+    login, home, leads = _build_tests(r)
+    assert (login["retries"], login["retry_error"]) == (1, "first try: timeout")   # passed on retry
+    assert (home["retries"], home["status"]) == (1, "failed")                     # failed again
+    assert leads["retries"] == 0 and "retry_error" not in leads
+
+
+def test_single_test_retried():
+    r = make_result(flow_steps=[make_step(section="Steps", ts_start=BASE, ts_end=BASE + 1)])
+    r["retried"] = {"0": "first try failed"}
+    (test,) = _build_tests(r)
+    assert test["retries"] == 1 and test["retry_error"] == "first try failed"
+
+
 def test_no_split_for_single_section():
     r = make_result(flow_steps=[make_step(section="Steps", ts_start=BASE, ts_end=BASE + 1)])
     tests = _build_tests(r)

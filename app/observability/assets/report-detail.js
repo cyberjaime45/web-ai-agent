@@ -21,6 +21,17 @@ const imgLink = (path, caption, size) => `<a class="drawer-image-link ${size}" h
   title="Open full size in a new tab"><img src="${esc(path)}" alt="${esc(caption)}" loading="lazy">${caption ? `<span>${esc(caption)}</span>` : ''}</a>`;
 
 /* ── what went wrong ── */
+const VERDICT = {application: ['Likely application defect', 'danger'], test: ['Likely test issue', 'warning'],
+  environment: ['Likely environment or session', 'neutral'], unclassified: ['Cause unclear', 'neutral']};
+function diagnosisHtml(s){
+  // The engine's likely cause for the failed step, with the signals behind it.
+  const d = s && s.evidence && s.evidence.diagnosis;
+  if (!d || !d.verdict) return '';
+  const [label, kind] = VERDICT[d.verdict] || VERDICT.unclassified;
+  const signals = (d.signals || []).map(x => `<li>${esc(x)}</li>`).join('');
+  return `<div class="drawer-diagnosis"><p>${badge(label, kind)} <span>${esc(d.summary || '')}</span></p>
+    ${signals ? `<ul>${signals}</ul>` : ''}</div>`;
+}
 function wentWrongHtml(t){
   const s = failedStep(t);
   const ev = (s && s.evidence) || {};
@@ -33,6 +44,7 @@ function wentWrongHtml(t){
       <p class="drawer-step-name">${icon('x')}<span title="${esc(s.action || '')}">${esc(s.action ? actionLabel(s.action) : s.name)}
         ${s.args ? `<span class="args mono">${esc(s.args)}</span>` : ''}</span></p></div>` : ''}
     <p class="drawer-why">${esc(explain(t))}</p>
+    ${diagnosisHtml(s)}
     ${main ? `<div class="drawer-shots">${imgLink(main[1], EV_KIND[main[0]] || main[0], 'main')}
       ${rest.map(([k, p]) => imgLink(p, EV_KIND[k] || k, 'small')).join('')}</div>`
       : '<p class="note">No screenshot was captured for this failure.</p>'}`);
@@ -44,6 +56,7 @@ function factsHtml(t){
     ['Started', t.started_at ? esc(new Date(t.started_at).toLocaleTimeString()) : ''],
     ['Suite', esc(suiteTitle(t))], ['Area', esc(areaLabel(areaOf(t)))],
     ['Device', esc(p.label || p.name || '')], ['Reruns', t.retries ? String(t.retries) : ''],
+    ['First attempt', t.retry_error ? `<span class="tech-hint">${esc(t.retry_error)}</span>` : ''],
     ['Tags', (t.markers||[]).map(m => badge(esc(m))).join(' ')],
   ]));
 }
@@ -58,6 +71,7 @@ function agentHtml(t){
     ['Components', list(a.components)],
     ['Plan', a.plan && a.plan.length ? `<ol>${a.plan.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''],
     ['Rejected plan steps', list(a.plan_rejected, 'bad')], ['Skipped for safety', list(a.skipped, 'warn')],
+    ['Suggested assertions', list(a.assertions)],
     ['Actions executed', a.actions && a.actions.length ? `${a.actions.length} — ` + esc(a.actions.slice(0, 8).join(' · ')) + (a.actions.length > 8 ? ' …' : '') : ''],
     ['AI calls', a.ai_calls != null ? String(a.ai_calls) : ''],
     ['Generated flow', a.generated ? `<a href="${esc(a.generated)}" target="_blank">${esc(a.generated)}</a> <span class="tech-hint">— review it, then add it to the suite</span>` : ''],

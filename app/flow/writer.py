@@ -7,7 +7,11 @@ changes). Two sources:
 
   steps_to_markdown   the leaf steps a skill executed (fill, click, select,
                       press, back, goto…), with an ``assert_url`` inserted
-                      after every step that changed the URL
+                      after every step that changed the URL, and an
+                      ``assert_text`` for each new heading, dialog title or
+                      alert the step brought up (``StepResult.after``) —
+                      unless the text looks volatile (numbers, dates, times,
+                      amounts, emails), which would make the flow flaky
   graph_to_markdown   explore_page's page/action graph — one section per
                       navigation found (goto the page, click, assert_url)
 
@@ -18,6 +22,7 @@ argument), so replace the origin by hand if the flow should follow ``.env``.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from app.schemas.actions import ActionType, StepResult
@@ -31,6 +36,39 @@ REPLAYABLE = frozenset({
     ActionType.ASSERT_TEXT, ActionType.ASSERT_VISIBLE, ActionType.ASSERT_URL,
     ActionType.WAIT_FOR_TEXT, ActionType.WAIT_FOR_ELEMENT, ActionType.WAIT_LOAD,
 })
+
+
+MAX_ASSERT_LEN = 60
+# Two or more digits anywhere ("Showing 1 to 10 of 57", "Order #12", "3/14") is data, not UI.
+_VOLATILE_RE = re.compile(r"\d\D*\d|[$€£¥%@\"|]|\b(today|yesterday|tomorrow|ago|am|pm)\b", re.IGNORECASE)
+
+
+def stable_text(text: str) -> bool:
+    """Short, and free of what changes between runs (or cannot be quoted in a step)."""
+    return bool(text) and len(text) <= MAX_ASSERT_LEN and not _VOLATILE_RE.search(text)
+
+
+def _assertions_after(step: StepResult, seen: dict[str, str]) -> list[str]:
+    """``assert_text`` lines for what *step* newly brought up; updates *seen*."""
+    out: list[str] = []
+    if not step.after:                    # nothing captured after this step: nothing learned
+        return out
+    for key in ("heading", "dialog", "alert"):
+        text = step.after.get(key, "")
+        if stable_text(text) and seen.get(key) != text:
+            out.append(_line("assert_text", text))
+        seen[key] = text
+    return out
+
+
+def _replayable(steps: list[StepResult]) -> list[StepResult]:
+    return [s for s in steps if not s.group and s.success and s.action.type in REPLAYABLE]
+
+
+def suggested_assertions(steps: list[StepResult]) -> list[str]:
+    """The assertions ``steps_to_markdown`` adds, as step text (``assert_text: "Members"``)."""
+    seen: dict[str, str] = {}
+    return [line[2:] for s in _replayable(steps) for line in _assertions_after(s, seen)]
 
 
 def _line(action: str, *args: str) -> str:
@@ -55,13 +93,13 @@ def steps_to_markdown(title: str, steps: list[StepResult], start_url: str = "",
     if start_url:
         lines.append(_line("goto", start_url))
     last_url = start_url
-    for s in steps:
-        if s.group or not s.success or s.action.type not in REPLAYABLE:
-            continue
+    seen: dict[str, str] = {}
+    for s in _replayable(steps):
         lines.append(_line(s.action.type.value, *s.action.args))
         if s.url and s.url.split("#", 1)[0] != (last_url or "").split("#", 1)[0] \
                 and s.action.type not in (ActionType.ASSERT_URL, ActionType.GOTO):
             lines.append(_line("assert_url", _path(s.url)))
+        lines += [a for a in _assertions_after(s, seen) if a != lines[-1]]
         if s.url:
             last_url = s.url
     return "\n".join(lines) + "\n"

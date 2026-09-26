@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 FLOW_FILE_PROP = "webagent_flow_file"
 FLOW_NAME_PROP = "webagent_flow_name"
 HEALINGS_PROP = "webagent_healings"
+FLAKY_PROP = "webagent_passed_on_retry"   # sections that failed, then passed on a RERUN_FAILED rerun
 
 # category (from pytest_report_teststatus) → console glyph + markup
 _GLYPHS: dict[str, tuple[str, dict[str, bool]]] = {
@@ -200,6 +201,7 @@ def execution_summary(
     flow_files: set[str] = set()
     flows = 0
     healings = 0
+    on_retry = 0
     timed: list[tuple[float, str]] = []
     for category in _OUTCOMES:
         for report in stats.get(category, []):
@@ -212,6 +214,7 @@ def execution_summary(
             else:
                 label = report.nodeid.rpartition("::")[2]
             healings += int(dict(props or ()).get(HEALINGS_PROP, 0))
+            on_retry += int(dict(props or ()).get(FLAKY_PROP, 0))
             timed.append((float(getattr(report, "duration", 0.0) or 0.0), label))
 
     rows: list[tuple[str, str]] = []
@@ -229,6 +232,8 @@ def execution_summary(
     rows.append(("Skipped", str(counts["skipped"] + counts["xfailed"])))
     if retries := len(stats.get("rerun", [])):
         rows.append(("Retries", str(retries)))
+    if on_retry:
+        rows.append(("Passed on retry", f"{on_retry} section(s) — flaky, see the report"))
     if healings:
         rows.append(("Healed steps", f"{healings} (resolved by L2/L3)"))
     rows.append(("Duration", format_duration(duration_s)))

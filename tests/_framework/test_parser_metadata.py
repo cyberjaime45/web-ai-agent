@@ -82,3 +82,9 @@ def test_config_safety_overrides():
     assert flow.allow_destructive is True
     assert flow.allow_actions == ["Send message", "Publish"]
     assert parse_flow_markdown("## Steps\n- wait_load\n").allow_destructive is None
+
+
+def test_config_rerun_opt_out():
+    flow = parse_flow_markdown('# T\n\n## Config\n- rerun: false\n\n## Steps\n- wait_load\n')
+    assert flow.rerun is False
+    assert parse_flow_markdown("## Steps\n- wait_load\n").rerun is None

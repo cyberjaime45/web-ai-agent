@@ -83,6 +83,12 @@ class ActionType(str, Enum):
     EXPLORE_PAGE          = "explore_page"
     TEST_PAGE             = "test_page"
     CHECK_LINKS           = "check_links"
+    CHECK_ACCESSIBILITY   = "check_accessibility"
+    TEST_TABLE            = "test_table"
+    TEST_SEARCH           = "test_search"
+    SNAPSHOT_PAGE         = "snapshot_page"
+    TEST_WIDGETS          = "test_widgets"
+    CHECK_PERFORMANCE     = "check_performance"
 
 # Argument count spec: (min_args, max_args)
 ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
@@ -149,6 +155,12 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
     ActionType.EXPLORE_PAGE:          (0, 6),
     ActionType.TEST_PAGE:             (0, 8),
     ActionType.CHECK_LINKS:           (0, 4),
+    ActionType.CHECK_ACCESSIBILITY:   (0, 2),
+    ActionType.TEST_TABLE:            (0, 4),
+    ActionType.TEST_SEARCH:           (0, 4),
+    ActionType.SNAPSHOT_PAGE:         (1, 4),
+    ActionType.TEST_WIDGETS:          (0, 4),
+    ActionType.CHECK_PERFORMANCE:     (0, 6),
 }
 
 # Actions that bypass L1/L2 and go directly to L3 (AI)
@@ -169,6 +181,12 @@ SKILL_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.EXPLORE_PAGE,
     ActionType.TEST_PAGE,
     ActionType.CHECK_LINKS,
+    ActionType.CHECK_ACCESSIBILITY,
+    ActionType.TEST_TABLE,
+    ActionType.TEST_SEARCH,
+    ActionType.SNAPSHOT_PAGE,
+    ActionType.TEST_WIDGETS,
+    ActionType.CHECK_PERFORMANCE,
 })
 
 @dataclass
@@ -232,6 +250,7 @@ class Evidence:
     console:     list[dict] = field(default_factory=list)       # error/warning entries since the step started
     network:     list[dict] = field(default_factory=list)       # failed requests since the step started
     files:       dict[str, str] = field(default_factory=dict)   # label → other artifact (generated flow…)
+    diagnosis:   dict = field(default_factory=dict)             # likely cause: verdict, summary, signals
 
 
 @dataclass
@@ -268,6 +287,7 @@ class StepResult:
     group:           bool = False     # marker step whose children follow (run_flow, skills)
     url:             str = ""         # page URL after the step (for generated flows)
     agent:           Optional[dict] = None   # autonomous-run facts: page type, plan, skipped, ai_calls…
+    after:           dict = field(default_factory=dict)   # skill child steps: heading / dialog / alert shown after it
 
 
 @dataclass

@@ -7,6 +7,7 @@ here touches the developer's .env: provider=None, artifacts in tmp_path.
 from __future__ import annotations
 
 import functools
+import json
 import http.server
 import threading
 import time
@@ -202,7 +203,7 @@ def test_test_page_composes_skills_and_generates_a_flow(page, fixture_url, tmp_p
     assert checks["page type"].detail == "FORM (deterministic)"
     assert "form 'Add member': 4 fields" in checks["components"].detail
     nested = [c.action.type.value for c in children if c.group and c.sub_flow == "test_page"]
-    assert nested == ["check_console_network", "test_form", "test_responsive"]
+    assert nested == ["check_console_network", "check_accessibility", "test_form", "test_responsive"]
     inner = [c for c in children if c.sub_flow == "test_page/test_form"]
     assert inner and all(c.success for c in inner)
     assert marker.success, marker.message
@@ -275,3 +276,110 @@ def test_check_links_images_false_checks_links_only(page, fixture_url, tmp_path)
     checks = _checks(result.steps[1])
     assert checks["no broken links"].count == 1                 # members.html links to missing.html
     assert "no broken images" not in checks
+
+
+def test_check_accessibility_lists_the_fixture_problems(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "a11y.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- check_accessibility\n')
+    marker = result.steps[1]
+    checks = _checks(marker)
+    assert marker.success                                        # warnings only by default
+    assert checks["images have alt text"].count == 1
+    assert checks["fields have labels"].count == 1 and 'placeholder "Email" only' in checks["fields have labels"].detail
+    assert checks["controls have names"].count == 2               # empty button + empty link; "×" has aria-label
+    assert not checks["page language set"].passed and not checks["page has an h1"].passed
+    assert "h2 → h4" in checks["heading levels in order"].detail
+    assert checks["referenced ids are unique"].detail == "#dup"
+    assert checks["no positive tabindex"].count == 1
+    assert checks["dialog holds focus"].passed
+    strict = _run(page, tmp_path, f'- goto: "{url}"\n- check_accessibility: "level=strict"\n')
+    assert not strict.steps[1].success
+
+
+def test_check_accessibility_passes_the_form_fixture(page, fixture_url, tmp_path):
+    result = _run(page, tmp_path, f'- goto: "{fixture_url}"\n- check_accessibility\n')
+    assert all(c.passed for c in result.steps[1].checks), result.steps[1].checks
+
+
+def test_test_table_sorts_pages_and_opens_a_row(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "grid.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- test_table\n')
+    marker, *children = result.steps[1:]
+    checks = _checks(marker)
+    assert marker.success, marker.message
+    assert "4 row(s); columns: Name, Flights, Joined" in checks["table"].detail
+    assert checks["sorting works"].passed and checks["sorting works"].detail == "'Name' sorted ascending"
+    assert checks["pagination works"].passed and checks["previous page restores the rows"].passed
+    assert checks["row opens details"].detail == "'View' opens a dialog"
+    raws = [c.action.raw for c in children]
+    assert 'click: "Name"' in raws and 'click: "Next"' in raws and 'press: "Escape"' in raws
+
+
+def test_test_search_uses_a_value_from_the_page(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "grid.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- test_search\n')
+    marker, *children = result.steps[1:]
+    checks = _checks(marker)
+    assert marker.success, marker.message
+    assert "searched for 'Olivia Park'" in checks["search"].detail
+    assert checks["search finds a visible value"].passed
+    assert checks["search narrows the results"].detail == "4 → 1 result(s)"
+    assert checks["no match shows no results"].passed and checks["clearing restores the results"].passed
+    assert 'assert_text: "Olivia Park"' in [c.action.raw for c in children]
+
+
+def test_test_page_on_a_grid_runs_table_and_search_and_asserts_what_it_saw(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "grid.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- test_page: "max_actions=4"\n')
+    marker, *children = result.steps[1:]
+    nested = [c.action.type.value for c in children if c.group and c.sub_flow == "test_page"]
+    assert nested[:4] == ["check_console_network", "check_accessibility", "test_table", "test_search"]
+    assert 'assert_text: "Member profile"' in marker.agent["assertions"]
+    generated = Path(marker.agent["generated"]).read_text()
+    assert '- assert_text: "Member profile"' in generated
+    from app.flow.parser import parse_flow_markdown
+    assert parse_flow_markdown(generated).actions                 # the generated flow parses
+
+
+def test_test_widgets_checks_tabs_disclosures_and_dialogs(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "widgets.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- test_widgets\n')
+    marker = result.steps[1]
+    checks = _checks(marker)
+    assert marker.success                                         # warnings only
+    assert checks["widgets"].detail == "3 tab(s), 2 disclosure(s), 1 dialog trigger(s)"
+    assert checks["tabs select their panel"].passed
+    assert checks["disclosures toggle"].count == 1
+    assert checks["disclosures toggle"].detail == "'Returns questions' aria-expanded stayed false"
+    for name in ("dialogs open", "dialog takes focus", "Escape closes the dialog", "focus returns to the opener"):
+        assert checks[name].passed, (name, checks[name].detail)
+    assert page.locator("#t1").get_attribute("aria-selected") == "true"   # original tab restored
+
+
+def test_snapshot_page_saves_then_reports_what_disappeared(page, fixture_url, tmp_path, monkeypatch):
+    monkeypatch.setattr("app.execution.engine.PROJECT_ROOT", tmp_path.parent)   # baselines under tmp_path
+    url = fixture_url.replace("form_page.html", "members.html")
+    first = _run(page, tmp_path, f'- goto: "{url}"\n- snapshot_page: "members"\n')
+    assert "saved (first run)" in _checks(first.steps[1])["baseline"].detail
+    baseline = json.loads((tmp_path / "baselines" / "members__desktop.json").read_text())
+    assert "button: Refresh" in baseline["items"] and "heading: Members list" in baseline["items"]
+    assert "button: Edit" not in baseline["items"]                 # inside a table row: data, not UI
+
+    page.evaluate("document.getElementById('refresh').remove()")
+    second = _run(page, tmp_path, '- snapshot_page: "members"\n')
+    checks = _checks(second.steps[0])
+    assert second.steps[0].success                                # a removal warns by default
+    assert checks["nothing removed"].detail == "button: Refresh" and checks["nothing removed"].count == 1
+    strict = _run(page, tmp_path, '- snapshot_page: "members" | "strict=true"\n')
+    assert not strict.steps[0].success
+
+
+def test_check_performance_reports_metrics_against_budgets(page, fixture_url, tmp_path):
+    result = _run(page, tmp_path, f'- goto: "{fixture_url}"\n- wait_load: "load"\n- check_performance\n')
+    marker = result.steps[2]
+    checks = _checks(marker)
+    assert marker.success
+    assert checks["performance"].detail.startswith("ttfb ")
+    assert checks["page load within budget"].passed                # a local static page
+    tight = _run(page, tmp_path, f'- goto: "{fixture_url}"\n- wait_load: "load"\n- check_performance: "load=0"\n')
+    assert not _checks(tight.steps[2])["page load within budget"].passed and tight.steps[2].success

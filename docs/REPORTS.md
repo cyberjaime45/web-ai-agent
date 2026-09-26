@@ -66,9 +66,12 @@ reports/staging/
 │   ├── 001_<name>.png   # `screenshot` steps
 │   └── <flow>__<profile>__<n>__{viewport,full,element}.png   # failure evidence
 ├── traces/
-│   └── <flow>__<profile>.zip   # Playwright trace of each failed flow (TRACE=on-failure)
-└── generated/
-    └── <flow>__<profile>__test_page.md   # deterministic flow written by test_page / explore_page
+│   └── <flow>__<profile>[__retry].zip   # Playwright trace of each failed flow (TRACE=on-failure)
+├── generated/
+│   └── <flow>__<profile>__test_page.md   # deterministic flow written by test_page / explore_page
+└── baselines/
+    └── <name>__<profile>.json   # snapshot_page baselines of flows from outside the project
+                                 # (a project flow keeps its own in <flow folder>/baselines/)
 ```
 
 The UI loads only the slim payload upfront; a test's console/network detail
@@ -110,13 +113,16 @@ It is written for reviewers first and engineers second, top to bottom:
 Selecting a test opens a side drawer, which reads the same way:
 
 - **What went wrong** (failures) — the failed step as a red callout, the
-  plain-English explanation, and the viewport / full-page / element screenshots
+  plain-English explanation, the likely cause (`Likely application defect`,
+  `Likely test issue`, `Likely environment or session`, `Cause unclear`) with
+  the signals behind it, and the viewport / full-page / element screenshots
 - **Summary** — result, duration, start time, suite, area, device, reruns and
-  tags, laid out side by side and wrapping onto a second line when narrow
+  tags, laid out side by side and wrapping onto a second line when narrow; a
+  test rerun by `RERUN_FAILED` also shows the first attempt's error
 - **Autonomous run** (when present) — page type and how it was classified,
   components, plan, actions executed, plan steps the validator rejected,
-  controls skipped by the safety policy, AI calls, and a link to the generated
-  flow under `generated/`
+  controls skipped by the safety policy, the assertions added to the generated
+  flow, AI calls, and a link to the generated flow under `generated/`
 - **Steps** — each step as a readable action (`Check text is shown "Book now"`,
   the keyword on hover), its duration, the self-healed lightning icon when L2/L3
   found the element, screenshots, and automatic checks / skill findings as one
@@ -137,8 +143,10 @@ Selecting a test opens a side drawer, which reads the same way:
 
 `✕`, `Esc` or the backdrop closes the drawer; filters are untouched. A moon
 button in the header switches to dark mode (remembered per browser). The JSON
-carries each failed step's `evidence`, the test's `artifacts` (`screenshot`,
-`screenshots`, `trace`), and `checks` on each step. Sensitive headers and fields
+carries each failed step's `evidence` (with `diagnosis`: `verdict`, `summary`,
+`signals`), the test's `artifacts` (`screenshot`, `screenshots`, `trace`),
+`retries` and `retry_error` for tests rerun by `RERUN_FAILED`, and `checks` on
+each step. Sensitive headers and fields
 (Authorization, cookies, tokens…) are redacted automatically; extend the list
 with `REPORT_REDACT`.
 
