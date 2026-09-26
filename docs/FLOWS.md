@@ -262,7 +262,7 @@ the safety policy blocks. `test_page` classifies the page, runs the skills
 that fit it, and writes what it did as a plain flow under
 `reports/<ENVIRONMENT>/generated/` for review — the intended lifecycle is:
 the agent explores once, QA reviews the generated Markdown, and from then on
-it runs deterministically. See [ACTIONS.md → QA skills](ACTIONS.md#qa-skills-6)
+it runs deterministically. See [ACTIONS.md → QA skills](ACTIONS.md#qa-skills-7)
 for what each one checks and its options.
 
 ## What a failed step leaves behind

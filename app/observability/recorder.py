@@ -112,7 +112,8 @@ class PageRecorder:
         self._seq = 0      # last sequence number handed out (console and network share it)
         self._n_err = 0    # error/warning/pageerror count
         self._n_info = 0   # info/debug count
-        self._starts: dict[int, float] = {}   # id(request) → epoch seconds
+        # id(request) → (epoch seconds, url, resource type) while in flight
+        self._starts: dict[int, tuple[float, str, str]] = {}
 
     def attach(self, page: Any) -> None:
         page.on("request", self._on_request)
@@ -181,14 +182,26 @@ class PageRecorder:
         # bound the map so a long flow cannot grow it without limit.
         if len(self._starts) >= _MAX_INFLIGHT:
             self._starts.pop(next(iter(self._starts)))
-        self._starts[id(request)] = time.time()
+        self._starts[id(request)] = (time.time(), request.url, request.resource_type)
 
     def _finish(self, request: Any) -> tuple[int, float | None]:
         """Return (start ts in epoch ms, duration in ms) for a completing request."""
-        start = self._starts.pop(id(request), None)
-        if start is None:
+        started = self._starts.pop(id(request), None)
+        if started is None:
             return _now_ms(), None
+        start = started[0]
         return round(start * 1000), round((time.time() - start) * 1000, 1)
+
+    def pending(self, types: frozenset[str], max_age_s: float,
+                ignore: tuple[str, ...] = ()) -> list[str]:
+        """URLs of requests of *types* still in flight and younger than *max_age_s*.
+
+        Older ones are treated as long-lived (polling, streaming) or as requests
+        a navigation cancelled without an event, so they never block a wait.
+        """
+        cutoff = time.time() - max_age_s
+        return [url for start, url, rtype in list(self._starts.values())
+                if start >= cutoff and rtype in types and not any(p in url for p in ignore)]
 
     def _push_network(self, entry: dict) -> None:
         if len(self.network) >= MAX_NETWORK_ENTRIES:

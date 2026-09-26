@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import http.server
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -21,15 +22,29 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
-    """Static fixtures plus two API stubs the page calls: a 404 and a 500."""
+    """Static fixtures plus API stubs: a 404, a 500 and a slow JSON answer."""
 
     def do_GET(self):
         if self.path.startswith("/api/boom"):
             self.send_error(500, "boom")
+        elif self.path.startswith("/api/slow"):
+            time.sleep(0.6)
+            body = b'{"count": 3}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path.startswith("/api/"):
             self.send_error(404, "no such api")
         else:
             super().do_GET()
+
+    def do_HEAD(self):
+        if self.path.startswith("/api/boom"):
+            self.send_error(500, "boom")
+        else:
+            super().do_HEAD()
 
     def log_message(self, *args):
         pass
@@ -214,3 +229,49 @@ def test_test_page_on_a_list_page_explores(page, fixture_url, tmp_path):
     assert "Delete member" in " ".join(marker.agent["skipped"])
     assert explore.agent and "generated" not in explore.agent          # one file per test_page
     assert Path(marker.agent["generated"]).exists()
+
+
+def test_wait_stable_waits_for_the_request_the_spinner_and_the_dom(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "async.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- click: "Load members"\n- wait_stable\n')
+    assert result.success, result.error
+    step = result.steps[2]
+    assert step.message.startswith("Page settled in") and not step.checks
+    assert step.duration >= 0.6                                  # the slow API answer
+    assert page.locator("#out").inner_text() == "Loaded 3 members"   # no assertion needed to wait
+
+
+def test_wait_stable_past_its_budget_is_a_warning_not_a_failure(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "async.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- click: "Load members"\n- wait_stable: 200\n')
+    step = result.steps[2]
+    assert result.success and step.success
+    settled = _checks(step)["page settled"]
+    assert not settled.passed and settled.severity == "warn"
+    assert "/api/slow" in settled.detail
+
+
+def test_check_links_finds_broken_links_and_images_without_clicking(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "links.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- check_links\n')
+    marker = result.steps[1]
+    checks = _checks(marker)
+    assert not marker.success                                   # broken links are errors
+    assert checks["no broken links"].count == 2
+    assert "404 " in checks["no broken links"].detail and "missing-page.html" in checks["no broken links"].detail
+    assert "500 " in checks["no broken links"].detail
+    assert checks["links checked"].detail.startswith("3 of 6 links checked (same site)")
+    assert "1 external not checked" in checks["links checked"].detail
+    skipped = checks["links not requested"].detail
+    assert "logout.html (logout)" in skipped and "/account/delete (delete)" in skipped
+    assert checks["no broken images"].count == 1 and "nope.png" in checks["no broken images"].detail
+    assert page.url == url                                      # nothing was clicked
+    assert result.steps[2:] == []                               # and no child steps
+
+
+def test_check_links_images_false_checks_links_only(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "members.html")
+    result = _run(page, tmp_path, f'- goto: "{url}"\n- check_links: "images=false"\n')
+    checks = _checks(result.steps[1])
+    assert checks["no broken links"].count == 1                 # members.html links to missing.html
+    assert "no broken images" not in checks

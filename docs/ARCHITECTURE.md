@@ -43,7 +43,7 @@
 
 | Layer | Trigger | Strategy |
 |-------|---------|----------|
-| **L1 — Deterministic** | Always tried first | Dispatch-table driven. Exact Playwright `get_by_role`, `get_by_label`, `get_by_placeholder` locators, capped at 5 s per action so failover stays fast. |
+| **L1 — Deterministic** | Always tried first | Dispatch-table driven. Exact Playwright `get_by_role`, `get_by_label`, `get_by_placeholder` locators, capped at 5 s per action so failover stays fast. When a click, fill or other interaction fails, a covering cookie banner or modal is dismissed and L1 is retried once (recorded as a `dismissed blocker` info check); assertions are never retried this way. |
 | **L2 — Fallback** | L1 fails | Four looser Playwright strategies per element type (clickable, input, checkbox) polled for up to 5 s, then a single selectolax pass over the page HTML picking the most similar text (≥ 0.6). |
 | **L3 — AI** | L1 + L2 fail on an element interaction, or an AI-native action | LLM call with page context via a pluggable provider (OpenAI, Gemini, or Claude). Only actions L3 can execute with a locator (click, fill, select, check…) are sent; assertions and waits never reach it. Skipped if `AI_PROVIDER`/`LLM_KEY`/`LLM_MODEL` are not set. |
 
@@ -167,19 +167,21 @@ web-agent/
 ├── pyproject.toml / requirements.txt
 │
 ├── app/
-│   ├── schemas/actions.py          # ActionType enum (50), FlowAction, StepResult, Check, FlowResult
+│   ├── schemas/actions.py          # ActionType enum (52), FlowAction, StepResult, Check, FlowResult
 │   ├── flow/parser.py              # 4-stage pipeline: tokenize → normalize → validate → build
+│   ├── flow/lint.py                # Static flow checks + healed-steps report (main.py lint)
 │   ├── layers/
 │   │   ├── deterministic.py        # L1 dispatch-table runner (+ locate() for evidence)
 │   │   ├── deterministic_l2.py     # L2 handlers mixed into the runner
-│   │   ├── blockers.py             # Cookie-banner / modal dismissal (DISMISS_BLOCKERS)
+│   │   ├── blockers.py             # Cookie-banner / modal dismissal (after an L1 interaction failure; DISMISS_BLOCKERS)
+│   │   ├── stability.py            # wait_stable: in-flight requests, loading indicators, DOM quiet
 │   │   ├── locator.py              # FallbackLocator — polled strategies + selectolax
 │   │   ├── ai_resolver.py          # L3 resolver + AI-native actions
 │   │   └── providers/              # LLMProvider ABC, factory, OpenAI / Gemini / Claude adapters
 │   ├── execution/
 │   │   ├── engine.py               # FlowRunner: L1 → L2 → L3, run_flow, skills, execute(), evidence
 │   │   └── oracle.py               # Automatic checks after steps (diagnostics + render probe)
-│   ├── skills/                     # inspect_page, check_console_network, test_responsive, test_form, explore_page, test_page
+│   ├── skills/                     # inspect_page, check_console_network, test_responsive, test_form, explore_page, test_page, check_links
 │   │   └── base.py                 # SkillContext (observe / run / run_skill through the engine), run_skill
 │   ├── flow/writer.py              # StepResults / explore graph → deterministic Markdown flow
 │   ├── planner_bridge.py           # Execute validated planner steps through a SkillContext

@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from playwright.sync_api import Locator, Page
 
 from app.config.settings import settings
+from app.layers import stability
 from app.layers.blockers import dismiss_blockers
 from app.layers.deterministic_l2 import L2Handlers
 from app.layers.locator import FallbackLocator, _is_selector
-from app.schemas.actions import ActionType, FlowAction, RunContext, StepResult
+from app.schemas.actions import ActionType, Check, FlowAction, RunContext, StepResult
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ class DeterministicRunner(L2Handlers):
         page: Page,
         artifacts_dir: str | Path | None = None,
         ctx: RunContext | None = None,
+        recorder: Any = None,
+        ignore_network: tuple[str, ...] = (),
     ):
         self.page = page
         self.artifacts_dir = Path(artifacts_dir) if artifacts_dir else settings.images_dir
@@ -50,6 +53,8 @@ class DeterministicRunner(L2Handlers):
         self._locator = FallbackLocator()
         self._shot_counter = 0
         self._ctx = ctx
+        self._recorder = recorder              # PageRecorder: in-flight requests for wait_stable
+        self._ignore_network = ignore_network  # flow ignore_network patterns
 
         # ── L1 dispatch table: one `_h_<keyword>` method per ActionType ──
         # (AI-native actions live in AIResolver, run_flow in the engine.)
@@ -83,6 +88,18 @@ class DeterministicRunner(L2Handlers):
         # %-style: Playwright errors carry multi-KB call logs — only format at DEBUG.
         logger.debug("[L1] Step %s failed after %s attempt(s): %s",
                      action.step_num, self._MAX_L1_RETRIES, last_exc)
+
+        # A cookie banner or modal covering the target: dismiss it and retry L1 once.
+        # Interactions only — dismissing a dialog must never turn an assertion green.
+        if action.type in self._BLOCKABLE:
+            dismissed = dismiss_blockers(self.page)
+            if dismissed:
+                try:
+                    result = self._layer1(action)
+                    result.checks.append(Check("dismissed blocker", True, "info", dismissed))
+                    return result
+                except Exception as exc:
+                    last_exc = exc
         return self._layer2(action, original_error=str(last_exc))
 
     # ── Layer 1 — dispatch ────────────────────────────────────────
@@ -102,6 +119,9 @@ class DeterministicRunner(L2Handlers):
     _TEXTUAL = frozenset({ActionType.ASSERT_TEXT, ActionType.ASSERT_VISIBLE,
                           ActionType.ASSERT_HIDDEN, ActionType.WAIT_FOR_TEXT,
                           ActionType.ASSERT_ENABLED, ActionType.ASSERT_DISABLED})
+    # Interactions an overlay can intercept (blocker recovery applies to these only).
+    _BLOCKABLE = _CLICKABLE | _INPUT | frozenset({ActionType.CHECK, ActionType.UNCHECK,
+                                                  ActionType.TABLE_CLICK, ActionType.DRAG_TO})
 
     def locate(self, action: FlowAction) -> Locator | None:
         """The element *action* targets, when L1's exact resolver still finds one.
@@ -437,6 +457,13 @@ class DeterministicRunner(L2Handlers):
         fragment = action.args[0]
         self.page.wait_for_url(lambda url: fragment.lower() in url.lower(), timeout=10000)
         return self._ok(action, f'URL contains "{fragment}"', 1)
+
+    def _h_wait_stable(self, action: FlowAction) -> StepResult:
+        """Settle requests, loading indicators and the DOM (layers/stability.py)."""
+        message, checks = stability.run(self.page, self._recorder, self._ignore_network, action.args)
+        result = self._ok(action, message, 1)
+        result.checks.extend(checks)
+        return result
 
     # ── L1 handlers: Utilities ────────────────────────────────────
 

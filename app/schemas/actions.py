@@ -60,6 +60,7 @@ class ActionType(str, Enum):
     WAIT_FOR_ELEMENT      = "wait_for_element"
     WAIT_FOR_TEXT         = "wait_for_text"
     WAIT_FOR_URL          = "wait_for_url"
+    WAIT_STABLE           = "wait_stable"
 
     # ── AI-native ────────────────────────────────────────────────
     AI_CLICK              = "ai_click"
@@ -81,6 +82,7 @@ class ActionType(str, Enum):
     TEST_FORM             = "test_form"
     EXPLORE_PAGE          = "explore_page"
     TEST_PAGE             = "test_page"
+    CHECK_LINKS           = "check_links"
 
 # Argument count spec: (min_args, max_args)
 ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
@@ -127,6 +129,7 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
     ActionType.WAIT_FOR_ELEMENT:(1, 1),
     ActionType.WAIT_FOR_TEXT:   (1, 1),
     ActionType.WAIT_FOR_URL:    (1, 1),
+    ActionType.WAIT_STABLE:     (0, 1),
 
     ActionType.AI_CLICK:        (1, 1),
     ActionType.AI_EXTRACT:      (1, 1),
@@ -145,6 +148,7 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
     ActionType.TEST_FORM:             (0, 4),
     ActionType.EXPLORE_PAGE:          (0, 6),
     ActionType.TEST_PAGE:             (0, 8),
+    ActionType.CHECK_LINKS:           (0, 4),
 }
 
 # Actions that bypass L1/L2 and go directly to L3 (AI)
@@ -164,6 +168,7 @@ SKILL_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.TEST_FORM,
     ActionType.EXPLORE_PAGE,
     ActionType.TEST_PAGE,
+    ActionType.CHECK_LINKS,
 })
 
 @dataclass

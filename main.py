@@ -9,6 +9,7 @@ Usage
   python main.py run <flow.md> --env qa1   Override ENVIRONMENT (report dir).
   python main.py run <flow.md> --profile mobile   Run under the mobile device profile.
   python main.py agent-test https://example.com/members   Autonomous test of one page.
+  python main.py lint [paths…] [--report report.json]    Static flow checks; healed steps.
 
 Exit codes
 ----------
@@ -102,6 +103,13 @@ def _build_parser() -> argparse.ArgumentParser:
     agent.add_argument("--json", dest="as_json", action="store_true", help="Emit FlowResult JSON to stdout.")
     agent.add_argument("--env", help="Override ENVIRONMENT (report directory).")
     agent.add_argument("--profile", default="desktop", help="Device profile: desktop (default) or mobile.")
+
+    lint = sub.add_parser("lint", help="Static checks over flow files (no browser).")
+    lint.add_argument("paths", nargs="*", default=["tests"], help="Flow files or folders (default: tests).")
+    lint.add_argument("--report", nargs="+", default=[], metavar="JSON",
+                      help="Report JSON file(s): also list steps healed by L2/L3.")
+    lint.add_argument("--strict", action="store_true", help="Exit 1 when there are findings.")
+    lint.add_argument("--json", dest="as_json", action="store_true", help="Emit findings as JSON.")
     return parser
 
 
@@ -174,12 +182,42 @@ def _cmd_agent_test(args: argparse.Namespace) -> int:
     return _cmd_run(args)
 
 
+def _cmd_lint(args: argparse.Namespace) -> int:
+    from app.flow.lint import flow_files, healings, lint, to_dict
+
+    paths = [Path(p) for p in args.paths]
+    missing = [str(p) for p in paths if not p.exists()]
+    reports = [Path(r) for r in args.report]
+    missing += [str(r) for r in reports if not r.is_file()]
+    if missing:
+        print(f"error: not found: {', '.join(missing)}", file=sys.stderr)
+        return 2
+    findings = lint(paths)
+    healed = healings(reports) if reports else []
+
+    if args.as_json:
+        json.dump({"findings": to_dict(findings), "healings": healed}, sys.stdout)
+        sys.stdout.write("\n")
+    else:
+        for f in findings:
+            print(f)
+        for h in healed:
+            print(f"{h['file']} › {h['test']}: {h['step']} — healed by {h['healed_by']} "
+                  f"in {h['reports']} report(s); update the flow target")
+        n_files = len(flow_files(paths))
+        print(f"\n{len(findings)} finding(s) in {n_files} flow file(s)"
+              + (f", {len(healed)} healed step(s)" if reports else ""))
+    return 1 if args.strict and (findings or healed) else 0
+
+
 def main() -> int:
     args = _build_parser().parse_args()
     if args.command == "run":
         return _cmd_run(args)
     if args.command == "agent-test":
         return _cmd_agent_test(args)
+    if args.command == "lint":
+        return _cmd_lint(args)
     return 0
 
 

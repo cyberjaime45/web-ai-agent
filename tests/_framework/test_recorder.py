@@ -211,6 +211,24 @@ def test_inflight_request_map_is_bounded(rec_page):
     assert id(reqs[0]) not in rec._starts and id(reqs[-1]) in rec._starts   # oldest evicted
 
 
+def test_pending_lists_inflight_requests_by_type_age_and_ignore(rec_page, monkeypatch):
+    import app.observability.recorder as r
+    rec, page = rec_page
+    api = make_request(url="https://x.test/api/members")
+    img = make_request(url="https://x.test/logo.png", resource_type="image")
+    beacon = make_request(url="https://x.test/analytics/beacon")
+    for req in (api, img, beacon):
+        page.emit("request", req)
+    xhr = frozenset({"xhr", "fetch"})
+    assert rec.pending(xhr, 10) == ["https://x.test/api/members", "https://x.test/analytics/beacon"]
+    assert rec.pending(xhr, 10, ignore=("/analytics/",)) == ["https://x.test/api/members"]
+    page.emit("response", make_response(api))
+    assert rec.pending(xhr, 10, ignore=("/analytics/",)) == []
+    later = time.time() + 60                     # the beacon is now long-lived
+    monkeypatch.setattr(r.time, "time", lambda: later)
+    assert rec.pending(xhr, 10) == []
+
+
 # ── sequence marks (per-step diagnostics for failure evidence) ───────────────
 
 def test_seq_mark_windows_console_and_network(rec_page):

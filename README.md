@@ -64,7 +64,7 @@ flow) — and every navigation step gets automatic checks (page rendered, no
 page errors, no failed requests, no stuck spinner…). None of it needs an LLM;
 with one configured, the planner only adds validated steps on controls the
 observer already found, behind a deterministic safety policy. See
-[docs/ACTIONS.md](docs/ACTIONS.md#qa-skills-6).
+[docs/ACTIONS.md](docs/ACTIONS.md#qa-skills-7).
 
 ```bash
 uv run pytest --agent-test https://example.com/members     # one page, no flow file, full report
@@ -75,7 +75,7 @@ uv run pytest --agent-test https://example.com/members     # one page, no flow f
 | Guide | What it covers |
 |-------|----------------|
 | [docs/FLOWS.md](docs/FLOWS.md) | Flow file format, sections, sub-flows, complete examples |
-| [docs/ACTIONS.md](docs/ACTIONS.md) | Every action keyword (44) and QA skill (6) with examples, selectors and XPath, placeholders |
+| [docs/ACTIONS.md](docs/ACTIONS.md) | Every action keyword (45) and QA skill (7) with examples, selectors and XPath, placeholders |
 | [docs/REPORTS.md](docs/REPORTS.md) | Console output, the HTML/JSON report, multi-environment and LambdaTest runs |
 | [docs/CLI.md](docs/CLI.md) | `main.py run`, exit codes, the `--json` contract for other agents |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The three layers, parser pipeline, browser lifecycle, project structure |
@@ -99,7 +99,7 @@ Copy `.env.example` to `.env`. Every variable is read once by
 | `TRACE` | `on-failure` | Keep a Playwright trace under `reports/<ENVIRONMENT>/traces/` for every failed flow; `off` disables recording |
 | `ORACLE` | `warn` | Automatic checks after navigation steps: `warn` records them, `strict` fails the step on an error-severity check, `off` disables them |
 | `ALLOW_DESTRUCTIVE` | `false` | `true` lets `explore_page` and the planner press controls that look destructive (delete, pay, send…) — disposable environments only |
-| `DISMISS_BLOCKERS` | `false` | Dismiss cookie banners and modals before each step |
+| `DISMISS_BLOCKERS` | `false` | Dismiss cookie banners and modals before each step (a failed click or fill is always retried once after a dismissal) |
 | `AI_PROVIDER` | — | Layer 3 provider: `openai`, `gemini`, or `anthropic`; empty disables L3 |
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider |

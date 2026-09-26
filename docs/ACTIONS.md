@@ -1,6 +1,6 @@
 # Supported Actions — Full Reference
 
-Every keyword a flow step can use, grouped by purpose. 50 keywords in total (44 actions + 6 QA skills).
+Every keyword a flow step can use, grouped by purpose. 52 keywords in total (45 actions + 7 QA skills).
 For the file format around the steps, see [FLOWS.md](FLOWS.md).
 
 ## Step syntax
@@ -373,7 +373,7 @@ Assert that a checkbox or radio button is checked. Accepts label, CSS selector, 
 
 ---
 
-## Waits (4)
+## Waits (5)
 
 #### `wait`
 Pause execution for a given number of milliseconds. Defaults to 1000ms if no argument is provided.
@@ -405,6 +405,24 @@ Wait for the URL to contain a specific fragment. Times out after 10 seconds.
 ```markdown
 1. wait_for_url: "/success"
 2. wait_for_url: "order-complete"
+```
+
+#### `wait_stable`
+Wait until the page has settled after a click or navigation: no page, XHR or
+fetch request in flight, no visible loading indicator (spinner, `aria-busy`,
+progress bar), and no DOM change for 300 ms. The optional argument is the
+budget in milliseconds (default 10000). It never fails the step: a page still
+busy when the budget runs out passes with a `page settled` warning naming what
+was still going on. Requests matching `ignore_network` in `## Config`, and
+requests open longer than 15 s (polling, streaming), never block it. Under the
+CLI there is no network recorder, so only the indicators and the DOM are
+watched. Prefer it to a fixed `wait: <ms>`.
+
+```markdown
+1. click: "Search"
+2. wait_stable
+3. assert_text: "3 members found"
+4. wait_stable: 20000
 ```
 
 Page load states are covered by [`wait_load`](#wait_load) under Navigation.
@@ -507,7 +525,7 @@ See [FLOWS.md](FLOWS.md#reusable-sub-flows) for a worked login example.
 
 ---
 
-## QA skills (6)
+## QA skills (7)
 
 Skills are higher-level checks that orchestrate ordinary actions. The engine
 runs one as a group: a marker step carrying the skill's **checks** (each
@@ -518,7 +536,8 @@ report. A skill step fails when a child step failed or an `error`-severity
 check did not pass; `warn` checks never fail it. Options are `key=value`
 arguments.
 
-None of the four needs an LLM.
+None of them needs an LLM; `explore_page` and `test_page` can use one
+within a call budget.
 
 #### `inspect_page`
 Describe what is on the page: type (`LOGIN`, `FORM`, `TABLE`, `LIST`,
@@ -651,3 +670,34 @@ The generated flow replays the actions that ran (`fill`, `click`, `select`,
 
 `profiles=` is not a `test_page` option: list profiles under `## Config` (or
 pass `--profile`) to run the whole flow on desktop and mobile.
+
+#### `check_links`
+Request every link on the page and report the broken ones, without clicking
+anything. Links are collected from `a[href]` (fragments ignored, duplicates
+removed) and requested through the browser context, so they carry the page's
+cookies: `HEAD` first, `GET` when `HEAD` is refused. Visible images that
+failed to load are reported too.
+
+```markdown
+1. goto: "<APP_URL>/members"
+2. check_links
+3. check_links: "external=true" | "max_links=100"
+4. check_links: "images=false"
+```
+
+| Result | Severity |
+|--------|----------|
+| 404 / 410, 5xx, unreachable | `no broken links` — error |
+| 401 / 403 / 429, other 4xx, redirect to a login page | `no restricted links` — warning |
+| Image that failed to load | `no broken images` — error |
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `external` | `false` | Also check links to other sites |
+| `max_links` | `50` | Links requested at most; the rest are counted in `links checked` |
+| `images` | `true` | Check images too |
+
+Logout links, and links whose path looks destructive (delete, unsubscribe,
+checkout…), are never requested unless the flow allows destructive actions;
+they are listed under `links not requested`. The requests are not part of
+the report's network log.

@@ -161,11 +161,12 @@ class FlowRunner:
         """
         result = FlowResult(flow_name=flow.name)
         ctx = RunContext()
-        runner = DeterministicRunner(page, artifacts_dir=self.artifacts_dir, ctx=ctx)
         self._recorder = recorder
         self._flow_slug = evidence_mod.slugify(flow.name)
         self._ignore = oracle.IgnoreRules(list(getattr(flow, "ignore_console", [])),
                                           list(getattr(flow, "ignore_network", [])))
+        runner = DeterministicRunner(page, artifacts_dir=self.artifacts_dir, ctx=ctx,
+                                     recorder=recorder, ignore_network=tuple(self._ignore.network))
         allow = getattr(flow, "allow_destructive", None)
         self._policy = SafetyPolicy(
             destructive_allowed=settings.allow_destructive if allow is None else allow,
@@ -391,7 +392,7 @@ class FlowRunner:
         """Automatic checks after a navigation-class step (ORACLE=warn|strict)."""
         if settings.oracle == "off" or sr.action.type not in oracle.ORACLE_AFTER:
             return
-        sr.checks = oracle.run_checks(page, self._recorder, since_seq, self._ignore)
+        sr.checks = [*sr.checks, *oracle.run_checks(page, self._recorder, since_seq, self._ignore)]
         errors = oracle.failed(sr.checks)
         if errors and settings.oracle == "strict":
             sr.success = False

@@ -1,8 +1,10 @@
 """Blocking-UI dismissal — cookie banners, consent modals, overlays.
 
-Opt-in via DISMISS_BLOCKERS=true: ``DeterministicRunner.execute`` calls
-``dismiss_blockers(page)`` before each L1 attempt. Off by default because it
-costs one ``count()`` round-trip per selector on every step.
+``DeterministicRunner.execute`` calls ``dismiss_blockers(page)`` in two places:
+after an element interaction fails at L1 (always — it costs nothing on the
+passing path; a dismissal triggers one L1 retry), and before every L1 attempt
+when DISMISS_BLOCKERS=true (off by default: one ``count()`` round-trip per
+selector on every step).
 """
 
 from __future__ import annotations
@@ -38,8 +40,8 @@ DISMISS_SELECTORS = [
 ]
 
 
-def dismiss_blockers(page: Page) -> None:
-    """Detect and dismiss common blocking UI elements (modals, banners)."""
+def dismiss_blockers(page: Page) -> str | None:
+    """Dismiss the first visible blocking element; describe what was done, or None."""
     for selector in BLOCKER_SELECTORS:
         try:
             blocker = page.locator(selector).first
@@ -54,17 +56,20 @@ def dismiss_blockers(page: Page) -> None:
                 btn = blocker.locator(dismiss).first
                 if btn.count() > 0 and btn.is_visible():
                     btn.click(timeout=2000)
-                    logger.info(f"[L1] Dismissed blocker: {selector} via {dismiss}")
+                    logger.info("[L1] Dismissed blocker: %s via %s", selector, dismiss)
                     page.wait_for_timeout(300)
-                    return
+                    return f"{dismiss} in {selector}"
             except Exception:
                 continue
 
-        # No dismiss button found — try Escape key
+        # No dismiss button found — try Escape, and only claim it if the blocker went away
         try:
             page.keyboard.press("Escape")
-            logger.info(f"[L1] Dismissed blocker: {selector} via Escape")
             page.wait_for_timeout(300)
-            return
+            if blocker.is_visible():
+                continue
+            logger.info("[L1] Dismissed blocker: %s via Escape", selector)
+            return f"Escape on {selector}"
         except Exception:
             continue
+    return None

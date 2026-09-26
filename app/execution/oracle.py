@@ -15,6 +15,7 @@ failed error-severity check fails the step). ``check_console_network`` and
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,9 @@ ORACLE_AFTER: frozenset[ActionType] = frozenset({
 })
 
 MAX_DETAIL_ITEMS = 5
+
+# Visible loading indicators: the probe's "stuck spinner" and wait_stable's "busy".
+BUSY_SELECTOR = '[class*="spinner" i], [class*="loading" i], [aria-busy="true"], [role="progressbar"]'
 
 
 @dataclass
@@ -89,7 +93,7 @@ def diagnostics_checks(recorder: Any, since_seq: int, ignore: IgnoreRules | None
 _PROBE_JS = r"""
 () => {
   const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  const spinners = [...document.querySelectorAll('[class*="spinner" i], [class*="loading" i], [aria-busy="true"], [role="progressbar"]')].filter(vis);
+  const spinners = [...document.querySelectorAll(__BUSY__)].filter(vis);
   const dialogs = [...document.querySelectorAll('[role="dialog"][aria-modal="true"], dialog[open]')].filter(vis);
   const de = document.documentElement;
   return {
@@ -100,7 +104,7 @@ _PROBE_JS = r"""
     overflow: Math.max(de.scrollWidth, document.body ? document.body.scrollWidth : 0) - de.clientWidth,
   };
 }
-"""
+""".replace("__BUSY__", json.dumps(BUSY_SELECTOR))
 
 
 def probe_checks(page: Any) -> list[Check]:

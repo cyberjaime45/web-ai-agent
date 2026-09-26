@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Async</title>
+</head>
+<body>
+<h1>Async members</h1>
+<button onclick="load()">Load members</button>
+<div id="out"></div>
+<script>
+async function load() {
+  const out = document.getElementById('out');
+  out.innerHTML = '<div class="spinner">Loading…</div>';
+  const data = await (await fetch('/api/slow')).json();
+  setTimeout(() => { out.textContent = `Loaded ${data.count} members`; }, 150);
+}
+</script>
+</body>
+</html>
