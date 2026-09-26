@@ -28,61 +28,56 @@ stages:
           - checkout: self
             clean: true
           - task: Bash@3
-            displayName: 'Check Python and Pip Versions'
+            displayName: 'Install uv'
             inputs:
               targetType: 'inline'
               script: |
-               python3 --version
-               pip3 --version
+                set -euo pipefail
+                export PATH="$HOME/.local/bin:$PATH"
+                if ! command -v uv >/dev/null 2>&1; then
+                  curl -LsSf https://astral.sh/uv/install.sh | sh
+                fi
+                echo "##vso[task.prependpath]$HOME/.local/bin"
+                uv --version
 
-          # - task: Bash@3
-          #   displayName: 'Install uv'
-          #   inputs:
-          #     targetType: 'inline'
-          #     script: |
-          #       set -euo pipefail
-          #       export PATH="$HOME/.local/bin:$PATH"
-          #       if ! command -v uv >/dev/null 2>&1; then
-          #         curl -LsSf https://astral.sh/uv/install.sh | sh
-          #       fi
-          #       echo "##vso[task.prependpath]$HOME/.local/bin"
-          #       uv --version
+          - task: Bash@3
+            displayName: 'Install dependencies and Chromium'
+            inputs:
+              targetType: 'inline'
+              script: |
+                set -euo pipefail
+                # uv reads .python-version and downloads Python 3.14 when the VM lacks it.
+                # --no-build: install wheels only, so a dependency without a 3.14 wheel
+                # fails here instead of trying to compile it on the agent.
+                uv sync --locked --no-build
+                uv run python --version
+                # Chromium's system libraries need root; without passwordless sudo they
+                # must be installed once per VM: sudo .venv/bin/playwright install-deps chromium
+                if sudo -n true 2>/dev/null; then
+                  uv run playwright install --with-deps chromium
+                else
+                  uv run playwright install chromium
+                fi
+              workingDirectory: '$(Build.SourcesDirectory)'
 
-          # - task: Bash@3
-          #   displayName: 'Install dependencies and Chromium'
-          #   inputs:
-          #     targetType: 'inline'
-          #     script: |
-          #       set -euo pipefail
-          #       # uv reads .python-version and downloads Python 3.13 when the VM lacks it.
-          #       uv sync --locked
-          #       # Chromium's system libraries need root; without passwordless sudo they
-          #       # must be installed once per VM: sudo .venv/bin/playwright install-deps chromium
-          #       if sudo -n true 2>/dev/null; then
-          #         uv run playwright install --with-deps chromium
-          #       else
-          #         uv run playwright install chromium
-          #       fi
-          #     workingDirectory: '$(Build.SourcesDirectory)'
-
-          # - task: Bash@3
-          #   displayName: 'Running Tests'
-          #   timeoutInMinutes: 20
-          #   inputs:
-          #     targetType: 'inline'
-          #     script: |
-          #       echo "Selected Production Test: ${{ parameters.TEST }} ($(FLOW_PATH))"
-          #       uv run pytest "$(FLOW_PATH)" --junitxml=reports/junit.xml
-          #     workingDirectory: '$(Build.SourcesDirectory)'
-          #     failOnStderr: false
-          #   env:
-          #     ENVIRONMENT: production
-          #     RUNNING_MODE: local
-          #     HEADLESS: 'true'
-          #     BUILD_NAME: '${{ parameters.TEST }} Production Smoke #$(BUILD_ID)'
-          #     # Secret variables are never exported on their own — map them explicitly.
-          #     FMS_EMAIL: $(FMS_EMAIL)
-          #     FMS_PASSWORD: $(FMS_PASSWORD)
+          - task: Bash@3
+            displayName: 'Running Tests'
+            timeoutInMinutes: 20
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Selected Production Test: ${{ parameters.TEST }} ($(FLOW_PATH))"
+                uv run pytest "$(FLOW_PATH)" --junitxml=reports/junit.xml
+              workingDirectory: '$(Build.SourcesDirectory)'
+              failOnStderr: false
+            env:
+              ENVIRONMENT: production
+              RUNNING_MODE: local
+              HEADLESS: 'true'
+              BUILD_NAME: '${{ parameters.TEST }} Production Smoke #$(BUILD_ID)'
+              # Secret variables are never exported on their own — map them explicitly.
+              FMS_EMAIL: $(FMS_EMAIL)
+              FMS_PASSWORD: $(FMS_PASSWORD)
 
           # - task: PublishTestResults@2
           #   displayName: 'Publish test results'
@@ -93,9 +88,9 @@ stages:
           #     searchFolder: '$(Build.SourcesDirectory)'
           #     testRunTitle: '${{ parameters.TEST }} Production Smoke'
 
-          # - task: PublishPipelineArtifact@1
-          #   displayName: 'Publish HTML report'
-          #   condition: always()
-          #   inputs:
-          #     targetPath: '$(Build.SourcesDirectory)/reports/production'
-          #     artifact: 'report-${{ parameters.TEST }}-$(BUILD_ID)'
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish HTML report'
+            condition: always()
+            inputs:
+              targetPath: '$(Build.SourcesDirectory)/reports/production'
+              artifact: 'report-${{ parameters.TEST }}-$(BUILD_ID)'
