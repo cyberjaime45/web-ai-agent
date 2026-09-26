@@ -18,7 +18,7 @@ last resort — with a live console and a portable HTML report per environment.
 
 ## Quick start
 
-**Requirements:** [uv](https://docs.astral.sh/uv/) (it downloads Python 3.13 from
+**Requirements:** [uv](https://docs.astral.sh/uv/) (it downloads Python 3.14 from
 `.python-version` by itself), `curl`, and on Linux the Chromium system libraries
 (installing them needs root, once per machine). No LLM key is needed: Layer 3 stays
 off unless `AI_PROVIDER` is set.
@@ -26,7 +26,7 @@ off unless `AI_PROVIDER` is set.
 ```bash
 # 1. Install (once per machine / agent)
 curl -LsSf https://astral.sh/uv/install.sh | sh       # skip if uv is already installed
-uv sync --locked                                       # Python 3.13 + dependencies
+uv sync --locked                                       # Python 3.14 + dependencies
 uv run playwright install --with-deps chromium         # browser + OS libs (drop --with-deps without root)
 
 # 2. Configure
