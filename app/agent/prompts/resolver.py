@@ -93,7 +93,8 @@ Evaluate and return JSON:
     "ai_summarize": {
         "system": (
             "You are a web content summarizer. Given the visible page text, "
-            "provide a concise summary (2-4 sentences). "
+            "summarize what the page is and what a visitor can do there; "
+            "the summary appears as one entry in a test report, so keep it brief. "
             "Respond with plain text only."
         ),
         "user": """\
@@ -101,6 +102,6 @@ Page URL:   {url}
 Page title: {title}
 Page text (truncated): {page_text}
 
-Summarize the page content in 2-4 sentences.""",
+Summarize the page.""",
     },
 }
