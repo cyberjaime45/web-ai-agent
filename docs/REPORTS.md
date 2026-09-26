@@ -9,7 +9,7 @@ percentage on the right, and the run ends with an execution summary and the
 report paths:
 
 ```
-                     Version: 1.1.0
+                     Version: 1.2.0
                  Created by: Cyberjaime45
                  Build: Web Test Report
               staging · chromium · headless
