@@ -292,13 +292,16 @@ collects evidence on the spot and the report shows it under that step:
 - the console errors and failed requests that happened during the step
 - a Playwright trace of the whole flow, `traces/<flow>__<profile>.zip`
   (`TRACE=on-failure`, the default; open it with `npx playwright show-trace <file>`)
-- a **likely cause**: `application` (a 5xx or failed request, a JavaScript
-  error, a blank page or a stuck loading indicator during the step or earlier
-  in its section), `test` (the target was covered, ambiguous or disabled, or a
+- a **likely cause**: `application` (a 5xx or failed request during the step
+  or earlier in its section, a JavaScript error during the step, a blank page
+  or a stuck loading indicator), `test` (the target was covered, ambiguous or disabled, or a
   control with a very similar name is on the page — the text changed),
   `environment` (network or browser errors, an unset `<PLACEHOLDER>`, a
   sign-in page or a 401/403 — the session is gone) or `unclassified`, with the
-  signals behind it. It is a hint for triage, not a result; no LLM is involved
+  signals behind it (an earlier JavaScript error is listed, but third-party
+  noise is common enough that it never decides the verdict alone; the flow's
+  `ignore_console` / `ignore_network` apply). It is a hint for triage, not a
+  result; no LLM is involved
 
 ### Flaky or consistent? — `RERUN_FAILED`
 

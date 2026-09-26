@@ -117,7 +117,7 @@ reference environment variables as `<NAME>` in any step argument.
 | Layer | When | How |
 |-------|------|-----|
 | **L1 — Deterministic** | Always first | Exact Playwright role / label / placeholder locators, 5 s cap |
-| **L2 — Fallback** | L1 fails | Looser Playwright strategies polled for 5 s, then a selectolax similarity match |
+| **L2 — Fallback** | L1 fails | Looser Playwright strategies polled for 5 s, then a similarity match; text checks read the page's visible text |
 | **L3 — AI** | L1 + L2 fail on an element interaction | LLM suggests a locator; also runs `ai_*` actions |
 
 Most flows finish on L1 with zero API calls. Steps that needed L2 or L3 are

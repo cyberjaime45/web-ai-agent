@@ -22,10 +22,10 @@ to the start page before the next search.
 
 from __future__ import annotations
 
-
 from app.agent.observer import EMPTY_STATE_RE
 from app.schemas.actions import ActionType, Check
 from app.skills.base import SkillContext, info, skill
+from app.utils.urls import same_page
 
 NO_MATCH = "zzqx-no-match-7f3"
 
@@ -63,7 +63,7 @@ def _search(sc: SkillContext, box: str, term: str) -> dict:
 
 
 def _back_to_start(sc: SkillContext, start_url: str) -> None:
-    if sc.page.url.split("#", 1)[0] != start_url.split("#", 1)[0]:
+    if not same_page(sc.page.url, start_url):
         sc.run(ActionType.GOTO, start_url)
         sc.run(ActionType.WAIT_STABLE)
 
@@ -101,7 +101,7 @@ def test_search(sc: SkillContext) -> list[Check]:
     checks.append(Check("no match shows no results", empty, "warn",
                         "" if empty else f"'{NO_MATCH}' still shows {miss['count']} result(s)"))
 
-    if sc.page.url.split("#", 1)[0] != start_url.split("#", 1)[0]:
+    if not same_page(sc.page.url, start_url):
         _back_to_start(sc, start_url)
         return checks
     sc.run(ActionType.CLEAR, box.name)

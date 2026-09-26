@@ -7,9 +7,9 @@ import time
 
 import pytest
 
-from app.observability.reporter import (
-    _build_steps, _build_test, _build_tests, generate_report,
-)
+from app.observability.report_model import _build_steps, _build_test
+from app.observability.report_model import build_tests as _build_tests
+from app.observability.reporter import generate_report
 
 
 def make_step(label="click: \"Login\"", passed=True, skipped=False, msg="",
@@ -499,7 +499,7 @@ def test_generate_report_does_not_mutate_results_and_is_idempotent(tmp_path):
 
 
 def test_attribute_steps_uses_step_windows():
-    from app.observability.reporter import _attribute_steps
+    from app.observability.report_model import _attribute_steps
     steps = [
         {"name": "a", "ts_start": 10.0, "ts_end": 10.5},
         {"name": "b", "ts_start": 10.5, "ts_end": 11.0},

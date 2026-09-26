@@ -122,3 +122,10 @@ def test_a_server_error_earlier_in_the_section_explains_missing_text(page_state)
 def test_a_loosely_similar_name_is_not_called_a_text_change(page_state):
     page_state["names"] = ["Orders"]                    # 63% similar to "Order history"
     assert _verdict(_failed(ActionType.ASSERT_TEXT, "Order history"))[0] == "unclassified"
+
+
+def test_a_javascript_error_earlier_in_the_section_is_a_signal_not_a_verdict(page_state):
+    section = ([{"level": "pageerror", "text": "ReferenceError: gtag is not defined"}], [])
+    d = diagnosis.diagnose(_failed(ActionType.ASSERT_TEXT, "Membership that moves you"), page=None, section=section)
+    assert d["verdict"] == "unclassified"
+    assert "JavaScript error earlier in this section: ReferenceError: gtag is not defined" in d["signals"]

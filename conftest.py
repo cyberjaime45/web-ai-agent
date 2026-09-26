@@ -1,43 +1,50 @@
 """
-Shared pytest fixtures and hooks for the Web AI Agent runtime.
+pytest entry point of the Web Agent: flow discovery and flow execution.
 
-Auto-discovery: every .md file pytest traverses (testpaths, or any path given
-on the command line) is collected as a flow by pytest_collect_file — no
-test_*.py files needed. tests/<app>/flows/ is the convention, not a rule.
+Every .md file pytest traverses (testpaths, or any path given on the command
+line) is collected as a flow — no test_*.py files needed; tests/<app>/flows/
+is the convention, not a rule. Each flow becomes one ``FlowItem`` per device
+profile; its ``runtest`` opens a page from the session's ``BrowserSession``,
+runs the flow through ``FlowRunner`` (again, once, under RERUN_FAILED) and
+hands steps and captures to the report plugin
+(app/observability/report_plugin.py), which writes the HTML report at the end.
 """
 
 from __future__ import annotations
 
-import dataclasses
-import datetime
 import logging
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
 import pytest
-from playwright.sync_api import sync_playwright
 
-from app.flow.parser import FlowParseError, FlowDefinition, parse_flow_file, parse_flow_markdown
+from app.browser import profiles
+from app.browser.session import BrowserSession, report_status
+from app.config.settings import settings
 from app.execution import rerun
 from app.execution.engine import FlowRunner
+from app.flow.parser import (
+    FlowDefinition,
+    FlowParseError,
+    parse_flow_file,
+    parse_flow_markdown,
+)
 from app.layers.providers import ConfigError, get_provider
-from app.schemas.actions import Evidence, FlowResult
-from app.browser import profiles
-from app.browser.session import create_browser
-from app.config.settings import settings
 from app.observability.console import (
-    FLAKY_PROP, FLOW_FILE_PROP, FLOW_NAME_PROP, HEALINGS_PROP,
-    execution_summary, install_console_reporter,
+    FLAKY_PROP,
+    FLOW_FILE_PROP,
+    FLOW_NAME_PROP,
+    HEALINGS_PROP,
+    execution_summary,
+    install_console_reporter,
 )
 from app.observability.evidence import annotate_error_elements, slugify, stop_trace
 from app.observability.recorder import PageRecorder
-from app.observability.reporter import generate_report
+from app.observability.report_plugin import ProfessionalReportPlugin
+from app.schemas.actions import Evidence, FlowResult
 from app.utils.banner import show_banner
 from app.utils.build import get_build_name
-
-_ENV = settings.environment   # .env is loaded by app.config.settings
 
 # ── Configure logging ───────────────────────────────────────────
 
@@ -45,127 +52,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-
-# ── Report paths ───────────────────────────────────────────────
-
-_REPORT_DIR   = settings.report_dir
-_IMAGES_DIR   = settings.images_dir
-_REPORT_PATH  = _REPORT_DIR / "report.html"
-
-
-# ── Professional report plugin ──────────────────────────────────
-
-
-class ProfessionalReportPlugin:
-    """Collects test results and generates a professional HTML report."""
-
-    def __init__(self) -> None:
-        self.results: list[dict] = []
-        self.flow_meta: dict[str, dict] = {}
-        self.flow_steps: dict[str, list[dict]] = {}
-        self.flow_errors: dict[str, str] = {}
-        self.flow_retries: dict[str, dict[str, str]] = {}
-        self.captures: dict[str, dict] = {}
-        self.session_start = time.time()
-        self.report_path: Path | None = None
-        self.json_path: Path | None = None
-
-    def record_flow(self, nodeid: str, flow: FlowDefinition, profile: str) -> None:
-        """Suite-level facts the report needs: the file's # title, markers, profile."""
-        self.flow_meta[nodeid] = {
-            "flow_title": flow.title,
-            "flow_markers": list(flow.markers),
-            "section_markers": {k: list(v) for k, v in flow.section_markers.items()},
-            "profile": {"name": profile, "label": profile},
-        }
-
-    def record_profile_label(self, nodeid: str, label: str) -> None:
-        """``mobile · iPhone 13 · chromium · 390x664`` — known once the page exists."""
-        if nodeid in self.flow_meta:
-            self.flow_meta[nodeid]["profile"]["label"] = label
-
-    def record_error(self, nodeid: str, error: str) -> None:
-        self.flow_errors[nodeid] = error
-
-    def record_retries(self, nodeid: str, retried: dict[int, str]) -> None:
-        """Sections (by index) a RERUN_FAILED rerun retried → first attempt's error."""
-        self.flow_retries[nodeid] = {str(i): err for i, err in retried.items()}
-
-    def record_capture(self, nodeid: str, console: list[dict],
-                       network: list[dict], dropped: dict | None = None) -> None:
-        """Store console/network entries captured by the PageRecorder."""
-        self.captures[nodeid] = {"console": console, "network": network,
-                                 "dropped": dropped or {}}
-
-    def record_steps(self, nodeid: str, steps: list) -> None:
-        """Serialize FlowResult.steps for the report (both pass and fail)."""
-        self.flow_steps[nodeid] = [
-            {
-                "name": s.action.raw,
-                "action": s.action.type.value,
-                "passed": s.success,
-                "skipped": getattr(s, "skipped", False),
-                "msg": "" if s.success else s.message,
-                "duration": s.duration,
-                "sub_flow": s.sub_flow,
-                "section": s.action.section or "",
-                "screenshot": s.screenshot_path or "",
-                "layer": s.layer_used,
-                "ts_start": s.started_at,
-                "ts_end": s.ended_at,
-                "evidence": dataclasses.asdict(s.evidence) if s.evidence else None,
-                "checks": [dataclasses.asdict(c) for c in s.checks],
-                "group": s.group,
-                "url": s.url,
-                "agent": s.agent,
-            }
-            for s in steps
-        ]
-
-    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
-        if report.when == "call" or (report.when == "setup" and report.failed):
-            started = getattr(report, "start", None)
-            self.results.append(
-                {
-                    "nodeid":   report.nodeid,
-                    "name":     report.nodeid.split("::")[-1],
-                    "outcome":  report.outcome,
-                    "duration": getattr(report, "duration", 0.0),
-                    "started_at": (
-                        datetime.datetime.fromtimestamp(started).astimezone().isoformat(
-                            timespec="milliseconds"
-                        )
-                        if started
-                        else ""
-                    ),
-                    "longrepr": str(report.longrepr) if report.failed else "",
-                }
-            )
-
-    def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
-        # Nothing ran (collect-only, everything deselected): keep the previous
-        # report instead of overwriting it with an empty one.
-        if session.config.option.collectonly or not self.results:
-            return
-        for r in self.results:
-            nodeid = r["nodeid"]
-            r.update(self.flow_meta.get(nodeid, {}))
-            r["error"] = self.flow_errors.get(nodeid, "")
-            r["retried"] = self.flow_retries.get(nodeid, {})
-            r["flow_steps"] = self.flow_steps.get(nodeid, [])
-            capture = self.captures.get(nodeid, {})
-            r["console"] = capture.get("console", [])
-            r["network"] = capture.get("network", [])
-            r["capture_dropped"] = capture.get("dropped", {})
-
-        self.json_path = generate_report(
-            results=self.results,
-            session_start=self.session_start,
-            output_path=_REPORT_PATH,
-            environment=_ENV,
-        )
-        self.report_path = _REPORT_PATH
-
 
 # ── CLI options ─────────────────────────────────────────────────
 
@@ -205,65 +91,10 @@ def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(plugin, "professional_report")
 
 
-class _SessionBrowser:
-    """One Playwright driver + browser for the whole session (local mode).
-
-    Each flow gets a fresh BrowserContext — that is where isolation (cookies,
-    storage, viewport) comes from; the browser process itself is the expensive
-    part (~1.5-3 s per launch) and is shared. Under RUNNING_MODE=lambda every
-    flow still opens its own grid session, because the LambdaTest dashboard
-    names and grades tests per session.
-    """
-
-    def __init__(self) -> None:
-        self._pw = None
-        self._browser = None
-        self._ctx_opts: dict = {}
-
-    @contextmanager
-    def page(self, test_name: str, profile: str = profiles.DESKTOP):
-        """A fresh page in a context shaped by *profile* (desktop / mobile)."""
-        if settings.remote:
-            pw = sync_playwright().start()
-            try:
-                browser, opts = create_browser(pw, test_name=test_name)
-                try:
-                    yield from self._new_page(browser, profiles.context_options(profile, opts, pw.devices))
-                finally:
-                    browser.close()
-            finally:
-                pw.stop()
-            return
-        if self._browser is None or not self._browser.is_connected():
-            self._pw = self._pw or sync_playwright().start()
-            self._browser, self._ctx_opts = create_browser(self._pw, test_name=test_name)
-        yield from self._new_page(
-            self._browser, profiles.context_options(profile, self._ctx_opts, self._pw.devices))
-
-    @staticmethod
-    def _new_page(browser, opts: dict):
-        ctx = browser.new_context(**opts)
-        # Tracing records for every flow; whether it is kept is decided at
-        # flow end (_keep_trace). Closing the context discards an unstopped trace.
-        if settings.trace_on_failure:
-            ctx.tracing.start(screenshots=True, snapshots=True)
-        try:
-            yield ctx.new_page()
-        finally:
-            ctx.close()
-
-    def close(self) -> None:
-        if self._browser is not None:
-            self._browser.close()
-        if self._pw is not None:
-            self._pw.stop()
-        self._browser = self._pw = None
-
-
 def pytest_sessionstart(session: pytest.Session) -> None:
     show_banner()
-    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    session.config._webagent_browser = _SessionBrowser()
+    settings.images_dir.mkdir(parents=True, exist_ok=True)
+    session.config._webagent_browser = BrowserSession()
     # One LLM client for the whole session (L3 is optional). Partial config is
     # a startup error, not a per-test one.
     try:
@@ -424,23 +255,6 @@ def _keep_trace(page, result: FlowResult | None, flow_name: str, profile: str,
 # test_*.py file is needed.
 
 
-def _set_lambdatest_status(page, success: bool, error: str = "") -> None:
-    """Report test pass/fail to LambdaTest dashboard (no-op for local runs)."""
-    if not settings.remote:
-        return
-    try:
-        import json as _json
-        status = "passed" if success else "failed"
-        remark = "" if success else (error or "Test failed")[:255]
-        action_payload = _json.dumps({
-            "action": "setTestStatus",
-            "arguments": {"status": status, "remark": remark},
-        })
-        page.evaluate("_ => {}", f"lambdatest_action: {action_payload}")
-    except Exception as exc:
-        logging.getLogger(__name__).debug("LambdaTest status not sent: %s", exc)
-
-
 class _FlowFailure(Exception):
     """Raised by FlowItem.runtest() to carry the FlowResult for reporting."""
 
@@ -457,7 +271,7 @@ class FlowItem(pytest.Item):
         super().__init__(name, parent)
         self.flow = flow
         self.profile = profile
-        self._artifacts = _IMAGES_DIR   # created once in pytest_sessionstart
+        self._artifacts = settings.images_dir   # created once in pytest_sessionstart
 
     def runtest(self) -> None:
         # Console reporting reads these off the TestReport. Inline/--flow_file
@@ -485,7 +299,8 @@ class FlowItem(pytest.Item):
     def _attempt(self, n: int, attempts: list[list], plugin) -> FlowResult:
         """Run the flow once in a fresh context; the slot in *attempts* is
         filled before the run so a crash still leaves its recorder behind."""
-        with self.config._webagent_browser.page(self.flow.name, self.profile) as page:
+        with self.config._webagent_browser.page(self.flow.name, self.profile,
+                                                trace=settings.trace_on_failure) as page:
             page.set_default_timeout(self.flow.timeout)
             if plugin:
                 plugin.record_profile_label(
@@ -505,7 +320,7 @@ class FlowItem(pytest.Item):
                 slot[0] = result
             finally:
                 _keep_trace(page, result, self.flow.name, self.profile, retry=n > 1)
-                _set_lambdatest_status(
+                report_status(
                     page,
                     result.success if result is not None else False,
                     result.error if result is not None else "flow crashed before completing",
@@ -554,7 +369,6 @@ class FlowItem(pytest.Item):
         step = runner.attach_evidence(failed_steps[-1], page)
         if step.screenshot_path:
             annotate_error_elements(step.screenshot_path, page)
-            result.last_screenshot = step.screenshot_path
 
     def repr_failure(self, excinfo) -> str:
         if isinstance(excinfo.value, FlowParseError):

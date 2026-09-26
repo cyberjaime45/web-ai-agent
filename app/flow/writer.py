@@ -23,9 +23,9 @@ argument), so replace the origin by hand if the flow should follow ``.env``.
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
 
 from app.schemas.actions import ActionType, StepResult
+from app.utils.urls import path_and_query, same_page
 
 # Steps worth replaying; skills, waits and screenshots are not.
 REPLAYABLE = frozenset({
@@ -77,11 +77,6 @@ def _line(action: str, *args: str) -> str:
     return f"- {action}: " + " | ".join('"' + a.replace('"', "'") + '"' for a in args)
 
 
-def _path(url: str) -> str:
-    p = urlparse(url)
-    return (p.path or "/") + (f"?{p.query}" if p.query else "")
-
-
 def _header(title: str, note: str) -> list[str]:
     return [f"# {title}", "", f"<!-- {note} -->", ""]
 
@@ -96,9 +91,9 @@ def steps_to_markdown(title: str, steps: list[StepResult], start_url: str = "",
     seen: dict[str, str] = {}
     for s in _replayable(steps):
         lines.append(_line(s.action.type.value, *s.action.args))
-        if s.url and s.url.split("#", 1)[0] != (last_url or "").split("#", 1)[0] \
+        if s.url and not same_page(s.url, last_url) \
                 and s.action.type not in (ActionType.ASSERT_URL, ActionType.GOTO):
-            lines.append(_line("assert_url", _path(s.url)))
+            lines.append(_line("assert_url", path_and_query(s.url)))
         lines += [a for a in _assertions_after(s, seen) if a != lines[-1]]
         if s.url:
             last_url = s.url
@@ -115,9 +110,9 @@ def graph_to_markdown(title: str, graph: dict, start_url: str,
             if edge.get("outcome") != "navigates" or not edge.get("to"):
                 continue
             sections += 1
-            heading = f"{page.get('title') or _path(url)} → {edge['action']}"
+            heading = f"{page.get('title') or path_and_query(url)} → {edge['action']}"
             lines += [f"## {heading}", _line("goto", url), _line("click", edge["action"]),
-                      _line("assert_url", _path(edge["to"])), ""]
+                      _line("assert_url", path_and_query(edge["to"])), ""]
     if not sections:
         lines += ["## Steps", _line("goto", start_url), _line("assert_text", graph.get(start_url, {}).get("title") or ""), ""]
     return "\n".join(lines).rstrip("\n") + "\n"

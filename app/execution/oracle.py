@@ -32,7 +32,6 @@ ORACLE_AFTER: frozenset[ActionType] = frozenset({
     ActionType.WAIT_FOR_URL, ActionType.PRESS,
 })
 
-MAX_DETAIL_ITEMS = 5
 
 # Visible loading indicators: the probe's "stuck spinner" and wait_stable's "busy".
 BUSY_SELECTOR = '[class*="spinner" i], [class*="loading" i], [aria-busy="true"], [role="progressbar"]'
@@ -57,12 +56,6 @@ class IgnoreRules:
         return not any(p in url for p in self.network)
 
 
-def _detail(items: list[str]) -> str:
-    shown = items[:MAX_DETAIL_ITEMS]
-    more = len(items) - len(shown)
-    return "; ".join(shown) + (f" (+{more} more)" if more > 0 else "")
-
-
 # ── recorder-based checks ────────────────────────────────────────────────────
 
 def diagnostics_checks(recorder: Any, since_seq: int, ignore: IgnoreRules | None = None) -> list[Check]:
@@ -80,11 +73,11 @@ def diagnostics_checks(recorder: Any, since_seq: int, ignore: IgnoreRules | None
         return f"{n['method']} {n['url']} → {n['failure'] or n['status']}"
 
     return [
-        Check("no page errors", not page_errors, "error", _detail(page_errors), len(page_errors)),
-        Check("no console errors", not errors, "warn", _detail(errors), len(errors)),
-        Check("no failed requests", not server, "error", _detail([req(n) for n in server]), len(server)),
-        Check("no 401/403 responses", not auth, "error", _detail([req(n) for n in auth]), len(auth)),
-        Check("no 4xx responses", not client, "warn", _detail([req(n) for n in client]), len(client)),
+        Check.listing("no page errors", page_errors, "error"),
+        Check.listing("no console errors", errors, "warn"),
+        Check.listing("no failed requests", [req(n) for n in server], "error"),
+        Check.listing("no 401/403 responses", [req(n) for n in auth], "error"),
+        Check.listing("no 4xx responses", [req(n) for n in client], "warn"),
     ]
 
 

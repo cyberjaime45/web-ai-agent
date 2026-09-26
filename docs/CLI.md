@@ -26,10 +26,14 @@ uv run python main.py run tests/marketing_site/flows/home_page.md --env qa1
 uv run python main.py run tests/marketing_site/flows/home_page.md --profile mobile
 ```
 
-Failed steps get the same evidence as under pytest — screenshots under
+The CLI runs flows the same way pytest does — the same browser session, a
+fresh context per flow, a console/network recorder on the page, so automatic
+checks, `wait_stable`, `check_console_network` and failure diagnosis behave
+identically. Failed steps get the same evidence: screenshots under
 `reports/<ENVIRONMENT>/images/` and, in the `--json` output, an `evidence`
-object per failed step (layers, URL, title, profile, screenshot paths). The
-CLI keeps no Playwright trace; that belongs to the pytest report.
+object per failed step (layers, URL, title, profile, screenshots, likely
+cause). The CLI keeps no Playwright trace and writes no HTML report; those
+belong to the pytest run.
 
 ## Exit codes
 

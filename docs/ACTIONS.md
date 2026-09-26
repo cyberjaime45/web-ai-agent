@@ -302,7 +302,10 @@ Get an attribute value from the first element matching a CSS selector.
 ## Assertions (8)
 
 #### `assert_text`
-Assert that specific text is visible on the page. Waits up to 5 seconds.
+Assert that specific text is visible on the page (case-insensitive, part of an
+element's text is enough). Waits up to 5 seconds for a **visible** match: copies
+of the text in hidden elements — a collapsed mobile menu, a closed dialog — are
+ignored, and so is text that exists only in the page source.
 
 ```markdown
 1. assert_text: "Welcome back, Admin"
@@ -310,7 +313,7 @@ Assert that specific text is visible on the page. Waits up to 5 seconds.
 ```
 
 #### `assert_not_text`
-Assert that specific text is NOT visible or present on the page.
+Assert that specific text is not visible on the page. Hidden copies do not count.
 
 ```markdown
 1. assert_not_text: "Error"
@@ -327,7 +330,8 @@ Assert that an element with the given text, CSS selector, or XPath is visible on
 ```
 
 #### `assert_hidden`
-Assert that an element is hidden or does not exist. Accepts text, CSS selector, or XPath.
+Assert that no visible element matches — every match is hidden, or none exists.
+Accepts text, CSS selector, or XPath.
 
 ```markdown
 1. assert_hidden: "Loading Spinner"
@@ -414,9 +418,7 @@ progress bar), and no DOM change for 300 ms. The optional argument is the
 budget in milliseconds (default 10000). It never fails the step: a page still
 busy when the budget runs out passes with a `page settled` warning naming what
 was still going on. Requests matching `ignore_network` in `## Config`, and
-requests open longer than 15 s (polling, streaming), never block it. Under the
-CLI there is no network recorder, so only the indicators and the DOM are
-watched. Prefer it to a fixed `wait: <ms>`.
+requests open longer than 15 s (polling, streaming), never block it. Prefer it to a fixed `wait: <ms>`.
 
 ```markdown
 1. click: "Search"

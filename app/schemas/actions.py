@@ -4,9 +4,10 @@ Actions — data types for flow steps and execution results.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any
 
 
 class ActionType(str, Enum):
@@ -210,8 +211,8 @@ class RunContext:
 
     def record(
         self,
-        action: "FlowAction",
-        result: "StepResult",
+        action: FlowAction,
+        result: StepResult,
         url: str,
     ) -> None:
         """Append a step to history."""
@@ -246,11 +247,39 @@ class Evidence:
     profile:     str = ""                                       # "mobile · iPhone 13 · chromium · 390x664"
     layers:      dict[str, str] = field(default_factory=dict)
     screenshots: dict[str, str] = field(default_factory=dict)
-    trace:       Optional[str] = None                           # Playwright trace zip, set at flow end
+    trace:       str | None = None                           # Playwright trace zip, set at flow end
     console:     list[dict] = field(default_factory=list)       # error/warning entries since the step started
     network:     list[dict] = field(default_factory=list)       # failed requests since the step started
     files:       dict[str, str] = field(default_factory=dict)   # label → other artifact (generated flow…)
     diagnosis:   dict = field(default_factory=dict)             # likely cause: verdict, summary, signals
+
+
+def section_runs[S](steps: list[S], section: Callable[[S], str] = lambda s: s.action.section or "",
+                    sub_flow: Callable[[S], Any] = lambda s: s.sub_flow) -> list[tuple[str, list[S]]]:
+    """Consecutive ``(section, steps)`` runs of a flow's steps.
+
+    Sub-flow and skill children stay in the section of the step that started
+    them (their own ``section`` comes from another file). The one rule behind
+    the report's test-per-section split and RERUN_FAILED's per-section merge —
+    both must group identically; the accessors let the report apply it to
+    serialized steps.
+    """
+    runs: list[tuple[str, list[S]]] = []
+    current: str | None = None
+    for s in steps:
+        sec = current if sub_flow(s) else section(s)
+        if sec != current or not runs:
+            runs.append((sec or "", []))
+            current = sec or ""
+        runs[-1][1].append(s)
+    return runs
+
+
+def summarize(items: list[str], limit: int = 5) -> str:
+    """``a; b; c (+4 more)`` — the first *limit* items of a finding, for a check's detail."""
+    shown = items[:limit]
+    more = len(items) - len(shown)
+    return "; ".join(shown) + (f" (+{more} more)" if more > 0 else "")
 
 
 @dataclass
@@ -268,6 +297,13 @@ class Check:
     detail:   str = ""
     count:    int = 0      # how many issues a failed check found, when it counts them
 
+    @classmethod
+    def listing(cls, name: str, items: list[str], severity: str = "error", *,
+                limit: int = 5, ok: str = "") -> Check:
+        """Passes when *items* is empty; otherwise lists them (``summarize``) and counts them.
+        *ok* is the detail shown when it passes."""
+        return cls(name, not items, severity, summarize(items, limit) if items else ok, len(items))
+
 
 @dataclass
 class StepResult:
@@ -276,17 +312,17 @@ class StepResult:
     message:         str
     layer_used:      int = 1          # 1=deterministic, 2=fallback, 3=AI
     sub_flow:        str = ""         # non-empty when step belongs to a nested flow
-    screenshot_path: Optional[str] = None   # viewport shot at the failure site (also evidence.screenshots["viewport"])
-    error:           Optional[str] = None
+    screenshot_path: str | None = None   # viewport shot at the failure site (also evidence.screenshots["viewport"])
+    error:           str | None = None
     duration:        float = 0.0      # seconds
     skipped:         bool = False     # True when step was skipped due to a prior section failure
     started_at:      float = 0.0      # epoch seconds; 0.0 = never executed
     ended_at:        float = 0.0      # epoch seconds; 0.0 = never executed
-    evidence:        Optional[Evidence] = None   # only on failed (non-skipped) steps
+    evidence:        Evidence | None = None   # only on failed (non-skipped) steps
     checks:          list[Check] = field(default_factory=list)   # oracle / skill checks
     group:           bool = False     # marker step whose children follow (run_flow, skills)
     url:             str = ""         # page URL after the step (for generated flows)
-    agent:           Optional[dict] = None   # autonomous-run facts: page type, plan, skipped, ai_calls…
+    agent:           dict | None = None   # autonomous-run facts: page type, plan, skipped, ai_calls…
     after:           dict = field(default_factory=dict)   # skill child steps: heading / dialog / alert shown after it
 
 
@@ -296,7 +332,6 @@ class FlowResult:
     success:   bool = False
     steps:     list[StepResult] = field(default_factory=list)
     error:     str = ""
-    last_screenshot: Optional[str] = None
 
     @property
     def passed(self) -> int:
@@ -309,3 +344,8 @@ class FlowResult:
     @property
     def skipped(self) -> int:
         return sum(1 for s in self.steps if s.skipped)
+
+    @property
+    def last_screenshot(self) -> str | None:
+        """The newest screenshot any step kept (a failure shot or a `screenshot` step)."""
+        return next((s.screenshot_path for s in reversed(self.steps) if s.screenshot_path), None)

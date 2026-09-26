@@ -60,24 +60,6 @@ def fixture_url():
     server.shutdown()
 
 
-@pytest.fixture(scope="module")
-def page():
-    from playwright.sync_api import sync_playwright
-    pw = sync_playwright().start()
-    try:
-        browser = pw.chromium.launch()
-    except Exception as exc:                       # no browser on this machine
-        pw.stop()
-        pytest.skip(f"chromium unavailable: {exc}")
-    context = browser.new_context(viewport={"width": 1280, "height": 800})
-    pg = context.new_page()
-    pg.set_default_timeout(5000)
-    yield pg
-    context.close()
-    browser.close()
-    pw.stop()
-
-
 def _run(page, tmp_path, steps: str, config: str = ""):
     md = "# Fixture\n\n" + (f"## Config\n{config}\n\n" if config else "") + "## Steps\n" + steps
     recorder = PageRecorder()

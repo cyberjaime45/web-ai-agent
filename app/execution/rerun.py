@@ -19,21 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.schemas.actions import FlowResult, StepResult
-
-
-def section_runs(steps: list[StepResult]) -> list[tuple[str, list[StepResult]]]:
-    """Consecutive ``(section, steps)`` runs; sub-flow and skill children stay
-    in the section of the step that started them (as the reporter groups them)."""
-    runs: list[tuple[str, list[StepResult]]] = []
-    current: str | None = None
-    for s in steps:
-        sec = current if s.sub_flow else (s.action.section or "")
-        if sec != current or not runs:
-            runs.append((sec or "", []))
-            current = sec or ""
-        runs[-1][1].append(s)
-    return runs
+from app.schemas.actions import FlowResult, StepResult, section_runs
 
 
 def _failed(steps: list[StepResult]) -> list[StepResult]:
@@ -91,7 +77,6 @@ def merge(first: FlowResult, first_capture: tuple[list, list],
     failed = _failed(steps)
     merged.success = not failed
     merged.error = "\n".join(s.message for s in failed)
-    merged.last_screenshot = next((s.screenshot_path for s in reversed(steps) if s.screenshot_path), None)
 
     captures = (first_capture, rerun_capture)
 

@@ -1,14 +1,19 @@
 """
-Browser provider factory — abstracts local vs remote browser creation.
+Browser lifecycle — where every page a flow runs on comes from.
 
-RUNNING_MODE controls which provider is used:
+``BrowserSession`` is used by both entry points (the pytest plugin in
+conftest.py and the CLI's Orchestrator): one Playwright driver and browser
+per session locally, a fresh ``BrowserContext`` per flow (isolation: cookies,
+storage, viewport), shaped by the device profile. Under RUNNING_MODE=lambda
+every flow opens its own grid session, because the LambdaTest dashboard
+names and grades tests per session.
+
+``create_browser`` is the provider factory RUNNING_MODE selects:
   local   → Playwright launches a local browser (reads BROWSER / HEADLESS / SLOW_MO)
   lambda  → Connects to LambdaTest's Playwright cloud grid
 
-Adding a new provider (e.g. Sauce Labs):
-  1. Add a new elif branch in create_browser()
-  2. Implement a _saucelabs_browser() helper below
-  3. Document the required env vars in the docstring
+Adding a new provider (e.g. Sauce Labs): a branch in ``create_browser``, a
+``_saucelabs_browser()`` helper below, and its status call in ``report_status``.
 """
 
 from __future__ import annotations
@@ -16,9 +21,12 @@ from __future__ import annotations
 import json
 import logging
 import urllib.parse
+from collections.abc import Iterator
+from contextlib import contextmanager
 
-from playwright.sync_api import Browser, Playwright
+from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 
+from app.browser import profiles
 from app.config.settings import settings
 from app.utils.build import get_build_name
 
@@ -171,3 +179,72 @@ def _lambdatest_browser(pw: Playwright, test_name: str) -> tuple[Browser, dict]:
     browser = pw.chromium.connect(endpoint)
     # Match the LambdaTest VM resolution
     return browser, {"viewport": {"width": 1920, "height": 1080}}
+
+
+# ── Session: browser reuse, one context per flow ──────────────────────────────
+
+
+class BrowserSession:
+    """One Playwright driver + browser for many flows; a fresh context per page().
+
+    The browser process is the expensive part (~1.5-3 s per launch) and is
+    shared locally; isolation comes from the per-flow BrowserContext.
+    """
+
+    def __init__(self) -> None:
+        self._pw: Playwright | None = None
+        self._browser: Browser | None = None
+        self._ctx_opts: dict = {}
+
+    @contextmanager
+    def page(self, test_name: str, profile: str = profiles.DESKTOP, trace: bool = False) -> Iterator[Page]:
+        """A fresh page in a context shaped by *profile*; *trace* starts Playwright
+        tracing on the context (the caller stops it, keeping the zip or not)."""
+        if settings.remote:
+            pw = sync_playwright().start()
+            try:
+                browser, opts = create_browser(pw, test_name=test_name)
+                try:
+                    yield from self._new_page(browser, profiles.context_options(profile, opts, pw.devices), trace)
+                finally:
+                    browser.close()
+            finally:
+                pw.stop()
+            return
+        if self._browser is None or not self._browser.is_connected():
+            self._pw = self._pw or sync_playwright().start()
+            self._browser, self._ctx_opts = create_browser(self._pw, test_name=test_name)
+        yield from self._new_page(
+            self._browser, profiles.context_options(profile, self._ctx_opts, self._pw.devices), trace)
+
+    @staticmethod
+    def _new_page(browser: Browser, opts: dict, trace: bool) -> Iterator[Page]:
+        ctx = browser.new_context(**opts)
+        if trace:
+            ctx.tracing.start(screenshots=True, snapshots=True)
+        try:
+            yield ctx.new_page()
+        finally:
+            ctx.close()     # closing also discards an unstopped trace
+
+    def close(self) -> None:
+        if self._browser is not None:
+            self._browser.close()
+        if self._pw is not None:
+            self._pw.stop()
+        self._browser = self._pw = None
+
+
+def report_status(page: Page, success: bool, error: str = "") -> None:
+    """Tell the remote grid (LambdaTest) whether the flow passed; no-op locally."""
+    if not settings.remote:
+        return
+    try:
+        payload = json.dumps({
+            "action": "setTestStatus",
+            "arguments": {"status": "passed" if success else "failed",
+                          "remark": "" if success else (error or "Test failed")[:255]},
+        })
+        page.evaluate("_ => {}", f"lambdatest_action: {payload}")
+    except Exception as exc:
+        logger.debug("LambdaTest status not sent: %s", exc)

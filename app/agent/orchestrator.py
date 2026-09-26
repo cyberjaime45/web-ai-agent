@@ -1,14 +1,14 @@
 """
-Agent Orchestrator — top-level runtime that drives a full flow execution.
+Orchestrator — run one flow end to end outside pytest (the CLI, other agents).
 
-The orchestrator is the entry point for running a flow end-to-end:
-  1. Parse the flow definition (app.flow.parser)
-  2. Boot a browser session (app.browser.session)
-  3. Run the execution engine (app.execution.engine)
-  4. Return a FlowResult for reporting
+    flow file / Markdown → parser → BrowserSession page (profile) → FlowRunner → FlowResult
 
-This module is a placeholder — extend it with planning, skill dispatch,
-and multi-step reasoning as the agent capabilities grow.
+The same pieces the pytest plugin uses: ``BrowserSession`` for the browser
+and context, a ``PageRecorder`` so console errors and requests feed the
+oracle, ``wait_stable`` and failure evidence, and ``FlowRunner`` for the
+steps. There is no HTML report or Playwright trace here — those belong to
+the pytest run. For in-process callers this is the public entry point:
+``Orchestrator(profile="mobile").run_file(path)``.
 """
 
 from __future__ import annotations
@@ -16,12 +16,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
 from app.browser import profiles
-from app.browser.session import create_browser
+from app.browser.session import BrowserSession
 from app.execution.engine import FlowRunner
 from app.flow.parser import FlowDefinition, parse_flow_file, parse_flow_markdown
+from app.observability.recorder import PageRecorder
 from app.schemas.actions import FlowResult
 
 logger = logging.getLogger(__name__)
@@ -41,38 +40,28 @@ class Orchestrator:
         self.profile = profiles.validate([profile])[0]
 
     def run_file(self, path: Path) -> FlowResult:
-        """Parse a .md file and execute it."""
-        flow = parse_flow_file(path)
-        # Derive flows_dir from the file's parent directory
+        """Parse a .md file and execute it; ``run_flow`` references resolve from its folder."""
         self.flows_dir = path.parent
-        return self.run(flow)
+        return self.run(parse_flow_file(path))
 
     def run_markdown(self, markdown: str, name: str = "inline") -> FlowResult:
         """Parse inline Markdown and execute it."""
-        flow = parse_flow_markdown(markdown, name=name)
-        return self.run(flow)
+        return self.run(parse_flow_markdown(markdown, name=name))
 
     def run(self, flow: FlowDefinition) -> FlowResult:
         """Execute a parsed FlowDefinition and return the result."""
         logger.info("[orchestrator] Starting flow: %s (%d actions)", flow.name, len(flow.actions))
-        with sync_playwright() as pw:
-            browser, ctx_opts = create_browser(pw, test_name=flow.name)
-            ctx = browser.new_context(**profiles.context_options(self.profile, ctx_opts, pw.devices))
-            page = ctx.new_page()
-            page.set_default_timeout(flow.timeout)
-
-            runner = FlowRunner(artifacts_dir=self.artifacts_dir, flows_dir=self.flows_dir,
-                                profile=self.profile)
-            result = runner.run(flow, page)
-
-            ctx.close()
-            browser.close()
-
-        logger.info(
-            "[orchestrator] Flow '%s' — %s (%d/%d steps passed)",
-            flow.name,
-            "PASSED" if result.success else "FAILED",
-            result.passed,
-            len(result.steps),
-        )
+        session = BrowserSession()
+        try:
+            with session.page(flow.name, self.profile) as page:
+                page.set_default_timeout(flow.timeout)
+                recorder = PageRecorder()
+                recorder.attach(page)
+                runner = FlowRunner(artifacts_dir=self.artifacts_dir, flows_dir=self.flows_dir,
+                                    profile=self.profile)
+                result = runner.run(flow, page, recorder=recorder)
+        finally:
+            session.close()
+        logger.info("[orchestrator] Flow '%s' — %s (%d/%d steps passed)", flow.name,
+                    "PASSED" if result.success else "FAILED", result.passed, len(result.steps))
         return result

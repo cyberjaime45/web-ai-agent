@@ -65,6 +65,7 @@ def _flow_result_to_dict(result: FlowResult) -> dict:
     d["passed"] = result.passed
     d["failed"] = result.failed
     d["skipped"] = result.skipped
+    d["last_screenshot"] = result.last_screenshot
     return d
 
 

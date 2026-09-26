@@ -20,6 +20,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.utils.urls import strip_fragment
+
 logger = logging.getLogger(__name__)
 
 # `option` is left out on purpose: a select's options ride on its combobox node.
@@ -27,7 +29,6 @@ INTERACTIVE_ROLES = frozenset({
     "button", "link", "textbox", "searchbox", "combobox", "listbox", "checkbox",
     "radio", "switch", "slider", "spinbutton", "tab", "menuitem",
 })
-STRUCTURAL_ROLES = frozenset({"heading", "dialog", "alertdialog", "navigation", "table", "form", "main"})
 # Landmarks whose name gives their children context (safety: "OK" inside "Delete member?").
 CONTAINER_ROLES = frozenset({"dialog", "alertdialog", "form", "navigation", "region", "main", "banner", "contentinfo"})
 MAX_LINES = 600          # aria lines parsed (a huge page yields a partial, still useful picture)
@@ -108,7 +109,7 @@ class Observation:
         """What "the same page state" means: URL without fragment, title, the
         first controls, open dialogs. Two observations with equal fingerprints
         are one node in an exploration graph."""
-        url = self.url.split("#", 1)[0]
+        url = strip_fragment(self.url)
         controls = tuple((n.role, n.name) for n in self.nodes[:80])
         return (url, self.title, controls, self.dialogs, self.text_hash)
 

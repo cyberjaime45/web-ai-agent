@@ -33,11 +33,6 @@ class DeterministicRunner(L2Handlers):
     # truly missing.  The page's default_timeout (30s) is preserved for
     # explicit waits and assertions.
     _L1_TIMEOUT = 5000
-    # Playwright already polls actionability for the whole _L1_TIMEOUT window,
-    # so a second identical window rarely changes the outcome and doubled the
-    # cost of every genuinely missing element (10.5 s before L2 could start).
-    _MAX_L1_RETRIES = 1
-    _RETRY_PAUSE_MS = 500
 
     def __init__(
         self,
@@ -64,30 +59,25 @@ class DeterministicRunner(L2Handlers):
             for t in ActionType if hasattr(self, f"_h_{t.value}")
         }
 
-        # ── L2 dispatch table (handlers live in deterministic_l2.py) ──
-        self._l2_handlers = self._build_l2_handlers()
+        # ── L2 dispatch table: `_l2_<keyword>` fallbacks in deterministic_l2.py ──
+        self._l2_handlers: dict[ActionType, Callable[[FlowAction], StepResult | None]] = {
+            t: getattr(self, f"_l2_{t.value}")
+            for t in ActionType if hasattr(self, f"_l2_{t.value}")
+        }
 
     # ── Public entry point ────────────────────────────────────────
 
     def execute(self, action: FlowAction) -> StepResult:
-        """Execute action with Layer 1 (bounded retry); auto-fallback to Layer 2."""
-        last_exc: Exception | None = None
-
-        for attempt in range(1, self._MAX_L1_RETRIES + 1):
-            try:
-                if settings.dismiss_blockers:
-                    dismiss_blockers(self.page)
-                return self._layer1(action)
-            except Exception as exc:
-                last_exc = exc
-                if attempt < self._MAX_L1_RETRIES:
-                    logger.debug("[L1] Step %s attempt %s failed, retrying in %sms: %s",
-                                 action.step_num, attempt, self._RETRY_PAUSE_MS, exc)
-                    self.page.wait_for_timeout(self._RETRY_PAUSE_MS)
-
+        """Layer 1 (one attempt: Playwright already polls for the whole _L1_TIMEOUT),
+        blocker recovery for interactions, then Layer 2."""
+        try:
+            if settings.dismiss_blockers:
+                dismiss_blockers(self.page)
+            return self._layer1(action)
+        except Exception as exc:
+            last_exc = exc
         # %-style: Playwright errors carry multi-KB call logs — only format at DEBUG.
-        logger.debug("[L1] Step %s failed after %s attempt(s): %s",
-                     action.step_num, self._MAX_L1_RETRIES, last_exc)
+        logger.debug("[L1] Step %s failed: %s", action.step_num, last_exc)
 
         # A cookie banner or modal covering the target: dismiss it and retry L1 once.
         # Interactions only — dismissing a dialog must never turn an assertion green.
@@ -321,7 +311,7 @@ class DeterministicRunner(L2Handlers):
     def _h_read_row(self, action: FlowAction) -> StepResult:
         text = action.args[0]
         row = self.page.locator(f'tr:has-text("{text}")').first
-        row.wait_for(state="visible", timeout=5000)
+        row.wait_for(state="visible", timeout=self._L1_TIMEOUT)
         cells = row.locator("td, th").all_text_contents()
         cell_str = " | ".join(cells)
         if self._ctx is not None:
@@ -332,7 +322,7 @@ class DeterministicRunner(L2Handlers):
         row_text = action.args[0]
         click_target = action.args[1] if len(action.args) > 1 else None
         row = self.page.locator(f'tr:has-text("{row_text}")').first
-        row.wait_for(state="visible", timeout=5000)
+        row.wait_for(state="visible", timeout=self._L1_TIMEOUT)
         if click_target:
             row.get_by_text(click_target).first.click()
         else:
@@ -367,13 +357,12 @@ class DeterministicRunner(L2Handlers):
 
     def _h_assert_text(self, action: FlowAction) -> StepResult:
         expected = action.args[0]
-        self.page.get_by_text(expected).first.wait_for(state="visible", timeout=5000)
+        self.page.get_by_text(expected).filter(visible=True).first.wait_for(state="visible", timeout=self._L1_TIMEOUT)
         return self._ok(action, f"Text '{expected}' visible", 1)
 
     def _h_assert_not_text(self, action: FlowAction) -> StepResult:
         text = action.args[0]
-        loc = self.page.get_by_text(text, exact=False)
-        if loc.count() == 0 or loc.first.is_hidden():
+        if self.page.get_by_text(text, exact=False).filter(visible=True).count() == 0:
             return self._ok(action, f'Text "{text}" is absent/hidden', 1)
         raise AssertionError(f'Text "{text}" is still visible on the page.')
 
@@ -384,13 +373,12 @@ class DeterministicRunner(L2Handlers):
 
     def _h_assert_visible(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        self._resolve_text_target(target).first.wait_for(state="visible", timeout=5000)
+        self._resolve_text_target(target).filter(visible=True).first.wait_for(state="visible", timeout=self._L1_TIMEOUT)
         return self._ok(action, f'Element "{target}" is visible', 1)
 
     def _h_assert_hidden(self, action: FlowAction) -> StepResult:
         target = action.args[0]
-        loc = self._resolve_text_target(target)
-        if loc.count() == 0 or loc.first.is_hidden():
+        if self._resolve_text_target(target).filter(visible=True).count() == 0:
             return self._ok(action, f'Element "{target}" is not visible', 1)
         raise AssertionError(f'Element "{target}" is still visible.')
 
@@ -410,7 +398,7 @@ class DeterministicRunner(L2Handlers):
             loc = self.page.get_by_role("button", name=target)
             if loc.count() == 0:
                 loc = self.page.get_by_text(target, exact=True)
-        loc.first.wait_for(state="visible", timeout=5000)
+        loc.first.wait_for(state="visible", timeout=self._L1_TIMEOUT)
         disabled = loc.first.is_disabled()
         if disabled != expect_disabled:
             state = "disabled" if disabled else "enabled"
@@ -431,7 +419,7 @@ class DeterministicRunner(L2Handlers):
             loc = self.page.get_by_label(target, exact=True)
             if loc.count() == 0:
                 loc = self.page.get_by_role("checkbox", name=target, exact=True)
-        loc.first.wait_for(state="visible", timeout=5000)
+        loc.first.wait_for(state="visible", timeout=self._L1_TIMEOUT)
         if not loc.first.is_checked():
             raise AssertionError(f'Checkbox "{target}" is not checked.')
         return self._ok(action, f'Checkbox "{target}" is checked', 1)
@@ -445,12 +433,12 @@ class DeterministicRunner(L2Handlers):
 
     def _h_wait_for_element(self, action: FlowAction) -> StepResult:
         selector = action.args[0]
-        self.page.locator(selector).first.wait_for(state="visible")
+        self.page.locator(selector).filter(visible=True).first.wait_for(state="visible")
         return self._ok(action, f"Element '{selector}' visible", 1)
 
     def _h_wait_for_text(self, action: FlowAction) -> StepResult:
         text = action.args[0]
-        self.page.get_by_text(text, exact=False).first.wait_for(state="visible", timeout=10000)
+        self.page.get_by_text(text, exact=False).filter(visible=True).first.wait_for(state="visible", timeout=10000)
         return self._ok(action, f'Text "{text}" appeared', 1)
 
     def _h_wait_for_url(self, action: FlowAction) -> StepResult:

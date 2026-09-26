@@ -24,13 +24,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
 
 from app.agent.observer import Node, Observation
 from app.execution import oracle
 from app.flow.writer import graph_to_markdown
 from app.schemas.actions import ActionType, Check
 from app.skills.base import SkillContext, info, skill
+from app.utils.urls import origin, strip_fragment
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +56,6 @@ class PageNode:
     depth: int
     edges: list[Edge] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
-
-
-def _origin(url: str) -> str:
-    p = urlparse(url)
-    return f"{p.scheme}://{p.netloc}"
-
-
-def _plain(url: str) -> str:
-    return url.split("#", 1)[0]
 
 
 def _candidates(ob: Observation, sc: SkillContext, node: PageNode, origin: str) -> list[Node]:
@@ -102,7 +93,7 @@ def _document_status(sc: SkillContext, url: str) -> int | None:
     if sc.recorder is None:
         return None
     for entry in reversed(sc.recorder.network):
-        if entry.get("resource_type") == "document" and _plain(entry.get("url", "")) == _plain(url):
+        if entry.get("resource_type") == "document" and strip_fragment(entry.get("url", "")) == strip_fragment(url):
             return entry.get("status")
     return None
 
@@ -139,8 +130,8 @@ def explore_page(sc: SkillContext) -> list[Check]:
         sc.policy = sc.policy.with_destructive(True)
     sc.planner.max_calls = limits["max_ai_calls"]
 
-    start = _plain(sc.page.url)
-    origin = _origin(start)
+    start = strip_fragment(sc.page.url)
+    site = origin(start)
     pages: dict[str, PageNode] = {}
     queue: list[tuple[str, int]] = [(start, 0)]
     actions = 0
@@ -153,7 +144,7 @@ def explore_page(sc: SkillContext) -> list[Check]:
         url, depth = queue.pop(0)
         if url in pages:
             continue
-        if _plain(sc.page.url) != url:
+        if strip_fragment(sc.page.url) != url:
             if not sc.run(ActionType.GOTO, url).success:
                 failed.append(f"open {url}")
                 continue
@@ -164,7 +155,7 @@ def explore_page(sc: SkillContext) -> list[Check]:
         if status and status >= 400:
             broken.append(f"{url} → HTTP {status}")
         before = ob.fingerprint()
-        candidates = _candidates(ob, sc, node, origin)
+        candidates = _candidates(ob, sc, node, site)
         if sc.planner.available:
             candidates = _ai_order(sc, ob, candidates, [e.action for e in node.edges])
 
@@ -178,12 +169,12 @@ def explore_page(sc: SkillContext) -> list[Check]:
                 node.edges.append(Edge(cand.name, "failed"))
                 continue
             after = sc.observe(fresh=True)
-            now = _plain(sc.page.url)
+            now = strip_fragment(sc.page.url)
             if now != url:
                 if now.startswith("chrome-error://"):          # navigation itself failed
                     node.edges.append(Edge(cand.name, "broken", now))
                     broken.append(f"'{cand.name}' on {url} led to an error page")
-                elif _origin(now) != origin:
+                elif origin(now) != site:
                     node.edges.append(Edge(cand.name, "external", now))
                     externals.append(now)
                 else:
@@ -191,7 +182,7 @@ def explore_page(sc: SkillContext) -> list[Check]:
                     if depth + 1 <= limits["depth"] and now not in pages:
                         queue.append((now, depth + 1))
                 sc.run(ActionType.BACK)
-                if _plain(sc.page.url) != url:
+                if strip_fragment(sc.page.url) != url:
                     sc.run(ActionType.GOTO, url)
             elif after.dialogs > ob.dialogs:
                 title = next((n.container.partition(":")[2] for n in after.nodes

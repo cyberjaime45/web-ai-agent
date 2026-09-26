@@ -31,6 +31,7 @@ import time
 from app.agent.observer import EMPTY_STATE_RE, PREV_NAMES
 from app.schemas.actions import ActionType, Check
 from app.skills.base import SkillContext, info, skill
+from app.utils.urls import same_page
 
 MAX_ROWS = 50
 _ARROWS = "▲▼↑↓⇅⬆⬇△▽"
@@ -158,7 +159,7 @@ def _open_row(sc: SkillContext, read: dict) -> list[Check]:
         return []
     sc.run(ActionType.WAIT_STABLE)
     after = sc.observe(fresh=True)
-    navigated = after.url.split("#", 1)[0] != before.url.split("#", 1)[0]
+    navigated = not same_page(after.url, before.url)
     dialog = after.dialogs > before.dialogs
     opened = navigated or dialog or after.fingerprint() != before.fingerprint()
     how = "opens a page" if navigated else "opens a dialog" if dialog else "changes the page" if opened else ""

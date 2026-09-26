@@ -18,21 +18,18 @@ Never requested: logout links, and links whose path looks destructive
 from __future__ import annotations
 
 import logging
-import re
 from urllib.parse import urlparse
 
 from app.agent.safety import DESTRUCTIVE_PATHS
-from app.schemas.actions import ActionType, Check
+from app.schemas.actions import ActionType, Check, summarize
 from app.skills.base import SkillContext, info, skill
+from app.utils.urls import LOGIN_RE, LOGOUT_RE
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_LINKS = 50
 REQUEST_TIMEOUT_MS = 10_000
-MAX_DETAIL_ITEMS = 5
 
-_LOGOUT_RE = re.compile(r"log[-_ ]?out|sign[-_ ]?out|log[-_ ]?off", re.IGNORECASE)
-_LOGIN_RE = re.compile(r"log[-_ ]?in|sign[-_ ]?in|/sso\b|/auth\b|/oauth", re.IGNORECASE)
 
 _COLLECT_JS = r"""
 () => {
@@ -54,17 +51,11 @@ _COLLECT_JS = r"""
 """
 
 
-def _detail(items: list[str]) -> str:
-    shown = items[:MAX_DETAIL_ITEMS]
-    more = len(items) - len(shown)
-    return "; ".join(shown) + (f" (+{more} more)" if more > 0 else "")
-
-
 def _unsafe(url: str, destructive_allowed: bool) -> str:
     """Why *url* must not be requested, or ``""``."""
     parsed = urlparse(url)
     target = f"{parsed.path}?{parsed.query}"
-    if _LOGOUT_RE.search(target):
+    if LOGOUT_RE.search(target):
         return "logout"
     path = parsed.path.lower()
     if not destructive_allowed and (hit := next((p for p in DESTRUCTIVE_PATHS if p in path), None)):
@@ -115,7 +106,7 @@ def check_links(sc: SkillContext) -> list[Check]:
             broken.append(f"{status} {url}")
         elif status >= 400:
             restricted.append(f"{status} {url}")
-        elif final != url and _LOGIN_RE.search(urlparse(final).path) and not _LOGIN_RE.search(urlparse(url).path):
+        elif final != url and LOGIN_RE.search(urlparse(final).path) and not LOGIN_RE.search(urlparse(url).path):
             restricted.append(f"login redirect {url} → {final}")
     logger.info("[check_links] %d link(s) checked, %d broken, %d restricted",
                 len(checked), len(broken), len(restricted))
@@ -128,12 +119,12 @@ def check_links(sc: SkillContext) -> list[Check]:
         summary += f"; {len(to_check) - max_links} over max_links={max_links}"
     checks = [
         info("links checked", summary),
-        Check("no broken links", not broken, "error", _detail(broken), len(broken)),
-        Check("no restricted links", not restricted, "warn", _detail(restricted), len(restricted)),
+        Check.listing("no broken links", broken, "error"),
+        Check.listing("no restricted links", restricted, "warn"),
     ]
     if skipped:
-        checks.append(info("links not requested", _detail(skipped)))
+        checks.append(info("links not requested", summarize(skipped)))
     if sc.flag("images", True):
         images = found["images"]
-        checks.append(Check("no broken images", not images, "error", _detail(images), len(images)))
+        checks.append(Check.listing("no broken images", images, "error"))
     return checks

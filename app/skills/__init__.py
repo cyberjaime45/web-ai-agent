@@ -14,25 +14,19 @@
     test_widgets           tabs, disclosures and dialogs behave as their ARIA roles promise
     check_performance      TTFB, DOM ready, load, LCP, CLS against budgets (warnings)
 
-Importing this package registers every skill in ``SKILLS``; the engine
-dispatches ``SKILL_ACTIONS`` through ``run_skill``.
+Importing this package imports every module in it, and each module's
+``@skill(ActionType.X)`` registers it in ``SKILLS``: adding a skill is a new
+module here plus its ``ActionType`` (see ``base.py``). The engine dispatches
+``SKILL_ACTIONS`` through ``run_skill``.
 """
 
-from app.skills import (  # noqa: F401  (registration)
-    check_accessibility,
-    check_console_network,
-    check_links,
-    check_performance,
-    explore_page,
-    inspect_page,
-    snapshot_page,
-    test_form,
-    test_page,
-    test_responsive,
-    test_search,
-    test_table,
-    test_widgets,
-)
+import importlib
+import pkgutil
+
 from app.skills.base import SKILLS, SkillContext, parse_skill_args, run_skill
+
+for _module in pkgutil.iter_modules(__path__):
+    if _module.name != "base":
+        importlib.import_module(f"{__name__}.{_module.name}")
 
 __all__ = ["SKILLS", "SkillContext", "parse_skill_args", "run_skill"]

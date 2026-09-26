@@ -35,9 +35,9 @@ import logging
 
 from app.agent.observer import Observation
 from app.flow.writer import steps_to_markdown, suggested_assertions
-from app.planner_bridge import run_planned_steps
 from app.schemas.actions import ActionType, Check
 from app.skills.base import SkillContext, info, skill
+from app.utils.urls import same_page
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def _listy_checks(sc: SkillContext, ob: Observation, start_url: str, plan: list[
     if ob.tables:
         plan.append("test the table: sorting, pagination, row details")
         sc.run_skill(ActionType.TEST_TABLE)
-        if sc.page.url.split("#", 1)[0] != start_url.split("#", 1)[0]:
+        if not same_page(sc.page.url, start_url):
             sc.run(ActionType.GOTO, start_url)
     box = ob.search_box()
     if box is not None and box.name:
@@ -91,7 +91,7 @@ def _listy_checks(sc: SkillContext, ob: Observation, start_url: str, plan: list[
         after = sc.observe(fresh=True)
         checks.append(Check("pagination works", after.fingerprint() != before, "warn",
                             "" if after.fingerprint() != before else f"'{nxt.name}' changed nothing"))
-        if after.url.split("#", 1)[0] != start_url.split("#", 1)[0]:
+        if not same_page(after.url, start_url):
             sc.run(ActionType.GOTO, start_url)
     return checks
 
@@ -146,7 +146,7 @@ def test_page(sc: SkillContext) -> list[Check]:
             plan.append(f"explore safe controls (depth {limits['depth']}, max {limits['max_actions']} clicks)")
             sc.run_skill(ActionType.EXPLORE_PAGE, f"depth={limits['depth']}",
                          f"max_actions={limits['max_actions']}", f"max_ai_calls={remaining}", "generate=false")
-            if sc.page.url.split("#", 1)[0] != start_url.split("#", 1)[0]:
+            if not same_page(sc.page.url, start_url):
                 sc.run(ActionType.GOTO, start_url)
 
     plan.append("check the layout at narrow widths")
@@ -159,7 +159,7 @@ def test_page(sc: SkillContext) -> list[Check]:
         ai_plan = sc.planner.plan(current, GOAL.format(kind=kind), sc.policy, history=done, max_steps=6)
         if ai_plan is not None:
             rejected = ai_plan.rejected
-            executed = run_planned_steps(sc, ai_plan.steps, limits["max_actions"])
+            executed = sc.run_planned(ai_plan.steps, limits["max_actions"])
             plan += [f"[ai] {s.action} {s.target or s.value}".strip() for s in executed]
             checks.append(info("adaptive plan", f"{len(executed)} AI-planned step(s) executed, "
                                                 f"{len(rejected)} rejected"))

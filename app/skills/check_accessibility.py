@@ -24,8 +24,6 @@ from __future__ import annotations
 from app.schemas.actions import ActionType, Check
 from app.skills.base import SkillContext, skill
 
-MAX_DETAIL_ITEMS = 5
-
 _AUDIT_JS = r"""
 () => {
   const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -83,12 +81,6 @@ _AUDIT_JS = r"""
 """
 
 
-def _detail(items: list[str]) -> str:
-    shown = items[:MAX_DETAIL_ITEMS]
-    more = len(items) - len(shown)
-    return "; ".join(shown) + (f" (+{more} more)" if more > 0 else "")
-
-
 @skill(ActionType.CHECK_ACCESSIBILITY)
 def check_accessibility(sc: SkillContext) -> list[Check]:
     audit = sc.evaluate(_AUDIT_JS)
@@ -97,7 +89,7 @@ def check_accessibility(sc: SkillContext) -> list[Check]:
     severity = "error" if sc.option("level") == "strict" else "warn"
 
     def listed(name: str, items: list[str]) -> Check:
-        return Check(name, not items, severity, _detail(items), len(items))
+        return Check.listing(name, items, severity)
 
     return [
         listed("images have alt text", audit["images"]),

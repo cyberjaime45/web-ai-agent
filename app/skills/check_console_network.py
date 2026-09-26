@@ -25,7 +25,7 @@ _MARK_KEY = "_check_console_network_seq"
 def check_console_network(sc: SkillContext) -> list[Check]:
     if sc.recorder is None:
         return [Check("browser diagnostics available", False, "warn",
-                      "no PageRecorder on this run (CLI); run under pytest to capture console/network")]
+                      "no PageRecorder attached to this run, so console and network were not captured")]
     since = int(sc.ctx.data.get(_MARK_KEY, "0"))
     checks = oracle.diagnostics_checks(sc.recorder, since, sc.ignore)
     if sc.option("console") == "strict":

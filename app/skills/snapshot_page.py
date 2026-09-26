@@ -25,7 +25,7 @@ import json
 import logging
 
 from app.flow.writer import stable_text
-from app.schemas.actions import ActionType, Check
+from app.schemas.actions import ActionType, Check, summarize
 from app.skills.base import SkillContext, info, skill
 
 logger = logging.getLogger(__name__)
@@ -62,12 +62,6 @@ def structure(sc: SkillContext, ignore: tuple[str, ...] = ()) -> list[str]:
     return sorted(i for i in items if not any(pat and pat.lower() in i.lower() for pat in ignore))
 
 
-def _detail(items: list[str]) -> str:
-    shown = items[:MAX_DETAIL_ITEMS]
-    more = len(items) - len(shown)
-    return "; ".join(shown) + (f" (+{more} more)" if more > 0 else "")
-
-
 @skill(ActionType.SNAPSHOT_PAGE)
 def snapshot_page(sc: SkillContext) -> list[Check]:
     name = sc.option("target") or sc.option("name")
@@ -97,8 +91,8 @@ def snapshot_page(sc: SkillContext) -> list[Check]:
     severity = "error" if sc.flag("strict") else "warn"
     checks = [
         info("baseline", f"{len(expected)} items in {path} (saved {baseline.get('saved', '?')})"),
-        Check("nothing removed", not removed, severity, _detail(removed), len(removed)),
+        Check.listing("nothing removed", removed, severity, limit=MAX_DETAIL_ITEMS),
     ]
     if added:
-        checks.append(info("added since the baseline", _detail(added)))
+        checks.append(info("added since the baseline", summarize(added, MAX_DETAIL_ITEMS)))
     return checks

@@ -21,11 +21,19 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent.observer import Observation, landmarks, observe
-from app.agent.planner import Planner
+from app.agent.planner import PlannedStep, Planner
 from app.agent.safety import SafetyPolicy
 from app.execution import oracle
 from app.observability.evidence import ELEMENT_TIMEOUT_MS
-from app.schemas.actions import ActionType, Check, Evidence, FlowAction, RunContext, StepResult
+from app.schemas.actions import (
+    SKILL_ACTIONS,
+    ActionType,
+    Check,
+    Evidence,
+    FlowAction,
+    RunContext,
+    StepResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,13 +121,31 @@ class SkillContext:
         fa = FlowAction(type=action_type, args=list(args),
                         raw=f"{action_type.value}: {quoted}" if args else action_type.value,
                         step_num=self.action.step_num, section=self.action.section)
-        results = self.engine.run_group(fa, self.page, self.runner, self.ctx)
+        results = self.engine.run_action(fa, self.page, self.runner, self.ctx)
         outer = self.action.type.value
         for sr in results:
             sr.sub_flow = f"{outer}/{sr.sub_flow}" if sr.sub_flow else outer
         self.steps.extend(results)
         self._ob = None
         return results[0]
+
+    def run_planned(self, steps: list[PlannedStep], max_actions: int) -> list[PlannedStep]:
+        """Run validated planner steps in order (skills nest as groups); stops at
+        *max_actions* or the first failure. Returns the steps that ran."""
+        executed: list[PlannedStep] = []
+        for step in steps:
+            if len(executed) >= max_actions:
+                break
+            try:
+                action_type = ActionType(step.action)
+            except ValueError:
+                continue
+            run = self.run_skill if action_type in SKILL_ACTIONS else self.run
+            result = run(action_type, *step.args)
+            executed.append(step)
+            if not result.success:
+                break
+        return executed
 
     @property
     def leaf_steps(self) -> list[StepResult]:

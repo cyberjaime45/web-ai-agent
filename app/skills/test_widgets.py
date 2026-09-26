@@ -28,7 +28,6 @@ from app.schemas.actions import ActionType, Check
 from app.skills.base import SkillContext, info, skill
 
 DEFAULT_MAX = 5
-MAX_DETAIL_ITEMS = 5
 
 _HELPERS = r"""
   const vis = el => { if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -67,14 +66,8 @@ _DIALOG_JS = "(opener) => {" + _HELPERS + r"""
 }"""
 
 
-def _detail(items: list[str]) -> str:
-    shown = items[:MAX_DETAIL_ITEMS]
-    more = len(items) - len(shown)
-    return "; ".join(shown) + (f" (+{more} more)" if more > 0 else "")
-
-
 def _listed(name: str, problems: list[str], tried: int) -> Check:
-    return Check(name, not problems, "warn", _detail(problems) or f"{tried} checked", len(problems))
+    return Check.listing(name, problems, "warn", ok=f"{tried} checked")
 
 
 def _tabs(sc: SkillContext, tabs: list[dict], limit: int) -> list[Check]:

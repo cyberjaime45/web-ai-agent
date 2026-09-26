@@ -24,6 +24,7 @@ from typing import Any
 
 from app.execution import oracle
 from app.schemas.actions import ActionType, StepResult
+from app.utils.urls import LOGIN_RE
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,6 @@ _NET_ENV_RE = re.compile(r"net::(ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_REFUSED|ER
                          r"ERR_CERT_[A-Z_]+|ERR_SSL_[A-Z_]+|ERR_PROXY_[A-Z_]+)")
 _CLOSED_RE = re.compile(r"(Target page, context or browser has been closed|Browser has been closed|"
                         r"browser has disconnected)", re.IGNORECASE)
-_LOGIN_RE = re.compile(r"log[-_ ]?in|sign[-_ ]?in|/sso\b|/auth\b|/oauth", re.IGNORECASE)
 _PLACEHOLDER_RE = re.compile(r"Environment variable '([A-Z_][A-Z0-9_]*)' is not set")
 _NOT_FOUND_RE = re.compile(r"Timeout \d+ms exceeded|could not resolve|not found|No table row", re.IGNORECASE)
 
@@ -134,7 +134,8 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list]) -> dict:
             conclude("application", f"A request the page made failed on the server {when}.")
         if errors := page_errors(console):
             signals.append(f"JavaScript error {when}: {errors[0][:120]}")
-            conclude("application", f"The page threw a JavaScript error {when}.")
+            if when == "during this step":      # earlier ones are often unrelated third-party noise
+                conclude("application", f"The page threw a JavaScript error {when}.")
         if verdict:
             break
     auth = [n for n in (step_network or section[1]) if n.get("status") in (401, 403)]
@@ -149,7 +150,7 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list]) -> dict:
 
     # ── session ──
     url = ev.url if ev else ""
-    if url and _LOGIN_RE.search(url) and not _LOGIN_RE.search(target) and action.type != ActionType.GOTO:
+    if url and LOGIN_RE.search(url) and not LOGIN_RE.search(target) and action.type != ActionType.GOTO:
         signals.append(f"the browser is on a sign-in page: {url}")
         conclude("environment", "The browser ended up on a sign-in page: the session expired or the user was signed out.")
     if auth:

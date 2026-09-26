@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from app.schemas.actions import ActionType, Check
+from app.schemas.actions import ActionType, Check, summarize
 from app.skills.base import SkillContext, info, skill
 
 logger = logging.getLogger(__name__)
@@ -87,17 +87,13 @@ def _label(vp: dict) -> str:
     return f"{vp['width']}x{vp['height']}"
 
 
-def _some(items: list[str]) -> str:
-    return ", ".join(items[:5]) + (f" (+{len(items) - 5} more)" if len(items) > 5 else "")
-
-
 def _checks_for(label: str, r: dict) -> list[Check]:
     p = f"[{label}] "
     checks = [
         Check(p + "no horizontal overflow", r["overflow"] <= 1, "error",
               f"content {r['overflow']}px wider than the viewport" if r["overflow"] > 1 else ""),
         Check(p + "controls on screen", not r["offscreen"], "error",
-              f"off-screen: {_some(r['offscreen'])}" if r["offscreen"] else f"{r['controls']} controls visible"),
+              f"off-screen: {summarize(r['offscreen'])}" if r["offscreen"] else f"{r['controls']} controls visible"),
     ]
     if r["fields"]:
         checks.append(Check(p + "form fields fit", r["clipped"] == 0, "error",
@@ -106,7 +102,7 @@ def _checks_for(label: str, r: dict) -> list[Check]:
         checks.append(Check(p + "dialog fits viewport", r["dialogFits"], "error"))
     if r["vw"] < NARROW:
         checks.append(Check(p + f"tap targets ≥ {MIN_TAP}px", not r["smallTap"], "warn",
-                            f"small: {_some(r['smallTap'])}" if r["smallTap"] else ""))
+                            f"small: {summarize(r['smallTap'])}" if r["smallTap"] else ""))
         checks.append(Check(p + f"text ≥ {MIN_FONT}px", r["smallText"] == 0, "warn",
                             f"{r['smallText']} of {r['sampled']} text elements smaller" if r["smallText"] else ""))
     return checks

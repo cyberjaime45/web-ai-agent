@@ -113,6 +113,11 @@ def _append_error(result, msg: str) -> None:
     result.error = f"{result.error}\n{msg}" if result.error else msg
 
 
+def _first_line(text: str) -> str:
+    """Log lines carry the message, not Playwright's multi-KB call log (it is in the report)."""
+    return (text or "").split("\nCall log:", 1)[0].splitlines()[0] if text else ""
+
+
 def _fail(action: FlowAction, message: str, layer: int, layers: dict[str, str],
           error: str | None = None) -> StepResult:
     """A failed StepResult carrying what each layer did; evidence completes it."""
@@ -202,50 +207,31 @@ class FlowRunner:
                 ))
                 continue
 
-            # ── Sub-flow and skill execution: a marker step plus child steps ──
-            if action.type == ActionType.RUN_FLOW or action.type in SKILL_ACTIONS:
-                sub_results = self._run_group(action, page, runner, ctx)
-                for sr in sub_results:
-                    result.steps.append(sr)
-                    if sr.screenshot_path:
-                        result.last_screenshot = sr.screenshot_path
-                    if not sr.success:
-                        _append_error(result, sr.message)
-                        logger.error(
-                            f"Flow '{flow.name}' failed in sub-flow at step "
-                            f"{sr.action.step_num}: {sr.action.raw!r} — {sr.message}"
-                        )
-                        section_failed = True
-                continue
-
-            step_result = self.execute(action, page, runner, ctx)
-            result.steps.append(step_result)
-            if step_result.screenshot_path:
-                result.last_screenshot = step_result.screenshot_path
-            if not step_result.success:
-                _append_error(result, step_result.message)
-                logger.error(
-                    "Flow '%s' failed at step %s: %r — %s",
-                    flow.name, action.step_num, step_result.action.raw, step_result.message,
-                )
-                section_failed = True
+            for sr in self.run_action(action, page, runner, ctx):
+                result.steps.append(sr)
+                if not sr.success:
+                    _append_error(result, sr.message)
+                    logger.error("Flow '%s' failed at step %s: %r — %s", flow.name,
+                                 sr.action.step_num, sr.action.raw, _first_line(sr.message))
+                    section_failed = True
 
         result.success = result.failed == 0
         return result
 
-    # ── Grouped steps: run_flow and skills ─────────────────────────
+    # ── One flow line: a step, or a group (run_flow / skill) ───────
 
-    def run_group(self, action, page, runner, ctx) -> list[StepResult]:
-        """Run a run_flow or skill action: marker step + child steps. Skills
-        composing other skills (test_page) call this through SkillContext."""
-        return self._run_group(action, page, runner, ctx)
-
-    def _run_group(self, action, page, runner, ctx) -> list[StepResult]:
+    def run_action(self, action, page, runner, ctx) -> list[StepResult]:
+        """What one flow line produced: ``[step]``, or a marker step followed by
+        its children for ``run_flow`` and skills. The top-level loop, sub-flows
+        and skills composing other skills (``SkillContext.run_skill``) all
+        dispatch through here."""
         if action.type == ActionType.RUN_FLOW:
             return self._run_sub_flow(action, page, runner, ctx)
-        return run_skill(self, action, page, runner, ctx, recorder=self._recorder,
-                         ignore=self._ignore, profile=self.profile, policy=self._policy,
-                         provider=self.provider)
+        if action.type in SKILL_ACTIONS:
+            return run_skill(self, action, page, runner, ctx, recorder=self._recorder,
+                             ignore=self._ignore, profile=self.profile, policy=self._policy,
+                             provider=self.provider)
+        return [self.execute(action, page, runner, ctx)]
 
     def evidence_path(self, name: str) -> Path:
         """Where a skill keeps an extra screenshot: ``images/<flow>__<profile>__<name>``."""
@@ -292,8 +278,10 @@ class FlowRunner:
         if not sr.evidence.diagnosis and not sr.group:
             section: tuple[list, list] = ([], [])
             if self._recorder is not None:
-                section = (self._recorder.errors_since(self._section_seq, 50),
-                           self._recorder.failures_since(self._section_seq, 50))
+                section = ([c for c in self._recorder.errors_since(self._section_seq, 50)
+                            if self._ignore.keeps_console(c)],
+                           [n for n in self._recorder.failures_since(self._section_seq, 50)
+                            if self._ignore.keeps_network(n)])
             sr.evidence.diagnosis = diagnose(sr, page, section)
         return sr
 
@@ -330,10 +318,7 @@ class FlowRunner:
                 action, f"Failed to load sub-flow '{ref}': {exc}", 0, not_attempted,
                 error=str(exc)), page)]
 
-        logger.info(
-            f"[run_flow] Executing sub-flow '{sub_flow.name}' "
-            f"({len(sub_flow.actions)} actions)"
-        )
+        logger.info("[run_flow] Executing sub-flow '%s' (%d actions)", sub_flow.name, len(sub_flow.actions))
 
         # Marker step for the report
         marker = StepResult(
@@ -346,28 +331,17 @@ class FlowRunner:
         self._seen_flows.add(ref)
         self._nesting_depth += 1
         results: list[StepResult] = [marker]
-
-        for sub_action in sub_flow.actions:
-            # Support nested run_flow and skills inside a sub-flow
-            if sub_action.type == ActionType.RUN_FLOW or sub_action.type in SKILL_ACTIONS:
-                nested = self._run_group(sub_action, page, runner, ctx)
-                for sr in nested:
+        try:
+            for sub_action in sub_flow.actions:
+                produced = self.run_action(sub_action, page, runner, ctx)
+                for sr in produced:
                     sr.sub_flow = sr.sub_flow or sub_flow.name
-                    results.append(sr)
-                    if not sr.success:
-                        self._nesting_depth -= 1
-                        self._seen_flows.discard(ref)
-                        return results
-                continue
-
-            sr = self.execute(sub_action, page, runner, ctx)
-            sr.sub_flow = sub_flow.name
-            results.append(sr)
-            if not sr.success:
-                break
-
-        self._nesting_depth -= 1
-        self._seen_flows.discard(ref)
+                results += produced
+                if not all(sr.success for sr in produced):
+                    break                      # a sub-flow stops at its first failure
+        finally:
+            self._nesting_depth -= 1
+            self._seen_flows.discard(ref)
         return results
 
     # ── Single step execution ─────────────────────────────────────
@@ -433,10 +407,7 @@ class FlowRunner:
         # AI-native actions bypass L1/L2 entirely
         if action.type in AI_ONLY_ACTIONS:
             if not self._ai.available:
-                logger.warning(
-                    f"[L3] Skipped AI action '{action.type.value}' — "
-                    "LLM provider not configured"
-                )
+                logger.warning("[L3] Skipped AI action '%s' — LLM provider not configured", action.type.value)
                 return _fail(
                     action,
                     f"AI action '{action.type.value}' requires AI_PROVIDER, LLM_KEY and LLM_MODEL "
@@ -456,33 +427,18 @@ class FlowRunner:
             return runner.execute(action)   # Layer 1 → Layer 2 internally
         except Exception as exc:
             error_msg = str(exc)
-            logger.warning(
-                f"[L1+L2] Step {action.step_num} ({action.type.value} {action.args}) "
-                f"failed: {error_msg}"
-            )
+            logger.warning("[L1+L2] Step %s (%s %s) failed: %s",
+                           action.step_num, action.type.value, action.args, _first_line(error_msg))
             layers = {L1: "failed", L2: "failed"}
 
             # Layer 3 — AI fallback, only for actions L3 can actually perform
             # (element interactions). Assertions/waits/keys have no L3 path:
-            # sending them would cost two LLM calls and could not change the
-            # outcome.
+            # an LLM call could not change their outcome. One call: the prompt
+            # already carries the URL, title, error and every control on the page.
             if self._ai.available and self._ai.supports(action.type):
                 ai_result = self._ai.resolve(action, page, error_msg, ctx)
                 if ai_result is not None:
                     return ai_result
-
-                # Single re-prompt with enriched context
-                enriched = (
-                    f"{error_msg}\n"
-                    f"L3 first attempt returned no match. "
-                    f"Page URL: {page.url}, Title: {page.title()}"
-                )
-                logger.debug("[L3] Re-prompting with enriched context")
-                ai_retry = self._ai.resolve(action, page, enriched, ctx)
-                if ai_retry is not None:
-                    return ai_retry
-
-                # Both L3 attempts failed
                 layers[L3] = "failed"
                 return _fail(action, f"All layers failed: {error_msg}", 3, layers, error=error_msg)
 
