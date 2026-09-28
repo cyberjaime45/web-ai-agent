@@ -69,7 +69,7 @@ stages:
               targetType: 'inline'
               script: |
                 echo "Selected Production Test: ${{ parameters.WEB_APP }} ($(FLOW_PATH))"
-                uv run pytest "$(FLOW_PATH)" --junitxml=reports/junit.xml
+                uv run pytest "$(FLOW_PATH)"
               workingDirectory: '$(Build.SourcesDirectory)'
               failOnStderr: false
             env:
@@ -80,7 +80,8 @@ stages:
             condition: always()
             inputs:
               testResultsFormat: 'JUnit'
-              testResultsFiles: 'reports/junit.xml'
+              # one result per test case (flow section), the same count as summary.json
+              testResultsFiles: 'reports/*/junit.xml'
               searchFolder: '$(Build.SourcesDirectory)'
               testRunTitle: '${{ parameters.WEB_APP }} Production Smoke'
 
@@ -93,6 +94,7 @@ stages:
           
           - task: Bash@3
             displayName: 'After Run'
+            condition: always()
             inputs:
               targetType: 'filePath'
               filePath: 'after_run.sh'

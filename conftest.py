@@ -124,17 +124,19 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     started = plugin.session_start if plugin else None
     duration = time.time() - started if started else 0.0
     lines = execution_summary(
-        terminalreporter.stats, duration, settings.run_label(), get_build_name()
+        terminalreporter.stats, plugin.files.totals if plugin and plugin.files else None,
+        duration, settings.run_label(), get_build_name(),
     )
     if lines:
         terminalreporter.section("Execution summary")
         for line in lines:
             terminalreporter.write_line(line)
-    if plugin and plugin.report_path:
+    if plugin and plugin.files:
         terminalreporter.section("Report")
         terminalreporter.write_line(f"HTML : {plugin.report_path}")
-        for path in plugin.json_paths:
-            terminalreporter.write_line(f"JSON : {path}")
+        terminalreporter.write_line(f"JSON : {plugin.files.summary}")
+        terminalreporter.write_line(f"JSON : {plugin.files.test_cases}")
+        terminalreporter.write_line(f"JUnit: {plugin.files.junit}")
 
 
 # ── Inline / explicit-path flow injection ─────────────────────

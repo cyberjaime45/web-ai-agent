@@ -40,8 +40,8 @@ open reports/staging/report.html                       # HTML report under repor
 ```
 
 pytest exits `0` when every flow passes and non-zero otherwise, so the same
-command is the CI gate. Add `--junitxml=reports/junit.xml` to publish results,
-and pass `ENVIRONMENT`, `BUILD_NAME` and flow secrets (for example `FMS_EMAIL`
+command is the CI gate. Publish `reports/<ENVIRONMENT>/junit.xml` as test
+results — one result per test case (flow section), matching `summary.json` — and pass `ENVIRONMENT`, `BUILD_NAME` and flow secrets (for example `FMS_EMAIL`
 and `FMS_PASSWORD` for `tests/fms/production_smoke.md`) as pipeline variables.
 `azure_pipelines.yml` is a working reference.
 

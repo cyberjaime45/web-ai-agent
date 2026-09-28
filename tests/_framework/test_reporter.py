@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -352,11 +353,36 @@ def test_generate_report_counts_section_tests(tmp_path):
     out = tmp_path / "report.html"
     r = make_result(outcome="failed", error="boom", longrepr="tb",
                     flow_steps=sectioned_steps())
-    generate_report([r], time.time() - 5, out, "staging")
+    files = generate_report([r], time.time() - 5, out, "staging")
     payload = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert payload["totals"]["total"] == 3
     assert payload["totals"]["passed"] == 2
     assert payload["totals"]["failed"] == 1
+    assert files.totals == payload["totals"]   # what the console summary prints
+
+
+def test_junit_has_one_testcase_per_report_test(tmp_path):
+    """CI sees the sections as test cases: a flow with one failed section is
+    2 passed + 1 failed, not one failed test — the same counts as summary.json."""
+    flow = make_result(outcome="failed", error="boom", longrepr="tb",
+                       flow_steps=sectioned_steps(), flow_title="SSO")
+    py = make_result(nodeid="tests/x.py::test_a")
+    skip = make_result(nodeid="tests/x.py::test_b", outcome="skipped")
+    files = generate_report([flow, py, skip], time.time(), tmp_path / "report.html", "qa1")
+    root = ET.parse(files.junit).getroot()
+    assert (root.get("tests"), root.get("failures"), root.get("errors"), root.get("skipped")) == (
+        "5", "1", "0", "1")
+    totals = files.totals
+    assert (totals["total"], totals["passed"], totals["failed"], totals["skipped"]) == (5, 3, 1, 1)
+    suites = root.findall("testsuite")
+    assert [(s.get("name"), s.get("tests"), s.get("failures")) for s in suites] == [
+        ("SSO", "3", "1"), ("tests/x.py", "2", "0")]
+    cases = suites[0].findall("testcase")
+    assert [c.get("name") for c in cases] == ["Login Page", "Home Page", "Leads Page"]
+    assert cases[0].get("classname") == "flows/login/sso.md"
+    failure = cases[1].find("failure")
+    assert failure.get("message") == "nope" and failure.text == "tb"
+    assert suites[1].findall("testcase")[1].find("skipped") is not None
 
 
 # ── generate_report ──────────────────────────────────────────────────────────
@@ -403,7 +429,8 @@ def test_json_files_have_fixed_names_and_summary_counts_the_test_cases(tmp_path,
     out = tmp_path / "report.html"
     results = [make_result(), make_result(nodeid="flows/b.md::B", outcome="failed", error="x"),
                make_result(nodeid="flows/c.md::C", outcome="skipped")]
-    summary_path, cases_path = generate_report(results, time.time() - 2, out, "qa1")
+    files = generate_report(results, time.time() - 2, out, "qa1")
+    summary_path, cases_path = files.summary, files.test_cases
     assert (summary_path.name, cases_path.name) == ("summary.json", "test_cases.json")
     assert sorted(p.name for p in tmp_path.glob("*.json")) == ["summary.json", "test_cases.json"]
     summary = json.loads(summary_path.read_text(encoding="utf-8"))

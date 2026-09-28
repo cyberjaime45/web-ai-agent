@@ -47,11 +47,11 @@ _GLYPHS: dict[str, tuple[str, dict[str, bool]]] = {
     "rerun": ("↻", {"yellow": True}),
 }
 
-# Result categories that represent test outcomes; TerminalReporter.stats also
-# holds non-report entries under other keys ("deselected", "warnings", "").
-_OUTCOMES = ("passed", "failed", "error", "skipped", "xfailed", "xpassed")
+# Stats categories a flow item's report can land in; TerminalReporter.stats
+# also holds non-report entries under other keys ("deselected", "warnings", "").
+_OUTCOMES = ("passed", "failed", "error", "skipped")
 
-# How many of the slowest tests the execution summary lists.
+# How many of the slowest flows the execution summary lists.
 _SLOWEST_N = 3
 
 
@@ -182,54 +182,51 @@ def install_console_reporter(config: pytest.Config) -> None:
 
 def execution_summary(
     stats: dict[str, list],
+    totals: dict | None,
     duration_s: float,
     environment: str | None = None,
     build_name: str | None = None,
 ) -> list[str]:
-    """The end-of-run summary block, from counters pytest already keeps.
+    """The end-of-run summary block.
 
-    One pass over ``TerminalReporter.stats`` — no filesystem or report-file
-    access. Returns no lines when nothing ran (collect-only, full deselect).
+    Passed / Failed / Skipped are *totals* — ``summary.json``'s counts of test
+    cases (one per flow ``## section``), the numbers junit.xml and the report
+    show. ``TerminalReporter.stats`` adds what only the pytest items know:
+    how many flows ran, healed steps, retries and the slowest flows. No
+    filesystem access. Returns no lines when no report was written
+    (collect-only, full deselect).
     *environment* is a preformatted label (e.g. ``staging · chromium · headless``);
     *build_name* is the run label (BUILD_NAME or its fallback).
     """
-    counts = {category: len(stats.get(category, [])) for category in _OUTCOMES}
-    total = sum(counts.values())
-    if total == 0:
+    if not totals or not totals.get("total"):
         return []
 
     flow_files: set[str] = set()
-    flows = 0
-    healings = 0
-    on_retry = 0
+    healings = on_retry = 0
     timed: list[tuple[float, str]] = []
     for category in _OUTCOMES:
         for report in stats.get(category, []):
             props = getattr(report, "user_properties", None)
             info = flow_info(report.nodeid, props)
-            if info is not None:
-                flows += 1
-                flow_files.add(info[0])
-                label = flow_label(info)
-            else:
-                label = report.nodeid.rpartition("::")[2]
-            healings += int(dict(props or ()).get(HEALINGS_PROP, 0))
-            on_retry += int(dict(props or ()).get(FLAKY_PROP, 0))
-            timed.append((float(getattr(report, "duration", 0.0) or 0.0), label))
+            if info is None:
+                continue   # not a flow
+            flow_files.add(info[0])
+            extra = dict(props or ())
+            healings += int(extra.get(HEALINGS_PROP, 0))
+            on_retry += int(extra.get(FLAKY_PROP, 0))
+            timed.append((float(getattr(report, "duration", 0.0) or 0.0), flow_label(info)))
 
     rows: list[tuple[str, str]] = []
     if build_name:
         rows.append(("Build", build_name))
     if environment:
         rows.append(("Environment", environment))
-    if flows:
-        rows.append(("Python tests", str(total - flows)))
-        rows.append(("Flows", f"{flows} (in {len(flow_files)} files)"))
-    else:
-        rows.append(("Tests", str(total)))
-    rows.append(("Passed", str(counts["passed"] + counts["xpassed"])))
-    rows.append(("Failed", str(counts["failed"] + counts["error"])))
-    rows.append(("Skipped", str(counts["skipped"] + counts["xfailed"])))
+    if timed:
+        files = len(flow_files)
+        rows.append(("Flows", f"{len(timed)} (in {files} file{'' if files == 1 else 's'})"))
+    rows.append(("Passed", str(totals["passed"])))
+    rows.append(("Failed", str(totals["failed"] + totals["errors"])))
+    rows.append(("Skipped", str(totals["skipped"])))
     if retries := len(stats.get("rerun", [])):
         rows.append(("Retries", str(retries)))
     if on_retry:
@@ -237,10 +234,9 @@ def execution_summary(
     if healings:
         rows.append(("Healed steps", f"{healings} (resolved by L2/L3)"))
     rows.append(("Duration", format_duration(duration_s)))
-    if total >= 2:
-        top = sorted(timed, key=lambda pair: -pair[0])[:_SLOWEST_N]
-        for index, (duration, label) in enumerate(top):
-            rows.append(("Slowest" if index == 0 else "", f"{label}  {format_duration(duration)}"))
+    for index, (duration, label) in enumerate(sorted(timed, reverse=True)[:_SLOWEST_N]
+                                              if len(timed) >= 2 else []):
+        rows.append(("Slowest" if index == 0 else "", f"{label}  {format_duration(duration)}"))
 
     width = max(len(name) for name, _ in rows if name) + 2
     return [f"{(name + ':') if name else '':<{width}} {value}" for name, value in rows]

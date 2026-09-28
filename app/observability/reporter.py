@@ -9,6 +9,7 @@ the whole environment folder is portable):
     ├── test_cases.json     every test with full detail inline (steps, failures,
     │                       attachments, console, network); the totals in
     │                       summary.json are counted from this list
+    ├── junit.xml           the same test cases as JUnit XML, for CI test tabs
     ├── assets/report.css   static styles
     ├── assets/report.js    static rendering code (summary, lists, timeline)
     ├── assets/report-detail.js  per-test drawer + console/network views
@@ -41,8 +42,9 @@ import os
 import platform
 import shutil
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from app.config.settings import settings
 from app.observability.report_model import build_tests
@@ -108,15 +110,51 @@ def _js_json(obj: Any) -> str:
     return data.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
+class ReportFiles(NamedTuple):
+    """What generate_report wrote, plus the totals every other output repeats."""
+    summary: Path
+    test_cases: Path
+    junit: Path
+    totals: dict
+
+
+def _write_junit(path: Path, tests: list[dict], created_at: str) -> None:
+    """One <testcase> per report test (a flow section, or a Python test), one
+    <testsuite> per file — so CI test tabs count what summary.json counts."""
+    root = ET.Element("testsuites", name="web-agent")
+    suites: dict[str, ET.Element] = {}
+    for t in tests:
+        suite = suites.get(t["file"])
+        if suite is None:
+            suite = suites[t["file"]] = ET.SubElement(
+                root, "testsuite", name=t.get("file_title") or t["file"], timestamp=created_at)
+        case = ET.SubElement(suite, "testcase", classname=t["file"], name=t["name"],
+                             time=f"{t['duration_ms'] / 1000:.3f}")
+        error = t.get("error") or {}
+        if t["status"] in ("failed", "error"):
+            tag = "failure" if t["status"] == "failed" else "error"
+            ET.SubElement(case, tag, message=error.get("message") or "",
+                          type=error.get("kind") or "").text = error.get("traceback") or None
+        elif t["status"] == "skipped":
+            ET.SubElement(case, "skipped")
+    for element in (root, *suites.values()):   # iter() reaches every case below it
+        cases = list(element.iter("testcase"))
+        element.set("tests", str(len(cases)))
+        for tag, attr in (("failure", "failures"), ("error", "errors"), ("skipped", "skipped")):
+            element.set(attr, str(sum(c.find(tag) is not None for c in cases)))
+        element.set("time", f"{sum(float(c.get('time')) for c in cases):.3f}")
+    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+
+
 def generate_report(
     results: list[dict],
     session_start: float,
     output_path: Path,   # e.g. reports/staging/report.html
     environment: str = "staging",
-) -> tuple[Path, Path]:
-    """Write report.html, summary.json, test_cases.json, assets/{report.css,report.js,data.js}.
-
-    Returns the paths of summary.json and test_cases.json.
+) -> ReportFiles:
+    """Write report.html, summary.json, test_cases.json, junit.xml and
+    assets/{report.css,report.js,data.js}. Every count comes from one list of
+    tests (``report_model.build_tests``), so the outputs never disagree.
     """
     report_dir = output_path.parent
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -211,8 +249,10 @@ def generate_report(
     # totals were counted from in test_cases.json (run_id ties the two together).
     summary_path = report_dir / "summary.json"
     cases_path = report_dir / "test_cases.json"
+    junit_path = report_dir / "junit.xml"
     summary = {k: v for k, v in payload.items() if k != "tests"}
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     cases_path.write_text(json.dumps({"run_id": payload["run_id"], "tests": tests},
                                      indent=2, ensure_ascii=False), encoding="utf-8")
-    return summary_path, cases_path
+    _write_junit(junit_path, tests, payload["created_at"])
+    return ReportFiles(summary_path, cases_path, junit_path, payload["totals"])

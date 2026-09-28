@@ -57,85 +57,93 @@ def _flow_report(file: str, name: str) -> SimpleNamespace:
     )
 
 
-def test_summary_is_empty_when_nothing_ran():
-    assert execution_summary({}, 1.0) == []
-    assert execution_summary({"deselected": [object()]}, 1.0) == []
+def _totals(passed=0, failed=0, skipped=0, errors=0) -> dict:
+    total = passed + failed + skipped + errors
+    return {"total": total, "passed": passed, "failed": failed,
+            "skipped": skipped, "errors": errors}
 
 
-def test_summary_splits_python_tests_from_flows():
+def _rows(lines: list[str]) -> dict[str, str]:
+    return {name: value.strip()
+            for name, sep, value in (line.partition(":") for line in lines) if sep}
+
+
+def test_summary_is_empty_without_report_totals():
+    flow = {"passed": [_flow_report("home_page.md", "Home Page")]}
+    assert execution_summary(flow, None, 1.0) == []
+    assert execution_summary({"deselected": [object()]}, _totals(), 1.0) == []
+
+
+def test_summary_counts_test_cases_from_the_report_totals():
+    """One flow of 31 sections, one failed: the console agrees with summary.json."""
+    stats = {"failed": [_flow_report("production_smoke.md", "FMS MVC Smoke Tests")]}
+    lines = execution_summary(stats, _totals(passed=30, failed=1), 89.0,
+                              "production · chromium · headless", "FMS MVC Smoke Test")
+    assert lines == [
+        "Build:        FMS MVC Smoke Test",
+        "Environment:  production · chromium · headless",
+        "Flows:        1 (in 1 file)",
+        "Passed:       30",
+        "Failed:       1",
+        "Skipped:      0",
+        "Duration:     1m29s",
+    ]
+
+
+def test_summary_counts_flows_and_files_and_folds_errors_into_failed():
     stats = {
-        "passed": [
-            _report("tests/x.py::test_a"),
-            _flow_report("home_page.md", "Home Page"),
-            _flow_report("booking_flow.md", "One Way Booking"),
-        ],
+        "passed": [_flow_report("home_page.md", "Home Page"),
+                   _flow_report("booking_flow.md", "One Way Booking")],
         "failed": [_flow_report("booking_flow.md", "Round Trip Booking")],
         "rerun": [_flow_report("booking_flow.md", "Round Trip Booking")],
     }
-    lines = execution_summary(stats, 42.8)
-    text = "\n".join(lines)
-    assert "Python tests:  1" in text
-    assert "Flows:         3 (in 2 files)" in text
-    assert "Passed:        3" in text
-    assert "Failed:        1" in text
-    assert "Skipped:       0" in text
-    assert "Retries:       1" in text
-    assert "Duration:      43s" in text
+    rows = _rows(execution_summary(stats, _totals(passed=8, failed=1, errors=1, skipped=2), 42.8))
+    assert rows["Flows"] == "3 (in 2 files)"
+    assert (rows["Passed"], rows["Failed"], rows["Skipped"]) == ("8", "2", "2")
+    assert rows["Retries"] == "1"
+    assert rows["Duration"] == "43s"
 
 
-def test_summary_without_flows_shows_a_single_count():
-    lines = execution_summary({"passed": [_report("tests/x.py::test_a")]}, 1.0)
-    assert any(line.startswith("Tests:") for line in lines)
-    assert not any(line.startswith("Flows:") for line in lines)
-
-
-def test_summary_environment_line_uses_the_given_label():
-    lines = execution_summary(
-        {"passed": [_report("tests/x.py::test_a")]}, 1.0, "qa1 · firefox · headed"
-    )
-    assert any("qa1 · firefox · headed" in line for line in lines)
+def test_summary_has_no_flows_row_when_no_flow_ran():
+    rows = _rows(execution_summary({"passed": [_report("tests/x.py::test_a")]}, _totals(passed=1), 1.0))
+    assert "Flows" not in rows and "Python tests" not in rows and "Test cases" not in rows
+    assert rows["Passed"] == "1"
 
 
 def test_summary_build_row_leads_when_given():
-    report = {"passed": [_report("tests/x.py::test_a")]}
-    lines = execution_summary(report, 1.0, "qa1 · chromium · headless", "Release 4.2 Smoke")
-    assert lines[0].startswith("Build:") and lines[0].endswith("Release 4.2 Smoke")
-    assert lines[1].startswith("Environment:")
-    assert not any(line.startswith("Build:") for line in execution_summary(report, 1.0))
+    stats = {"passed": [_flow_report("home_page.md", "Home Page")]}
+    lines = execution_summary(stats, _totals(passed=1), 1.0, "qa1 · chromium · headless", "Release 4.2")
+    assert lines[0].startswith("Build:") and lines[0].endswith("Release 4.2")
+    assert lines[1].startswith("Environment:") and lines[1].endswith("qa1 · chromium · headless")
+    assert not any(line.startswith("Build:") for line in execution_summary(stats, _totals(passed=1), 1.0))
 
 
-def test_summary_counts_healed_steps_only_when_present():
-    healed = {
-        "passed": [
-            _report("tests/x.py::test_a", [("webagent_healings", 2)]),
-            _report("tests/x.py::test_b", [("webagent_healings", 1)]),
-        ]
-    }
-    lines = execution_summary(healed, 1.0)
-    assert any(line.startswith("Healed steps:  3") for line in lines)
+def test_summary_counts_healed_steps_and_retry_passes_only_when_present():
+    props = [("webagent_flow_file", "a.md"), ("webagent_flow_name", "A")]
+    healed = {"passed": [
+        _report("tests/a.md::A", [*props, ("webagent_healings", 2), ("webagent_passed_on_retry", 1)]),
+        _report("tests/b.md::B", [("webagent_healings", 1)]),
+    ]}
+    rows = _rows(execution_summary(healed, _totals(passed=2), 1.0))
+    assert rows["Healed steps"] == "3 (resolved by L2/L3)"
+    assert rows["Passed on retry"].startswith("1 section(s)")
 
-    clean = {"passed": [_report("tests/x.py::test_a"), _report("tests/x.py::test_b")]}
-    assert not any("Healed steps" in line for line in execution_summary(clean, 1.0))
+    clean = {"passed": [_flow_report("a.md", "A"), _flow_report("b.md", "B")]}
+    rows = _rows(execution_summary(clean, _totals(passed=2), 1.0))
+    assert "Healed steps" not in rows and "Passed on retry" not in rows
 
 
-def test_summary_lists_the_slowest_tests_first():
-    stats = {
-        "passed": [
-            _report("tests/x.py::test_fast", duration=0.2),
-            _report("tests/x.py::test_slow", duration=5.0),
-            _flow_report("booking_flow.md", "One Way Booking"),
-            _report("tests/x.py::test_mid", duration=2.0),
-        ]
-    }
-    stats["passed"][2].duration = 3.0
-    lines = execution_summary(stats, 10.0)
+def test_summary_lists_the_slowest_flows_first():
+    stats = {"passed": [_flow_report(f"{n}.md", n.title()) for n in ("fast", "slow", "mid", "tiny")]}
+    for report, seconds in zip(stats["passed"], (0.2, 5.0, 2.0, 0.1)):
+        report.duration = seconds
+    stats["passed"].append(_report("tests/x.py::test_py", duration=9.0))   # not a flow
+    lines = execution_summary(stats, _totals(passed=5), 10.0)
     slowest_at = next(i for i, line in enumerate(lines) if line.startswith("Slowest:"))
-    assert "test_slow  5.0s" in lines[slowest_at]
-    assert "booking_flow.md » One Way Booking  3.0s" in lines[slowest_at + 1]
-    assert "test_mid  2.0s" in lines[slowest_at + 2]
-    assert len(lines) == slowest_at + 3  # capped at three entries
+    assert [line.removeprefix("Slowest:").strip() for line in lines[slowest_at:]] == [
+        "slow.md » Slow  5.0s", "mid.md » Mid  2.0s", "fast.md » Fast  0.2s"]
 
 
-def test_summary_skips_slowest_for_a_single_test():
-    lines = execution_summary({"passed": [_report("tests/x.py::test_a", duration=1.0)]}, 1.0)
-    assert not any("Slowest" in line for line in lines)
+def test_summary_skips_slowest_for_a_single_flow():
+    stats = {"passed": [_flow_report("a.md", "A")]}
+    assert not any("Slowest" in line for line in execution_summary(stats, _totals(passed=4), 1.0))

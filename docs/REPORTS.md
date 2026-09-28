@@ -25,9 +25,8 @@ tests/members_site/flows/booking_flow.md
 ============================ Execution summary =============================
 Build:         Web Test Report
 Environment:   staging · chromium · headless
-Python tests:  0
 Flows:         2 (in 2 files)
-Passed:        1
+Passed:        8
 Failed:        1
 Skipped:       0
 Healed steps:  3 (resolved by L2/L3)
@@ -38,7 +37,14 @@ Slowest:       production_smoke.md » FMS MVC Smoke Tests  3m00s
 HTML : .../reports/staging/report.html
 JSON : .../reports/staging/summary.json
 JSON : .../reports/staging/test_cases.json
+JUnit: .../reports/staging/junit.xml
 ```
+
+*Flows* counts the Markdown flows that ran. A flow with `## sections` is
+split into one test case per section; *Passed*, *Failed* (errors included)
+and *Skipped* count those test cases and are read from `summary.json`, so the
+console, the JSON and `junit.xml` always agree. A failed section still fails
+its flow, so pytest's exit code (the CI gate) is unchanged.
 
 *Healed steps* counts steps that L1 could not resolve and L2/L3 recovered.
 Pass `-v` or `-q` to get pytest's stock output instead.
@@ -57,6 +63,8 @@ reports/staging/
 ├── test_cases.json      # {"run_id", "tests": [...]}: every test, full detail inline
 │                        # (steps, failures, attachments, console, network); summary
 │                        # totals are counted from this list
+├── junit.xml            # The same test cases as JUnit XML (one <testsuite> per file)
+│                        # for CI test tabs, e.g. Azure PublishTestResults
 ├── assets/
 │   ├── report.css
 │   ├── report.js         # Summary, attention list, tests, suites, timeline
