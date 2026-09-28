@@ -43,7 +43,9 @@ pytest exits `0` when every flow passes and non-zero otherwise, so the same
 command is the CI gate. Publish `reports/<ENVIRONMENT>/junit.xml` as test
 results — one result per test case (flow section), matching `summary.json` — and pass `ENVIRONMENT`, `BUILD_NAME` and flow secrets (for example `FMS_EMAIL`
 and `FMS_PASSWORD` for `tests/fms/production_smoke.md`) as pipeline variables.
-`azure_pipelines.yml` is a working reference.
+`azure_pipelines.yml` is a working reference; it marks the test step
+*succeeded with issues* when test cases fail (pytest exit `1`) and fails it
+on any other non-zero exit.
 
 Flows live beside the suite for the application they exercise —
 `tests/<app>/*.md`, shared sub-flows in `components/` — and pytest picks them

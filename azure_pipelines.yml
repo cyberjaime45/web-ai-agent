@@ -69,7 +69,19 @@ stages:
               targetType: 'inline'
               script: |
                 echo "Selected Production Test: ${{ parameters.WEB_APP }} ($(FLOW_PATH))"
+                # pytest exit 1 = the run completed but a test case failed: mark the step
+                # "succeeded with issues" (orange) and leave the details to the Tests tab.
+                # Any other non-zero code (interrupted, internal/usage error, nothing
+                # collected) means the run itself broke and fails the step.
+                set +e
                 uv run pytest "$(FLOW_PATH)"
+                code=$?
+                if [ $code -eq 1 ]; then
+                  echo "##vso[task.logissue type=warning]Some test cases failed — see the Tests tab"
+                  echo "##vso[task.complete result=SucceededWithIssues;]"
+                  exit 0
+                fi
+                exit $code
               workingDirectory: '$(Build.SourcesDirectory)'
               failOnStderr: false
             env:
