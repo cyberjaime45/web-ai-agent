@@ -24,9 +24,8 @@ def make_step(label="click: \"Login\"", passed=True, skipped=False, msg="",
 
 
 def _json_report(report_dir):
-    """The single report_<build>.json in *report_dir*."""
-    (found,) = report_dir.glob("report_*.json")
-    return found
+    """test_cases.json in *report_dir*: the full per-test detail."""
+    return report_dir / "test_cases.json"
 
 
 def make_result(nodeid="flows/login/sso.md::SSO Login", outcome="passed",
@@ -354,7 +353,7 @@ def test_generate_report_counts_section_tests(tmp_path):
     r = make_result(outcome="failed", error="boom", longrepr="tb",
                     flow_steps=sectioned_steps())
     generate_report([r], time.time() - 5, out, "staging")
-    payload = json.loads(_json_report(tmp_path).read_text(encoding="utf-8"))
+    payload = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert payload["totals"]["total"] == 3
     assert payload["totals"]["passed"] == 2
     assert payload["totals"]["failed"] == 1
@@ -391,23 +390,32 @@ def test_generate_report_writes_all_files(tmp_path, monkeypatch):
     assert payload["totals"]["pass_rate"] == 50.0
     assert payload["environment"]["env"] == "staging"
     assert payload["environment"]["build_name"] == "Web Test Report"
-    assert _json_report(tmp_path).name == "report_web_test_report.json"
-    # the JSON report mirrors the payload, plus the full inline detail arrays
+    # summary.json = run meta + totals; test_cases.json = the tests, full detail inline
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary == {k: v for k, v in payload.items() if k != "tests"}
     full = json.loads(_json_report(tmp_path).read_text(encoding="utf-8"))
-    assert full["totals"] == payload["totals"]
+    assert full["run_id"] == summary["run_id"]
     assert [t["id"] for t in full["tests"]] == [t["id"] for t in payload["tests"]]
 
 
-def test_json_report_is_named_for_the_build_and_replaces_stale_ones(tmp_path, monkeypatch):
-    out = tmp_path / "report.html"
-    (tmp_path / "report.json").write_text("{}")              # legacy unsuffixed name
+def test_json_files_have_fixed_names_and_summary_counts_the_test_cases(tmp_path, monkeypatch):
     monkeypatch.setenv("BUILD_NAME", "Release 4.2 Smoke")
-    assert generate_report([make_result()], time.time(), out, "qa1").name == "report_release_4_2_smoke.json"
-    monkeypatch.setenv("BUILD_NAME", "Nightly")
-    path = generate_report([make_result()], time.time(), out, "qa1")
-    assert path.name == "report_nightly.json"
-    assert sorted(p.name for p in tmp_path.glob("report*.json")) == ["report_nightly.json"]
-    assert json.loads(path.read_text(encoding="utf-8"))["environment"]["build_name"] == "Nightly"
+    out = tmp_path / "report.html"
+    results = [make_result(), make_result(nodeid="flows/b.md::B", outcome="failed", error="x"),
+               make_result(nodeid="flows/c.md::C", outcome="skipped")]
+    summary_path, cases_path = generate_report(results, time.time() - 2, out, "qa1")
+    assert (summary_path.name, cases_path.name) == ("summary.json", "test_cases.json")
+    assert sorted(p.name for p in tmp_path.glob("*.json")) == ["summary.json", "test_cases.json"]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    tests = json.loads(cases_path.read_text(encoding="utf-8"))["tests"]
+    assert "tests" not in summary
+    assert summary["environment"]["build_name"] == "Release 4.2 Smoke"
+    statuses = [t["status"] for t in tests]
+    totals = summary["totals"]
+    assert totals["total"] == len(tests) == 3
+    assert [totals[k] for k in ("passed", "failed", "skipped", "errors")] == [
+        statuses.count(s) for s in ("passed", "failed", "skipped", "error")]
+    assert totals["pass_rate"] == 50.0 and totals["duration_ms"] >= 2000
 
 
 def _slim_payload(tmp_path):
@@ -445,7 +453,7 @@ def test_generate_report_shards_detail_per_test(tmp_path):
     assert [c["text"] for c in _shard(tmp_path, 0)["console"]] == ["boom"]
     assert [c["text"] for c in _shard(tmp_path, 1)["console"]] == ["meh"]
     assert [n["url"] for n in _shard(tmp_path, 2)["network"]] == ["https://x/a"]
-    # report.json keeps the inline arrays (machine mirror, CI compat)
+    # test_cases.json keeps the inline arrays (machine mirror, CI compat)
     full = json.loads(_json_report(tmp_path).read_text(encoding="utf-8"))
     assert [len(t["console"]) for t in full["tests"]] == [1, 1, 0]
     assert [len(t["network"]) for t in full["tests"]] == [0, 0, 1]

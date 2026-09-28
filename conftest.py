@@ -133,7 +133,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     if plugin and plugin.report_path:
         terminalreporter.section("Report")
         terminalreporter.write_line(f"HTML : {plugin.report_path}")
-        terminalreporter.write_line(f"JSON : {plugin.json_path}")
+        for path in plugin.json_paths:
+            terminalreporter.write_line(f"JSON : {path}")
 
 
 # ── Inline / explicit-path flow injection ─────────────────────

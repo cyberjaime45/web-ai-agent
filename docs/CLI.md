@@ -98,7 +98,7 @@ only has effect with `ALLOW_DESTRUCTIVE=true`. Under pytest the same is
 ```bash
 uv run python main.py lint                               # every flow under tests/
 uv run python main.py lint tests/fms --strict            # exit 1 when there are findings
-uv run python main.py lint --report reports/production/report_*.json   # + steps healed by L2/L3
+uv run python main.py lint --report reports/production/test_cases.json   # + steps healed by L2/L3
 uv run python main.py lint --json
 ```
 
@@ -117,7 +117,7 @@ Static checks over flow files: no browser, no LLM. Each finding is
 | `repeated-steps` | Three or more steps, in order, already in another flow — a component candidate |
 | `parse-error` | A file the parser rejects |
 
-`--report` reads report JSON files and lists the steps that passed only
+`--report` reads `test_cases.json` files and lists the steps that passed only
 through L2 or L3, with how many reports they appear in: the UI changed and
 the flow's target is due an update. The exit code is `0` unless `--strict`
 is given and something was found; `2` when a path does not exist.

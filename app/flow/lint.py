@@ -223,7 +223,7 @@ def lint(paths: list[Path], root: Path | None = None) -> list[Finding]:
 
 
 def healings(report_files: list[Path]) -> list[dict]:
-    """Steps healed by L2 / L3 in report JSON files, most frequent first."""
+    """Steps healed by L2 / L3 in ``test_cases.json`` files, most frequent first."""
     seen: Counter[tuple[str, str, str, str]] = Counter()
     for report in report_files:
         data = json.loads(report.read_text(encoding="utf-8"))

@@ -33,7 +33,7 @@ class ProfessionalReportPlugin:
         self.captures: dict[str, dict] = {}
         self.session_start = time.time()
         self.report_path: Path | None = None
-        self.json_path: Path | None = None
+        self.json_paths: tuple[Path, ...] = ()
 
     def record_flow(self, nodeid: str, flow: FlowDefinition, profile: str) -> None:
         """Suite-level facts the report needs: the file's # title, markers, profile."""
@@ -123,7 +123,7 @@ class ProfessionalReportPlugin:
             r["network"] = capture.get("network", [])
             r["capture_dropped"] = capture.get("dropped", {})
 
-        self.json_path = generate_report(
+        self.json_paths = generate_report(
             results=self.results,
             session_start=self.session_start,
             output_path=settings.report_dir / "report.html",

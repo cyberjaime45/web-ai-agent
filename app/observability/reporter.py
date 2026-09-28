@@ -5,8 +5,10 @@ the whole environment folder is portable):
 
     reports/<env>/
     ├── report.html         static shell
-    ├── report_<build>.json this run's full payload as plain JSON; <build> is the
-    │                       BUILD_NAME slug — one JSON per folder, stale ones removed
+    ├── summary.json        run metadata + totals as plain JSON (no tests)
+    ├── test_cases.json     every test with full detail inline (steps, failures,
+    │                       attachments, console, network); the totals in
+    │                       summary.json are counted from this list
     ├── assets/report.css   static styles
     ├── assets/report.js    static rendering code (summary, lists, timeline)
     ├── assets/report-detail.js  per-test drawer + console/network views
@@ -27,7 +29,7 @@ execution-level Console/Network tab first needs it.
 
 What goes into the tests (sections, nested groups, healings, routed
 console/network) is built by ``report_model.build_tests``; this module
-writes it: assets, per-test detail shards, the slim payload and the JSON.
+writes it: assets, per-test detail shards, the slim payload and the JSON files.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from typing import Any
 from app.config.settings import settings
 from app.observability.report_model import build_tests
 from app.utils.banner import APP_VERSION
-from app.utils.build import build_slug, get_build_name
+from app.utils.build import get_build_name
 
 # packaged asset name → (folder under the report root, target name)
 _ASSETS = {
@@ -106,20 +108,15 @@ def _js_json(obj: Any) -> str:
     return data.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
-def json_report_name(build_name: str | None = None) -> str:
-    """``report_<build slug>.json`` — e.g. ``report_web_test_report.json``."""
-    return f"report_{build_slug(build_name)}.json"
-
-
 def generate_report(
     results: list[dict],
     session_start: float,
     output_path: Path,   # e.g. reports/staging/report.html
     environment: str = "staging",
-) -> Path:
-    """Write report.html, report_<build>.json, assets/{report.css,report.js,data.js}.
+) -> tuple[Path, Path]:
+    """Write report.html, summary.json, test_cases.json, assets/{report.css,report.js,data.js}.
 
-    Returns the path of the JSON report.
+    Returns the paths of summary.json and test_cases.json.
     """
     report_dir = output_path.parent
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -210,12 +207,12 @@ def generate_report(
         f"window.__WEBAGENT_DATA__ = {_js_json(dict(payload, tests=slim_tests))};\n",
         encoding="utf-8",
     )
-    # One JSON per environment folder, named for the build. report.html is
-    # overwritten every run, so a JSON from a previous build name would be
-    # orphaned — remove it (and the legacy unsuffixed report.json).
-    json_path = report_dir / json_report_name(payload["environment"]["build_name"])
-    for stale in [*report_dir.glob("report_*.json"), report_dir / "report.json"]:
-        if stale != json_path and stale.exists():
-            stale.unlink()
-    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return json_path
+    # Plain JSON for CI/tooling: run-level facts in summary.json, the tests the
+    # totals were counted from in test_cases.json (run_id ties the two together).
+    summary_path = report_dir / "summary.json"
+    cases_path = report_dir / "test_cases.json"
+    summary = {k: v for k, v in payload.items() if k != "tests"}
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    cases_path.write_text(json.dumps({"run_id": payload["run_id"], "tests": tests},
+                                     indent=2, ensure_ascii=False), encoding="utf-8")
+    return summary_path, cases_path

@@ -9,7 +9,7 @@ Usage
   python main.py run <flow.md> --env qa1   Override ENVIRONMENT (report dir).
   python main.py run <flow.md> --profile mobile   Run under the mobile device profile.
   python main.py agent-test https://example.com/members   Autonomous test of one page.
-  python main.py lint [paths…] [--report report.json]    Static flow checks; healed steps.
+  python main.py lint [paths…] [--report test_cases.json]  Static flow checks; healed steps.
 
 Exit codes
 ----------
@@ -108,7 +108,7 @@ def _build_parser() -> argparse.ArgumentParser:
     lint = sub.add_parser("lint", help="Static checks over flow files (no browser).")
     lint.add_argument("paths", nargs="*", default=["tests"], help="Flow files or folders (default: tests).")
     lint.add_argument("--report", nargs="+", default=[], metavar="JSON",
-                      help="Report JSON file(s): also list steps healed by L2/L3.")
+                      help="test_cases.json file(s): also list steps healed by L2/L3.")
     lint.add_argument("--strict", action="store_true", help="Exit 1 when there are findings.")
     lint.add_argument("--json", dest="as_json", action="store_true", help="Emit findings as JSON.")
     return parser

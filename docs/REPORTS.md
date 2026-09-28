@@ -36,7 +36,8 @@ Slowest:       production_smoke.md » FMS MVC Smoke Tests  3m00s
                booking_flow.md » One Way Booking  41s
 ================================= Report ==================================
 HTML : .../reports/staging/report.html
-JSON : .../reports/staging/report_web_test_report.json
+JSON : .../reports/staging/summary.json
+JSON : .../reports/staging/test_cases.json
 ```
 
 *Healed steps* counts steps that L1 could not resolve and L2/L3 recovered.
@@ -52,8 +53,10 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 ```
 reports/staging/
 ├── report.html          # Interactive UI (summary, failures, tests, suites, timeline, console, network)
-├── report_<build>.json  # Raw structured data, full detail inline (for CI/tooling);
-│                        # <build> = BUILD_NAME slug, e.g. report_web_test_report.json
+├── summary.json         # Run metadata + totals (tool, run_id, environment, totals) for CI/tooling
+├── test_cases.json      # {"run_id", "tests": [...]}: every test, full detail inline
+│                        # (steps, failures, attachments, console, network); summary
+│                        # totals are counted from this list
 ├── assets/
 │   ├── report.css
 │   ├── report.js         # Summary, attention list, tests, suites, timeline
