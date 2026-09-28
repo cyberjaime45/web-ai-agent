@@ -1,6 +1,6 @@
 trigger: none
 parameters:
-  - name: TEST
+  - name: WEB_APP
     displayName: Select Production Test
     type: string
     default: FMS
@@ -11,8 +11,10 @@ variables:
   - group: qa-automation
   - name: BUILD_ID
     value: $(Build.BuildId)
+  - name: WEB_APP
+    value: ${{ parameters.WEB_APP }}
   # Parameter → flow file. Add one block per new value of TEST.
-  - ${{ if eq(parameters.TEST, 'FMS') }}:
+  - ${{ if eq(parameters.WEB_APP, 'FMS') }}:
       - name: FLOW_PATH
         value: tests/fms/production_smoke.md
 
@@ -66,18 +68,12 @@ stages:
             inputs:
               targetType: 'inline'
               script: |
-                echo "Selected Production Test: ${{ parameters.TEST }} ($(FLOW_PATH))"
+                echo "Selected Production Test: ${{ parameters.WEB_APP }} ($(FLOW_PATH))"
                 uv run pytest "$(FLOW_PATH)" --junitxml=reports/junit.xml
               workingDirectory: '$(Build.SourcesDirectory)'
               failOnStderr: false
             env:
-              ENVIRONMENT: production
-              RUNNING_MODE: local
-              HEADLESS: 'true'
-              BUILD_NAME: '${{ parameters.TEST }} Production Smoke #$(BUILD_ID)'
-              # Secret variables are never exported on their own — map them explicitly.
-              FMS_EMAIL: $(FMS_EMAIL)
-              FMS_PASSWORD: $(FMS_PASSWORD)
+              BUILD_NAME: '${{ parameters.WEB_APP }} Production Smoke #$(BUILD_ID)'
 
           - task: PublishTestResults@2
             displayName: 'Publish test results'
@@ -86,11 +82,17 @@ stages:
               testResultsFormat: 'JUnit'
               testResultsFiles: 'reports/junit.xml'
               searchFolder: '$(Build.SourcesDirectory)'
-              testRunTitle: '${{ parameters.TEST }} Production Smoke'
+              testRunTitle: '${{ parameters.WEB_APP }} Production Smoke'
 
-          - task: PublishPipelineArtifact@1
-            displayName: 'Publish HTML report'
-            condition: always()
+          # - task: PublishPipelineArtifact@1
+          #   displayName: 'Publish HTML report'
+          #   condition: always()
+          #   inputs:
+          #     targetPath: '$(Build.SourcesDirectory)/reports/production'
+          #     artifact: 'report-${{ parameters.WEB_APP }}-$(BUILD_ID)'
+          
+          - task: Bash@3
+            displayName: 'After Run'
             inputs:
-              targetPath: '$(Build.SourcesDirectory)/reports/production'
-              artifact: 'report-${{ parameters.TEST }}-$(BUILD_ID)'
+              targetType: 'filePath'
+              filePath: 'after_run.sh'
