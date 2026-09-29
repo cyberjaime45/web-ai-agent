@@ -5,7 +5,7 @@
     - test_form: "submit=true"           also submit the valid input and judge the outcome
 
 What runs (each interaction is a ``fill`` / ``select`` / ``check`` / ``click``
-child step through the engine):
+probe step through the engine):
 
     1. inventory        fields, types, required flags, submit buttons
     2. empty submit     required fields present → press submit, expect rejection
@@ -14,10 +14,16 @@ child step through the engine):
     5. valid input      fill every field with a plausible value, expect no client-side invalid state
     6. submit           only with submit=true: press submit, check requests and error messages
 
-Rejection = the browser or the app flagged a field (``:invalid`` /
-``aria-invalid``), showed an error message, or kept the form on the same
-URL. A submit button whose name looks destructive (pay, delete, send…) is
-never pressed. Not covered yet: cancel behaviour, keyboard navigation.
+Rejected = the browser or the app flagged a field (``:invalid`` /
+``aria-invalid``) or showed a message. The form staying on the page with no
+such signal is a warning (cannot tell); the form going away means the input
+was accepted — a failure. Steps 3 and 4 press submit only when that cannot
+save anything: the browser flags the bad value itself, or step 2 already
+showed validation; otherwise they are skipped. A field that cannot be filled
+skips the check that needed it. The submit button passes the safety policy
+with its form as context (an unnamed button is judged as "submit"), so a
+destructive one — or any button of a "Delete account" form — is never
+pressed. Not covered yet: cancel behaviour, keyboard navigation.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ import time
 
 from app.agent.observer import Field, Form, Observation
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill
+from app.skills.base import SkillContext, info, missing, skill, skipped
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +114,10 @@ def _state(sc: SkillContext, form: Form) -> dict:
     return sc.evaluate(_STATE_JS, form.index) or dict(_GONE)
 
 
-def _rejected(state: dict, url_before: str) -> bool:
-    """The attempt did not go through: a field is flagged (browser or app),
-    a message is shown, or the form is still there on the same URL."""
-    return bool(state["native"] or state["aria"] or state["errors"]
-                or (state["present"] and state["url"] == url_before))
+def _signal(state: dict) -> bool:
+    """The browser or the app flagged the input: a field is :invalid /
+    aria-invalid, or a validation message is shown."""
+    return bool(state["native"] or state["aria"] or state["errors"])
 
 
 def _why(state: dict) -> str:
@@ -131,11 +136,11 @@ def _fill(sc: SkillContext, f: Field, value: str) -> None:
     if f.type == "select":
         options = [o for o in f.options if o and not o.lower().startswith(("select", "choose", "--"))]
         if options:
-            sc.run(ActionType.SELECT, f.target, options[0])
+            sc.run(ActionType.SELECT, f.target, options[0], kind="probe")
     elif f.type in ("checkbox", "radio"):
-        sc.run(ActionType.CHECK, f.target)
+        sc.run(ActionType.CHECK, f.target, kind="probe")
     else:
-        sc.run(ActionType.FILL, f.target, value)
+        sc.run(ActionType.FILL, f.target, value, kind="probe")
 
 
 def _fill_all(sc: SkillContext, fields: list[Field], *, skip: Field | None = None,
@@ -148,11 +153,48 @@ def _fill_all(sc: SkillContext, fields: list[Field], *, skip: Field | None = Non
             _fill(sc, f, value)
 
 
-def _submit_and_check(sc: SkillContext, form: Form, submit: str, name: str) -> Check:
+def _not_filled(sc: SkillContext, mark: int) -> str:
+    """Why the fields filled since *mark* are not usable, or ``""``."""
+    if sc.stopped:                  # a limit refused a fill: nothing to judge
+        return f"stopped early: {sc.stopped}"
+    failed = sc.failures_since(mark)
+    return ("could not fill " + ", ".join(s.action.args[0] for s in failed if s.action.args)) if failed else ""
+
+
+def _submit_and_check(sc: SkillContext, form: Form, submit: str, name: str, mark: int) -> Check:
+    """Press submit on input that must be rejected. Passed only on a
+    validation signal; the form going away means the input was accepted."""
+    if why := _not_filled(sc, mark):
+        return skipped(name, why)
     url_before = sc.page.url
-    sc.run(ActionType.CLICK, submit)
+    sr = sc.run(ActionType.CLICK, submit, kind="probe")
+    if sr.skipped:
+        return skipped(name, sr.message)
+    if not sr.success:
+        return Check(name, False, "warn", f"could not press '{submit}'")
     state = _state(sc, form)
-    return Check(name, _rejected(state, url_before), "error", _why(state) or "no validation state found")
+    if _signal(state):
+        return Check(name, True, "error", _why(state))
+    if state["present"] and state["url"] == url_before:
+        return Check(name, False, "warn", "no invalid field or message shown and the form stayed on the page: "
+                                          "cannot tell whether the input was rejected")
+    return Check(name, False, "error", _why(state) or f"the form was submitted, now at {state['url']}")
+
+
+def _try_invalid(sc: SkillContext, form: Form, submit: str, name: str, field: Field,
+                 bad: str, fields: list[Field], validated: bool) -> Check:
+    """Fill *bad* into *field* (the rest valid) and submit — only when that
+    cannot save anything: the browser flags the field itself (it will not
+    submit), or the form already showed validation on an empty submission."""
+    mark = len(sc.steps)
+    _fill_all(sc, fields, skip=field, only_required=True)
+    sc.run(ActionType.FILL, field.target, bad, kind="probe")
+    if why := _not_filled(sc, mark):
+        return skipped(name, why)
+    if not validated and not _state(sc, form)["native"]:
+        return skipped(name, "not submitted: the form showed no validation so far, and submitting "
+                             "otherwise valid input could save it")
+    return _submit_and_check(sc, form, submit, name, len(sc.steps))
 
 
 @skill(ActionType.TEST_FORM)
@@ -160,8 +202,7 @@ def test_form(sc: SkillContext) -> list[Check]:
     ob = sc.observe()
     form = pick_form(ob, sc.option("form"))
     if form is None:
-        return [Check("form found", False, "error",
-                      f"no visible form with fields on {ob.url}" + (f" matching '{sc.option('form')}'" if sc.option("form") else ""))]
+        return [missing(sc, "form found", "visible form with fields", "form")]
     fields = [f for f in form.fields if f.type not in SKIP_TYPES and not f.disabled]
     required = [f for f in fields if f.required]
     checks = [info("form", f"{form.name}: {len(form.fields)} fields, {len(required)} required; "
@@ -169,41 +210,44 @@ def test_form(sc: SkillContext) -> list[Check]:
               info("fields", ", ".join(f"{f.label} ({f.type}{', required' if f.required else ''})"
                                        for f in form.fields))]
     submit = submit_target(form)
-    verdict = sc.policy.verdict(submit, role="button", container=f"form:{form.name}", url=ob.url) \
-        if submit and form.submits else None
-    if verdict is not None and not verdict.allowed:
-        checks.append(Check("submit button safe to press", False, "warn",
-                            f"'{submit}' not pressed — {verdict.reason}; submission checks skipped"))
+    # An unnamed submit button is judged as a plain "submit" inside its form.
+    verdict = sc.policy.verdict(form.submits[0] if form.submits else "submit", role="button",
+                                container=f"form:{form.name}", url=ob.url)
+    if not verdict.allowed:
+        sc.block(form.submits[0] if form.submits else f"submit of '{form.name}'", verdict.reason)
         submit = None
 
-    # 2. empty submission
+    def gone() -> bool:
+        return not _state(sc, form)["present"]
+
+    # 2. empty submission — nothing is filled, so nothing can be saved
+    validated = False
     if required and submit:
-        checks.append(_submit_and_check(sc, form, submit, "empty submission rejected"))
-        if not _state(sc, form)["present"] or sc.child_failed:
+        check = _submit_and_check(sc, form, submit, "empty submission rejected", len(sc.steps))
+        checks.append(check)
+        validated = check.outcome == "passed"
+        if gone():
             return checks
 
-    # 3. invalid email
+    # 3. invalid email / 4. minimum length
     email = next((f for f in fields if f.type == "email"), None)
-    if email and submit:
-        _fill_all(sc, fields, skip=email, only_required=True)
-        sc.run(ActionType.FILL, email.target, "not-an-email")
-        checks.append(_submit_and_check(sc, form, submit, "invalid email rejected"))
-        if not _state(sc, form)["present"] or sc.child_failed:
-            return checks
-
-    # 4. minimum length
     short = next((f for f in fields if f.minlength and f.type in TEXT_LIKE), None)
-    if short and submit:
-        _fill_all(sc, fields, skip=short, only_required=True)
-        sc.run(ActionType.FILL, short.target, "a" * max(short.minlength - 1, 1))
-        checks.append(_submit_and_check(sc, form, submit, f"value shorter than {short.minlength} rejected"))
-        if not _state(sc, form)["present"] or sc.child_failed:
+    for field, bad, name in ((email, "not-an-email", "invalid email rejected"),
+                             (short, "a" * max((short.minlength if short else 1) - 1, 1),
+                              f"value shorter than {short.minlength if short else 0} rejected")):
+        if field is None or not submit or sc.stopped:
+            continue
+        checks.append(_try_invalid(sc, form, submit, name, field, bad, fields, validated))
+        if gone():
             return checks
 
     # 5. valid input — judged by the browser's own constraints only: app-level
     # validation (aria-invalid, messages) is often left stale until the next submit.
+    mark = len(sc.steps)
     _fill_all(sc, fields)
-    if sc.child_failed:
+    if why := _not_filled(sc, mark):
+        checks.append(skipped("valid input accepted", why) if sc.stopped
+                      else Check("valid input accepted", False, "warn", why))
         return checks
     state = _state(sc, form)
     checks.append(Check("valid input accepted", not state["native"], "error",
@@ -212,13 +256,17 @@ def test_form(sc: SkillContext) -> list[Check]:
 
     # 6. submission
     if not submit:
-        checks.append(info("submission", "no submit button to press"))
+        checks.append(skipped("submission", "no submit button that is safe to press"))
     elif not sc.flag("submit", False):
-        checks.append(info("submission", "skipped — pass submit=true to submit the valid input"))
+        checks.append(skipped("submission", "not submitted — pass submit=true to submit the valid input"))
     else:
         since, url_before = sc.mark(), sc.page.url
-        sc.run(ActionType.CLICK, submit)
-        sc.run(ActionType.WAIT_LOAD)
+        pressed = sc.run(ActionType.CLICK, submit, kind="probe")
+        if not pressed.success:
+            checks.append(Check("submission accepted", False, "warn", pressed.message if pressed.skipped
+                                else f"could not press '{submit}'"))
+            return checks
+        sc.run(ActionType.WAIT_LOAD, kind="probe")
         after = _state(sc, form)
         # After a successful submit the form is gone, reset (empty required fields
         # are natively :invalid again) or left as is — so only the app's own

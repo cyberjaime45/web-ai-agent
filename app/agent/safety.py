@@ -37,8 +37,6 @@ DESTRUCTIVE_PATHS: tuple[str, ...] = (
     "delete", "remove", "checkout", "payment", "unsubscribe", "cancel", "terminate", "deactivate",
 )
 
-_WORD_RE = re.compile(r"[a-z]+(?: [a-z]+)?")
-
 
 def _words(text: str) -> set[str]:
     lower = (text or "").lower()

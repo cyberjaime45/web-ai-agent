@@ -7,9 +7,10 @@ Per viewport (one ``page.evaluate`` each): horizontal overflow, controls
 pushed off-screen, form fields clipped, dialog fits, and on narrow widths
 tap-target and text sizes. When a navigation landmark hides its links on a
 narrow width and a menu toggle exists, the toggle is clicked through the
-engine (``click`` child step) to check the mobile menu opens, then Escape
-is pressed. A screenshot per viewport is kept on the step. The original
-viewport is restored at the end.
+engine (``click`` probe step) to check the mobile menu opens, then Escape
+is pressed (cleanup). A screenshot per viewport is kept on the step. The
+original viewport is restored at the end; failing to restore it is a
+"page restored after the skill" warning.
 
 Viewport switching is layout-only (no user-agent or touch emulation); for
 real device emulation run the flow under the ``mobile`` profile.
@@ -19,8 +20,9 @@ from __future__ import annotations
 
 import logging
 
+from app.execution import oracle
 from app.schemas.actions import ActionType, Check, summarize
-from app.skills.base import SkillContext, info, skill
+from app.skills.base import SkillContext, info, skill, skipped
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ _LAYOUT_JS = r"""
   });
   const fields = [...document.querySelectorAll('input:not([type=hidden]), select, textarea')].filter(vis);
   const clipped = fields.filter(el => { const r = el.getBoundingClientRect(); return r.right > vw + 1 || r.left < -1; }).length;
-  return { vw, vh, overflow: Math.max(de.scrollWidth, body ? body.scrollWidth : 0) - de.clientWidth,
+  return { vw, vh, overflow: __OVERFLOW__,
            controls: controls.length, offscreen, smallTap, smallText, sampled,
            dialog: !!dialog, dialogFits: dr ? (dr.left >= -1 && dr.right <= vw + 1 && dr.height <= vh + 1) : true,
            navPresent: navs.length > 0, navLinksVisible,
@@ -67,6 +69,7 @@ _LAYOUT_JS = r"""
            fields: fields.length, clipped };
 }
 """ % {"tap": MIN_TAP, "font": MIN_FONT}
+_LAYOUT_JS = _LAYOUT_JS.replace("__OVERFLOW__", oracle.H_OVERFLOW_JS)   # after %-formatting: its % would break it
 
 _NAV_VISIBLE_JS = """
 () => [...document.querySelectorAll('nav, [role=navigation]')].some(n =>
@@ -116,12 +119,14 @@ def _menu_check(sc: SkillContext, label: str, r: dict) -> list[Check]:
     toggle = r["menuToggle"]
     if not toggle:
         return [Check(p + "mobile menu opens", False, "warn", "navigation hidden and no menu toggle found")]
-    verdict = sc.policy.verdict(toggle, role="button", url=sc.page.url)
-    if not verdict.allowed:
-        return [Check(p + "mobile menu opens", False, "warn", f"toggle '{toggle}' not pressed — {verdict.reason}")]
-    sc.run(ActionType.CLICK, toggle)
+    if not sc.allowed(toggle, role="button"):
+        return [skipped(p + "mobile menu opens", f"toggle '{toggle}' not pressed (safety policy)")]
+    pressed = sc.run(ActionType.CLICK, toggle, kind="probe")
+    if not pressed.success:
+        return [skipped(p + "mobile menu opens", pressed.message) if pressed.skipped else
+                Check(p + "mobile menu opens", False, "warn", f"could not press the toggle '{toggle}'")]
     opened = bool(sc.evaluate(_NAV_VISIBLE_JS))
-    sc.run(ActionType.PRESS, "Escape")
+    sc.run(ActionType.PRESS, "Escape", kind="cleanup")
     return [Check(p + "mobile menu opens", opened, "error",
                   f"pressed '{toggle}'" + ("" if opened else " but navigation links stayed hidden"))]
 
@@ -137,9 +142,13 @@ def test_responsive(sc: SkillContext) -> list[Check]:
     checks: list[Check] = [info("viewports", ", ".join(_label(v) for v in sizes))]
     try:
         for vp in sizes:
-            if vp != sc.page.viewport_size:
-                sc.page.set_viewport_size(vp)   # layout only; not a flow action
             label = _label(vp)
+            try:
+                if vp != sc.page.viewport_size:
+                    sc.page.set_viewport_size(vp)   # layout only; not a flow action
+            except Exception as exc:
+                checks.append(Check(f"[{label}] layout probed", False, "warn", f"viewport not set: {exc}"[:200]))
+                continue
             r = sc.evaluate(_LAYOUT_JS)
             if not r:
                 checks.append(Check(f"[{label}] layout probed", False, "warn", "page did not answer"))
@@ -147,7 +156,7 @@ def test_responsive(sc: SkillContext) -> list[Check]:
             checks += _checks_for(label, r)
             checks += _menu_check(sc, label, r)
             sc.screenshot(label)
-            if sc.child_failed:
+            if sc.out_of_time():
                 break
     finally:
         if original and sc.page.viewport_size != original:
@@ -155,4 +164,5 @@ def test_responsive(sc: SkillContext) -> list[Check]:
                 sc.page.set_viewport_size(original)
             except Exception as exc:
                 logger.debug("[test_responsive] viewport not restored: %s", exc)
+                sc.cleanup_failed.append(f"viewport {_label(original)} not restored: {exc}")
     return checks

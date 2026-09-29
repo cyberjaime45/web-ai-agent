@@ -79,8 +79,9 @@ class ProfessionalReportPlugin:
                 "ts_start": s.started_at,
                 "ts_end": s.ended_at,
                 "evidence": dataclasses.asdict(s.evidence) if s.evidence else None,
-                "checks": [dataclasses.asdict(c) for c in s.checks],
+                "checks": [{**dataclasses.asdict(c), "outcome": c.outcome} for c in s.checks],
                 "group": s.group,
+                "soft": s.soft,
                 "url": s.url,
                 "agent": s.agent,
             }
@@ -88,13 +89,23 @@ class ProfessionalReportPlugin:
         ]
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
-        if report.when == "call" or (report.when == "setup" and report.failed):
+        # One result per test: the call, or a setup that failed (an error) or
+        # skipped (a skip marker). A teardown failure turns that result into an
+        # error — pytest fails the run for it, so the report must too.
+        if report.when == "teardown":
+            if report.failed:
+                prior = next((r for r in reversed(self.results) if r["nodeid"] == report.nodeid), None)
+                if prior is not None:
+                    prior["outcome"] = "error"
+                    prior["longrepr"] = "\n".join(filter(None, [prior["longrepr"], str(report.longrepr)]))
+            return
+        if report.when == "call" or (report.when == "setup" and (report.failed or report.skipped)):
             started = getattr(report, "start", None)
             self.results.append(
                 {
                     "nodeid":   report.nodeid,
                     "name":     report.nodeid.split("::")[-1],
-                    "outcome":  report.outcome,
+                    "outcome":  "error" if report.when == "setup" and report.failed else report.outcome,
                     "duration": getattr(report, "duration", 0.0),
                     "started_at": (
                         datetime.datetime.fromtimestamp(started).astimezone().isoformat(
@@ -103,7 +114,7 @@ class ProfessionalReportPlugin:
                         if started
                         else ""
                     ),
-                    "longrepr": str(report.longrepr) if report.failed else "",
+                    "longrepr": str(report.longrepr) if report.failed or report.when == "setup" else "",
                 }
             )
 
@@ -128,5 +139,9 @@ class ProfessionalReportPlugin:
             session_start=self.session_start,
             output_path=settings.report_dir / "report.html",
             environment=settings.environment,
+            exit_status=int(exitstatus),
         )
+        # The exit code is the model's verdict (reporter.run_status), so CI,
+        # the console and the JSON can never disagree about pass / fail.
+        session.exitstatus = self.files.exit_code
         self.report_path = settings.report_dir / "report.html"

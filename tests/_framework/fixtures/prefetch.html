@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Prefetch</title></head>
+<body>
+  <h1>Prefetch</h1>
+  <!-- Speculation Rules prefetch (what Cloudflare Speed Brain injects): the
+       target answers 500, and must not count as a failed request. -->
+  <script type="speculationrules">{"prefetch": [{"source": "list", "urls": ["/api/boom"], "eagerness": "immediate"}]}</script>
+</body>
+</html>

@@ -147,3 +147,12 @@ def test_summary_lists_the_slowest_flows_first():
 def test_summary_skips_slowest_for_a_single_flow():
     stats = {"passed": [_flow_report("a.md", "A")]}
     assert not any("Slowest" in line for line in execution_summary(stats, _totals(passed=4), 1.0))
+
+
+def test_summary_shows_warnings_and_an_interrupted_run_only_when_they_apply():
+    stats = {"passed": [_flow_report("a.md", "A")]}
+    rows = _rows(execution_summary(stats, {**_totals(passed=3), "warnings": 2}, 1.0, status="passed_with_warnings"))
+    assert rows["Passed"] == "3" and rows["Warnings"].startswith("2 passed with warnings")
+    assert "Interrupted" not in rows
+    rows = _rows(execution_summary(stats, {**_totals(passed=1), "warnings": 0}, 1.0, status="interrupted"))
+    assert "Warnings" not in rows and rows["Interrupted"].startswith("the run stopped early")

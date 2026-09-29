@@ -189,12 +189,19 @@ class BrowserSession:
 
     The browser process is the expensive part (~1.5-3 s per launch) and is
     shared locally; isolation comes from the per-flow BrowserContext.
+
+    A Ctrl-C that lands inside a sync Playwright call leaves the connection
+    unusable: any later call (closing the context or the browser) waits
+    forever, and the run would never write its report. Once ``interrupted``
+    is set, teardown makes no more Playwright calls — the driver and the
+    browser exit with the process.
     """
 
     def __init__(self) -> None:
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._ctx_opts: dict = {}
+        self.interrupted = False
 
     @contextmanager
     def page(self, test_name: str, profile: str = profiles.DESKTOP, trace: bool = False) -> Iterator[Page]:
@@ -207,9 +214,11 @@ class BrowserSession:
                 try:
                     yield from self._new_page(browser, profiles.context_options(profile, opts, pw.devices), trace)
                 finally:
-                    browser.close()
+                    if not self.interrupted:
+                        browser.close()
             finally:
-                pw.stop()
+                if not self.interrupted:
+                    pw.stop()
             return
         if self._browser is None or not self._browser.is_connected():
             self._pw = self._pw or sync_playwright().start()
@@ -217,17 +226,23 @@ class BrowserSession:
         yield from self._new_page(
             self._browser, profiles.context_options(profile, self._ctx_opts, self._pw.devices), trace)
 
-    @staticmethod
-    def _new_page(browser: Browser, opts: dict, trace: bool) -> Iterator[Page]:
+    def _new_page(self, browser: Browser, opts: dict, trace: bool) -> Iterator[Page]:
         ctx = browser.new_context(**opts)
         if trace:
             ctx.tracing.start(screenshots=True, snapshots=True)
         try:
             yield ctx.new_page()
+        except KeyboardInterrupt:
+            self.interrupted = True
+            raise
         finally:
-            ctx.close()     # closing also discards an unstopped trace
+            if not self.interrupted:
+                ctx.close()     # closing also discards an unstopped trace
 
     def close(self) -> None:
+        if self.interrupted:
+            self._browser = self._pw = None
+            return
         if self._browser is not None:
             self._browser.close()
         if self._pw is not None:

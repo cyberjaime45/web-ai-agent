@@ -95,7 +95,7 @@ def test_test_form_runs_the_validation_checks_without_submitting(page, fixture_u
     assert checks["invalid email rejected"].passed
     assert checks["value shorter than 3 rejected"].passed
     assert checks["valid input accepted"].passed
-    assert checks["submission"].detail.startswith("skipped")
+    assert checks["submission"].outcome == "skipped" and "submit=true" in checks["submission"].detail
     raws = [c.action.raw for c in children]
     assert raws.count('click: "Save member"') == 3           # empty, bad email, too short
     # the fixture's labels wrap their controls → selector targets (see observer._field_target)
@@ -164,16 +164,24 @@ def test_explore_page_builds_a_graph_and_respects_safety(page, fixture_url, tmp_
     assert "Edit [opens dialog \"Edit member\"]" in graph
     assert "Docs (external) [external → https://example.com/]" in graph
     assert "skipped by safety: Delete member" in graph
-    assert "Save member [changes page]" in graph                     # validation message appeared
+    assert "Save member" not in graph                                # a form's submit is test_form's job
+    assert "Save member (form:Add member)" in checks["form buttons not pressed"].detail
+    assert checks["form buttons not pressed"].outcome == "skipped"
     assert "Refresh [no observable result]" in graph
-    assert not checks["no broken pages"].passed and "missing.html → HTTP 404" in checks["no broken pages"].detail
+    assert checks["no broken pages"].passed                         # each broken page failed at its own step
+    assert "missing.html → HTTP 404" in checks["broken pages found"].detail
     assert not marker.success                                       # the broken page is a defect
     assert checks["planning"].detail.startswith("deterministic")
-    assert "Delete member — name contains 'delete'" in checks["skipped by safety"].detail
+    assert "Delete member — name contains 'delete'" in checks["blocked by safety"].detail
+    assert checks["blocked by safety"].outcome == "blocked"
     raws = [c.action.raw for c in children]
     assert 'click: "Delete member"' not in raws and 'click: "Save changes"' not in raws
+    assert 'click: "Save member"' not in raws
     assert raws.count('press: "Escape"') >= 1 and 'back' in raws
-    assert all(c.success for c in children)                        # every click and return worked
+    # a click that led to a broken page fails itself, with its own evidence; the rest worked
+    broken = [c for c in children if not c.success]
+    assert broken and all(c.message.startswith("broken page: ") and not c.soft and c.evidence for c in broken)
+    assert any(c.action.raw == 'goto: "' + fixture_url.replace("form_page.html", "missing.html") + '"' for c in broken)
     assert "explore_graph" in [k for k in result.steps[0].action.args] or True
 
 
@@ -196,7 +204,8 @@ def test_test_page_composes_skills_and_generates_a_flow(page, fixture_url, tmp_p
     from app.flow.parser import parse_flow_file
     flow = parse_flow_file(generated)
     kinds = [a.type.value for a in flow.actions]
-    assert kinds[0] == "goto" and "click" in kinds and "fill" in kinds and "select" in kinds
+    assert kinds[0] == "goto" and "fill" in kinds and "select" in kinds
+    assert "click" not in kinds                      # test_form's submit presses are never replayed
     assert "press" not in kinds                      # test_responsive's viewport-bound steps stay out
     assert not any(k in ("test_form", "test_page", "screenshot") for k in kinds)
 
@@ -245,8 +254,9 @@ def test_check_links_finds_broken_links_and_images_without_clicking(page, fixtur
     assert "500 " in checks["no broken links"].detail
     assert checks["links checked"].detail.startswith("3 of 6 links checked (same site)")
     assert "1 external not checked" in checks["links checked"].detail
-    skipped = checks["links not requested"].detail
-    assert "logout.html (logout)" in skipped and "/account/delete (delete)" in skipped
+    withheld = checks["blocked by safety"].detail
+    assert "logout.html — logout link, not requested" in withheld
+    assert "/account/delete — delete link, not requested" in withheld
     assert checks["no broken images"].count == 1 and "nope.png" in checks["no broken images"].detail
     assert page.url == url                                      # nothing was clicked
     assert result.steps[2:] == []                               # and no child steps
@@ -365,3 +375,174 @@ def test_check_performance_reports_metrics_against_budgets(page, fixture_url, tm
     assert checks["page load within budget"].passed                # a local static page
     tight = _run(page, tmp_path, f'- goto: "{fixture_url}"\n- wait_load: "load"\n- check_performance: "load=0"\n')
     assert not _checks(tight.steps[2])["page load within budget"].passed and tight.steps[2].success
+
+
+def test_horizontal_overflow_counts_only_what_the_page_can_scroll_to(page):
+    """A wide element the viewport clips (overflow-x: clip / hidden) is not
+    overflow — the reviewer could never scroll to it; one it can reach is."""
+    from app.execution import oracle
+    wide = '<div style="width:3000px;height:10px"></div>'
+    for style, expected in (("html, body { overflow-x: clip }", False),
+                            ("body { overflow-x: hidden }", False),
+                            ("", True)):
+        page.set_content(f"<html><head><style>{style}</style></head><body><p>x</p>{wide}</body></html>")
+        checks = {c.name: c for c in oracle.probe_checks(page)}
+        assert (not checks["no horizontal overflow"].passed) is expected, style
+    page.set_content("<p>fits</p>")
+    assert {c.name: c for c in oracle.probe_checks(page)}["no horizontal overflow"].passed
+
+
+def test_the_drawer_gives_each_failed_step_a_card_linked_to_its_row(page, tmp_path):
+    """Failure sites (failed steps with nothing failed inside) each get a card with
+    their step number, parent and reason; parents failed only by a child get none."""
+    from app.observability.reporter import generate_report
+
+    def step(name, action, sub="", passed=True, group=False, msg="", checks=None, i=0):
+        return {"name": name, "action": action, "passed": passed, "skipped": False, "msg": msg, "duration": 0.2,
+                "sub_flow": sub, "section": "S", "screenshot": "", "layer": 1, "ts_start": 1e9 + i,
+                "ts_end": 1e9 + i + 0.2, "evidence": None, "group": group, "checks": checks or []}
+    broken = {"name": "no broken pages", "passed": False, "severity": "error", "count": 2,
+              "detail": "after 'A': GET /a → 503; after 'B': GET /b → 503"}
+    steps = [step('click: "Go"', "click", passed=False, msg="Locator.click: Timeout 5000ms exceeded.", i=0),
+             step("test_page", "test_page", passed=False, group=True, i=1),
+             step("explore_page", "explore_page", sub="test_page", passed=False, group=True, checks=[broken], i=2),
+             step('click: "A"', "click", sub="test_page/explore_page", i=3)]
+    result = {"nodeid": "tests/x/a.md::A", "name": "A", "outcome": "failed", "duration": 1, "longrepr": "tb",
+              "error": "boom", "started_at": "", "flow_steps": steps, "console": [], "network": []}
+    generate_report([result], 1e9, tmp_path / "report.html", "qa", exit_status=1)
+    page.goto((tmp_path / "report.html").as_uri())
+    page.evaluate("openTest(0)")
+    where = [w.split("\n")[0] for w in page.locator("#drawer .fail-where").all_inner_texts()]
+    assert where == ['Step 1 · Click "Go"', "Step 2.1 · Explore page"]
+    assert "in Test page" in page.locator("#drawer .fail-card").nth(1).inner_text()
+    assert page.locator("#drawer .fail-card").nth(1).locator("li li").all_inner_texts() == [
+        "after 'A': GET /a → 503", "after 'B': GET /b → 503"]
+    assert page.locator('#drawer [data-step="2.1"] .serr').inner_text() == "Expected no broken pages — found 2"
+    assert page.locator("#drawer .steps .site").count() == 2 and page.locator("#drawer [data-tech]").count() == 2
+    page.locator('#drawer [data-show-tech="2.1"]').click()
+    assert page.locator('#drawer [data-tech="2.1"]').is_visible()
+
+
+def test_a_real_prefetch_is_left_out_and_a_navigation_to_it_is_kept(page, fixture_url, tmp_path):
+    """Chromium's own event data: a Speculation Rules prefetch (resource type
+    "prefetch") of a URL that answers 500 records nothing and fails nothing;
+    opening the same URL is a tracked failure. The report counts and statuses
+    follow what was recorded."""
+    import json
+
+    from app.observability.report_plugin import ProfessionalReportPlugin
+    from app.observability.reporter import generate_report
+    base = fixture_url.rsplit("/", 1)[0]
+    pg = page.context.new_page()                     # fresh listeners
+    plugin, results = ProfessionalReportPlugin(), []
+    for name, steps in (("Prefetch only", f'- goto: "{base}/prefetch.html"\n- wait: 1500\n'),
+                        ("Opens it", f'- goto: "{base}/api/boom"\n')):
+        recorder = PageRecorder()
+        recorder.attach(pg)
+        md = f"# {name}\n\n## Steps\n{steps}- check_console_network\n"
+        result = FlowRunner(artifacts_dir=str(tmp_path), flows_dir=tmp_path, provider=None).run(
+            parse_flow_markdown(md), pg, recorder=recorder)
+        nodeid = f"tests/x/{name}.md::{name}"
+        plugin.record_steps(nodeid, result.steps)
+        results.append({"nodeid": nodeid, "name": name, "outcome": "passed" if result.success else "failed",
+                        "duration": 1, "longrepr": "", "error": result.error, "started_at": "",
+                        "flow_steps": plugin.flow_steps[nodeid], "console": list(recorder.console),
+                        "network": list(recorder.network),       # copies: the page is shared
+                        "capture_dropped": {**recorder.dropped, "untracked": dict(recorder.untracked)}})
+        if name == "Prefetch only":
+            assert recorder.untracked["prefetch"] >= 1 and recorder.site_domain == "127.0.0.1"
+            assert not any("/api/boom" in n["url"] for n in recorder.network)
+            assert result.success, result.error                         # the failed prefetch fails nothing
+        else:
+            assert [n["status"] for n in recorder.network if "/api/boom" in n["url"]] == [500], \
+                (recorder.site_domain, recorder.untracked, [(n["url"], n["status"], n["resource_type"]) for n in recorder.network])
+            assert not result.success and "/api/boom → 500" in result.steps[-1].error
+    pg.close()
+    files = generate_report(results, 0, tmp_path / "report" / "report.html", "qa", exit_status=1)
+    tests = json.loads(files.test_cases.read_text())["tests"]
+    assert [(t["name"], t["status"]) for t in tests] == [("Prefetch only", "passed"), ("Opens it", "failed")]
+    assert tests[0]["network_untracked"]["prefetch"] >= 1
+    assert (files.totals["passed"], files.totals["failed"]) == (1, 1)
+    data = (tmp_path / "report" / "assets" / "data.js").read_text()
+    counts = [t["counts"]["net_bad"] for t in json.loads(data[data.index("{"):data.rstrip().rstrip(";").__len__()])["tests"]]
+    assert counts == [0, 1]
+
+
+def test_a_step_with_warnings_shows_them_under_a_warning_icon(page, tmp_path):
+    """The test's warnings appear at their steps (the status stays passed), and a
+    group opens when a warning sits inside it."""
+    from app.observability.reporter import generate_report
+
+    def step(name, action, sub="", group=False, checks=None, i=0):
+        return {"name": name, "action": action, "passed": True, "skipped": False, "msg": "", "duration": 0.2,
+                "sub_flow": sub, "section": "S", "screenshot": "", "layer": 1, "ts_start": 1e9 + i,
+                "ts_end": 1e9 + i + 0.2, "evidence": None, "group": group, "checks": checks or []}
+    warn = {"name": "fields have labels", "passed": False, "severity": "warn", "detail": "input[name=email]"}
+    steps = [step('goto: "https://x"', "goto"),
+             step("test_page", "test_page", group=True, i=1),
+             step("check_accessibility", "check_accessibility", sub="test_page", group=True, checks=[warn], i=2),
+             step('click: "A"', "click", sub="test_page", i=3)]
+    result = {"nodeid": "tests/x/w.md::W", "name": "W", "outcome": "passed", "duration": 1, "longrepr": "",
+              "error": "", "started_at": "", "flow_steps": steps, "console": [], "network": []}
+    generate_report([result], 1e9, tmp_path / "report.html", "qa", exit_status=0)
+    page.goto((tmp_path / "report.html").as_uri())
+    page.evaluate("openTest(0)")
+    warned = page.locator("#drawer .steps .sicon.warned")
+    assert warned.evaluate_all("els => els.map(e => e.closest('[data-step]').dataset.step)") == ["2.1"]
+    assert page.locator('#drawer [data-step="2.1"] .swarn').inner_text() == \
+        "Expected fields have labels — found: input[name=email]"
+    assert page.locator('#drawer details[data-step="2"]').get_attribute("open") is not None
+    assert page.locator('#drawer [data-step="2.2"] .sicon.passed').count() == 1
+
+
+def test_the_hero_parts_add_up_to_the_total(page, tmp_path):
+    """Passed, with warnings, passed on retry, failed and skipped are separate
+    parts: the words, the bar, its key and the filter chips all agree."""
+    from app.observability.reporter import generate_report
+    warn = [{"name": "fields have labels", "passed": False, "severity": "warn", "detail": "x"}]
+
+    def result(name, outcome, checks=None, retried=None):
+        step = {"name": 'goto: "https://x"', "action": "goto", "passed": outcome != "failed", "skipped": outcome == "skipped",
+                "msg": "" if outcome != "failed" else "boom", "duration": 0.2, "sub_flow": "", "section": "S", "screenshot": "",
+                "layer": 1, "ts_start": 1e9, "ts_end": 1e9 + 0.2, "evidence": None, "group": False, "checks": checks or []}
+        return {"nodeid": f"tests/x/{name}.md::{name}", "name": name, "outcome": outcome, "duration": 1, "longrepr": "",
+                "error": "", "started_at": "", "flow_steps": [step], "console": [], "network": [], "retried": retried or {}}
+    results = [result("clean", "passed"), result("warned", "passed", warn), result("warned2", "passed", warn),
+               result("flaky", "passed", retried={"0": "first try failed"}), result("broken", "failed"),
+               result("later", "skipped")]
+    generate_report(results, 1e9, tmp_path / "report.html", "qa", exit_status=1)
+    page.goto((tmp_path / "report.html").as_uri())
+    assert page.locator(".run-breakdown").inner_text().split("\n") == [
+        "1 passed", "2 with warnings", "1 passed on retry", "1 failed", "1 skipped"]
+    assert page.locator(".run-attention").inner_text() == "1 test failed, 2 more with warnings"
+    assert page.locator(".run-bar > div").evaluate_all("els => els.map(e => e.className)") == [
+        "run-bar-pass", "run-bar-warn", "run-bar-flaky", "run-bar-fail", "run-bar-skip"]
+    chips = dict(x.rsplit("\n", 1) for x in page.locator("#fchips .filter-chip").all_inner_texts())
+    assert chips == {"All": "6", "Failed": "1", "Passed": "1", "With warnings": "2", "Passed on retry": "1", "Skipped": "1"}
+    page.locator('#fchips [data-f="passed"]').click()
+    assert page.locator("#tests .trow").count() == 1
+    assert page.locator('.run-stats .metric-label').all_inner_texts()[0].lower() == "test cases"
+
+
+def test_the_test_list_pairs_profiles_and_shows_the_device_icon(page, tmp_path):
+    """A test's desktop and mobile runs sit together, in the order the tests
+    first ran, each name followed by its device icon."""
+    from app.observability.reporter import generate_report
+
+    def result(name, profile, i):
+        step = {"name": 'goto: "https://x"', "action": "goto", "passed": True, "skipped": False, "msg": "",
+                "duration": 0.2, "sub_flow": "", "section": name, "screenshot": "", "layer": 1,
+                "ts_start": 1e9 + i, "ts_end": 1e9 + i + 0.2, "evidence": None, "group": False, "checks": []}
+        return {"nodeid": f"tests/x/app.md::{name}[{profile}]", "name": name, "outcome": "passed", "duration": 1,
+                "longrepr": "", "error": "", "started_at": "", "flow_steps": [step], "console": [], "network": [],
+                "profile": {"name": profile, "label": f"{profile} · chromium"}}
+    runs = [result("Login Page", "desktop", 0), result("Home", "desktop", 1),     # run order: all desktop first
+            result("Login Page", "mobile", 2), result("Home", "mobile", 3)]
+    generate_report(runs, 1e9, tmp_path / "report.html", "qa", exit_status=0)
+    page.goto((tmp_path / "report.html").as_uri())
+    rows = page.locator("#tests .trow-name").evaluate_all(
+        "els => els.map(e => [e.firstChild.textContent, e.querySelector('.dev-ico').getAttribute('aria-label')])")
+    assert rows == [["Login Page", "Desktop"], ["Login Page", "Mobile"], ["Home", "Desktop"], ["Home", "Mobile"]]
+    assert page.locator("#tests .trow-tags", has_text="Desktop").count() == 0    # the icon replaces the badge
+    page.locator("#tests .trow").nth(1).click()                                 # still opens the right test
+    assert page.locator("#drawer .fact-device .dev-ico").get_attribute("aria-label") == "Mobile"

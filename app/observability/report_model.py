@@ -5,9 +5,16 @@ with serialized flow steps and console / network captures) become the test
 records the HTML report and JSON carry:
 
   sections            → one test per ``## section`` when steps have clocks
-  run_flow / skills   → nested step groups (the engine's marker steps)
+  run_flow / skills   → nested step groups (the engine's marker steps), each
+                        step with a stable ``id`` ("2.1.3") and its ``parent``
   L2/L3 layer usage   → "healed locators" entries
   console / network   → routed to the section and step active when they started
+  flagged checks      → the test's ``warnings`` (findings that did not fail it)
+
+Step status: ``failed`` (fails the test), ``skipped``, ``passed``. A soft
+skill step that failed is ``passed`` with its ``error`` kept: the skill turned
+it into a check, which the test's ``warnings`` list. A group is failed when
+it or a child failed.
 
 ``reporter.generate_report`` calls ``build_tests`` and writes the files.
 """
@@ -19,7 +26,7 @@ import datetime
 import re
 from typing import Any
 
-from app.schemas.actions import SKILL_ACTIONS, section_runs
+from app.schemas.actions import SKILL_ACTIONS, Check, section_runs
 
 _RUN_FLOW_RE = re.compile(r"^\s*run_flow\b", re.IGNORECASE)
 _SKILL_NAMES = {t.value for t in SKILL_ACTIONS}
@@ -28,10 +35,20 @@ _SKILL_NAMES = {t.value for t in SKILL_ACTIONS}
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _outcome(c: dict) -> str:
+    """A serialized check's outcome — ``Check.outcome``, the one rule."""
+    return c.get("outcome") or Check(c.get("name", ""), c.get("passed", True), c.get("severity", "error")).outcome
+
+
+def _fails(s: dict) -> bool:
+    """``StepResult.fails_flow`` for a serialized step."""
+    return not s.get("passed") and not s.get("skipped") and not s.get("soft")
+
+
 def _step_status(s: dict) -> str:
     if s.get("skipped"):
         return "skipped"
-    return "passed" if s.get("passed") else "failed"
+    return "failed" if _fails(s) else "passed"
 
 
 def _failure_screenshot(steps: list[dict]) -> str | None:
@@ -40,16 +57,12 @@ def _failure_screenshot(steps: list[dict]) -> str | None:
     Skipped steps never carry screenshots; this is the single source for a
     test's failure screenshot in the payload.
     """
-    return next((s["screenshot"] for s in reversed(steps)
-                 if not s.get("passed") and not s.get("skipped")
-                 and s.get("screenshot")), None)
+    return next((s["screenshot"] for s in reversed(steps) if _fails(s) and s.get("screenshot")), None)
 
 
 def _failure_evidence(steps: list[dict]) -> dict | None:
     """Evidence bundle of the last failed (non-skipped) step, if any."""
-    return next((s["evidence"] for s in reversed(steps)
-                 if not s.get("passed") and not s.get("skipped")
-                 and s.get("evidence")), None)
+    return next((s["evidence"] for s in reversed(steps) if _fails(s) and s.get("evidence")), None)
 
 
 def _agent(steps: list[dict]) -> dict | None:
@@ -73,9 +86,7 @@ def _group_status(children: list[dict]) -> str:
     statuses = {c["status"] for c in children}
     if "failed" in statuses:
         return "failed"
-    if statuses == {"skipped"}:
-        return "skipped"
-    return "passed"
+    return "skipped" if statuses == {"skipped"} else "passed"
 
 
 # ── Step tree ────────────────────────────────────────────────────────────────
@@ -92,7 +103,7 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
         rec["ts"] = round(s["ts_start"] * 1000)
         rec["started_at"] = datetime.datetime.fromtimestamp(
             s["ts_start"]).astimezone().isoformat(timespec="milliseconds")
-    if rec["status"] == "failed" and s.get("msg"):
+    if rec["status"] != "skipped" and not s.get("passed") and s.get("msg"):
         rec["error"] = s["msg"]
     if s.get("screenshot") and rec["status"] != "skipped":
         rec["attachment"] = s["screenshot"]
@@ -129,14 +140,12 @@ def _group(name: str, children: list[dict], started_at: str, depth: int,
     }
     if marker:
         leaf = _leaf(marker, started_at, depth)
-        for key in ("action", "args", "checks", "evidence", "agent", "error", "ts", "layer"):
+        for key in ("action", "args", "checks", "evidence", "agent", "error", "ts", "started_at"):
             if key in leaf:
                 rec[key] = leaf[key]
-        rec.pop("layer", None)
-        if leaf["status"] == "failed":
-            rec["status"] = "failed"
-        if not children:
+        if marker.get("duration"):          # the skill's own clock covers its evaluation time too
             rec["duration_ms"] = leaf["duration_ms"]
+        rec["status"] = _group_status([leaf, *[c for c in children if c["depth"] == depth + 1]])
     return rec
 
 
@@ -213,8 +222,9 @@ def _build_steps(flow_steps: list[dict], started_at: str,
 
     if sections is None:
         sections = _section_runs(flow_steps)
-    distinct = {name for name, _ in sections if name}
-    show_sections = len(distinct) > 1 or (len(distinct) == 1 and "Steps" not in distinct)
+    # Group by section only when the test holds several; a test that *is* one
+    # section is already named after it — a wrapper would repeat it as step 1.
+    show_sections = len({name for name, _ in sections if name}) > 1
 
     out: list[dict] = []
     for name, group_steps in sections:
@@ -224,6 +234,36 @@ def _build_steps(flow_steps: list[dict], started_at: str,
             out.extend(children)
         else:
             out.extend(_nest_sub_flows(group_steps, started_at, 0))
+    _number(out)
+    return out
+
+
+def _number(steps: list[dict]) -> None:
+    """``id`` = the step's position path ("2", "2.1", "2.1.3"), ``parent`` = the
+    enclosing group's id — stable while the flow's structure is unchanged."""
+    path: list[int] = []
+    for s in steps:
+        depth = s["depth"]
+        del path[depth + 1:]
+        if len(path) <= depth:
+            path.extend([0] * (depth + 1 - len(path)))
+        path[depth] += 1
+        s["id"] = ".".join(map(str, path[:depth + 1]))
+        s["parent"] = ".".join(map(str, path[:depth])) or None
+
+
+def _warnings(steps: list[dict]) -> list[dict]:
+    """Findings that did not fail the test: warn checks, and error checks on a
+    step that still passed (the oracle in warn mode). One entry per check;
+    a skill reports its failed probes and cleanup as checks, so steps add none."""
+    out = []
+    for s in steps:
+        for c in s.get("checks") or []:
+            kind = _outcome(c)
+            if kind == "warning" or (kind == "failed" and s["status"] != "failed"):
+                out.append({"step": s["id"], "step_name": s["name"],
+                            "check": c.get("name", ""), "detail": c.get("detail", ""),
+                            "severity": c.get("severity", "warn")})
     return out
 
 
@@ -327,7 +367,8 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
         "started_at": started_at,
         "duration_ms": round((r.get("duration") or 0.0) * 1000, 1),
         "retries": 1 if r.get("retried") else 0,
-        "steps": _build_steps(flow_steps, started_at, runs),
+        "steps": (steps := _build_steps(flow_steps, started_at, runs)),
+        "warnings": _warnings(steps),
         "console": r.get("console") or [],
         "network": r.get("network") or [],
         "artifacts": _artifacts(flow_steps),
@@ -344,6 +385,8 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
         test["console_dropped"] = dropped["console"]
     if dropped.get("network"):
         test["network_dropped"] = dropped["network"]
+    if any((dropped.get("untracked") or {}).values()):
+        test["network_untracked"] = dropped["untracked"]   # prefetches, other sites: never recorded
 
     if r.get("retried"):
         test["retry_error"] = next(iter(r["retried"].values()))
@@ -361,7 +404,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
     nodeid = r.get("nodeid", "")
     file = nodeid.split("::")[0] if "::" in nodeid else nodeid
     executed = [s for s in steps if not s.get("skipped")]
-    failed = [s for s in steps if not s.get("passed") and not s.get("skipped")]
+    failed = [s for s in steps if _fails(s)]
     if failed:
         status = "failed"
     elif not executed:
@@ -375,7 +418,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
                    if executed else r.get("started_at") or "")
 
     test: dict[str, Any] = {
-        "id": f"{file}::s{idx}",   # ordinal id — stable even with duplicate names
+        "id": f"{nodeid}::s{idx}",   # ordinal, per profile — stable even with duplicate names
         "name": name,
         "title": name,
         "file": file,
@@ -387,13 +430,16 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "t0": t0,
         "duration_ms": float(t_end - t0) if t0 is not None else 0.0,
         "retries": 1 if str(idx - 1) in (r.get("retried") or {}) else 0,
-        "steps": _nest_sub_flows(steps, started_iso, 0),
+        "steps": (records := _nest_sub_flows(steps, started_iso, 0)),
+        "warnings": [],
         "console": [],
         "network": [],
         "artifacts": {"screenshot": None, "screenshots": [], "trace": None},
         "healings": _healings(steps),
         "agent": _agent(steps),
     }
+    _number(records)
+    test["warnings"] = _warnings(records)
     if test["retries"]:
         test["retry_error"] = r["retried"][str(idx - 1)]
     if failed:
@@ -415,6 +461,13 @@ def build_tests(r: dict) -> list[dict]:
 
     tests = [_build_section_test(r, i + 1, name or "Steps", steps)
              for i, (name, steps) in enumerate(runs)]
+    # pytest failed the item although no section did (teardown, trace or grid
+    # status raised): the last section that ran carries it, so no report says passed
+    if r.get("outcome") in ("failed", "error") and not any(t["status"] in ("failed", "error") for t in tests):
+        last = next((t for t in reversed(tests) if t["status"] != "skipped"), tests[-1])
+        last["status"] = "error" if r["outcome"] == "error" else "failed"
+        last["error"] = {"message": r.get("error") or (r.get("longrepr") or "").split("\n")[0] or "Flow failed",
+                         "kind": "FlowError", "traceback": r.get("longrepr") or None}
 
     starts = sorted((t["t0"], i) for i, t in enumerate(tests)
                     if t["t0"] is not None)
@@ -429,4 +482,7 @@ def build_tests(r: dict) -> list[dict]:
         tests[-1]["console_dropped"] = dropped["console"]
     if dropped.get("network"):
         tests[-1]["network_dropped"] = dropped["network"]
+    if any((dropped.get("untracked") or {}).values()):
+        for t in tests:                     # a flow-wide count: every section shows it
+            t["network_untracked"] = dropped["untracked"]
     return tests

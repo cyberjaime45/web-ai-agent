@@ -236,8 +236,8 @@ def test_split_produces_one_test_per_section():
     assert [(t["name"], t["status"]) for t in tests] == [
         ("Login Page", "passed"), ("Home Page", "failed"), ("Leads Page", "passed"),
     ]
-    assert [t["id"] for t in tests] == [
-        "flows/login/sso.md::s1", "flows/login/sso.md::s2", "flows/login/sso.md::s3",
+    assert [t["id"] for t in tests] == [    # the pytest node id, so each device profile has its own
+        "flows/login/sso.md::SSO Login::s1", "flows/login/sso.md::SSO Login::s2", "flows/login/sso.md::SSO Login::s3",
     ]
     assert all(t["file"] == "flows/login/sso.md" for t in tests)
     assert all(t["file_title"] is None for t in tests)   # no # H1 → UI shows the path
@@ -403,6 +403,9 @@ def test_generate_report_writes_all_files(tmp_path, monkeypatch):
     assert (tmp_path / "assets" / "report.css").exists()
     assert (tmp_path / "assets" / "report.js").exists()
     assert (tmp_path / "assets" / "report-detail.js").exists()
+    assert (tmp_path / "assets" / "report-logs.js").exists()
+    html = out.read_text(encoding="utf-8")
+    assert html.index("report.js") < html.index("report-logs.js") < html.index("report-detail.js")   # load order
     assert (tmp_path / "assets" / "nunito.woff2").read_bytes()[:4] == b"wOF2"          # bundled font, no network
     data_js = (tmp_path / "assets" / "data.js").read_text(encoding="utf-8")
     assert data_js.startswith("window.__WEBAGENT_DATA__ = {")
@@ -472,9 +475,9 @@ def test_generate_report_shards_detail_per_test(tmp_path):
     # detail arrays never ship in the upfront payload — counts replace them
     assert all("console" not in t and "network" not in t for t in slim["tests"])
     assert [t["counts"] for t in slim["tests"]] == [
-        {"console": 1, "con_err": 1, "con_warn": 0, "network": 0, "net_bad": 0, "checks": 0, "checks_flagged": 0},
-        {"console": 1, "con_err": 0, "con_warn": 1, "network": 0, "net_bad": 0, "checks": 0, "checks_flagged": 0},
-        {"console": 0, "con_err": 0, "con_warn": 0, "network": 1, "net_bad": 0, "checks": 0, "checks_flagged": 0},
+        {"console": 1, "con_err": 1, "con_warn": 0, "network": 0, "net_bad": 0, "checks": 0, "warnings": 0},
+        {"console": 1, "con_err": 0, "con_warn": 1, "network": 0, "net_bad": 0, "checks": 0, "warnings": 0},
+        {"console": 0, "con_err": 0, "con_warn": 0, "network": 1, "net_bad": 0, "checks": 0, "warnings": 0},
     ]
     # one JSONP-style shard per test, holding the routed events
     assert [c["text"] for c in _shard(tmp_path, 0)["console"]] == ["boom"]
@@ -494,7 +497,7 @@ def test_generate_report_counts_pageerror_and_failed_requests(tmp_path):
     )
     generate_report([r], time.time(), tmp_path / "report.html", "staging")
     assert _slim_payload(tmp_path)["tests"][0]["counts"] == {
-        "console": 1, "con_err": 1, "con_warn": 0, "network": 2, "net_bad": 1, "checks": 0, "checks_flagged": 0,
+        "console": 1, "con_err": 1, "con_warn": 0, "network": 2, "net_bad": 1, "checks": 0, "warnings": 0,
     }
 
 
@@ -715,7 +718,7 @@ def test_check_counts_in_slim_payload(tmp_path):
     generate_report(results=[make_result(flow_steps=[step])], session_start=time.time(),
                     output_path=report_dir / "report.html")
     data = (report_dir / "assets" / "data.js").read_text()
-    assert '"checks": 2' in data and '"checks_flagged": 1' in data
+    assert '"checks": 2' in data and '"warnings": 1' in data
 
 
 def test_nested_skill_groups_two_levels_deep():
@@ -751,3 +754,196 @@ def test_generate_report_relativizes_agent_and_evidence_files(tmp_path):
     test = payload["tests"][0]
     assert test["agent"]["generated"] == "generated/f.md"
     assert test["steps"][0]["evidence"]["files"] == {"generated flow": "generated/f.md"}
+
+
+# ── one result model: statuses, ids, warnings, totals, run status ───────────
+
+def _skill_run(child_passed=True, soft=False, marker_checks=None, marker_passed=True):
+    marker = make_step(label="test_widgets", action="test_widgets", passed=marker_passed, duration=4.0)
+    marker.update(group=True, checks=marker_checks or [])
+    child = make_step(label='click: "Tab B"', action="click", sub_flow="test_widgets",
+                      passed=child_passed, msg="" if child_passed else "boom", duration=1.0)
+    child["soft"] = soft
+    return [marker, child, make_step(label='assert_text: "after"', action="assert_text")]
+
+
+def test_a_soft_failure_passes_its_step_and_is_listed_as_a_warning():
+    warn = {"name": "tabs select their panel", "passed": False, "severity": "warn",
+            "detail": "could not press 'Tab B'"}
+    (t,) = _build_tests(make_result(flow_steps=_skill_run(child_passed=False, soft=True, marker_checks=[warn])))
+    group, child, after = t["steps"]
+    assert (group["status"], child["status"], after["status"]) == ("passed", "passed", "passed")
+    assert child["error"] == "boom"                      # the message is kept in the JSON
+    assert t["status"] == "passed"
+    assert t["warnings"] == [{"step": "1", "step_name": "test_widgets", "check": "tabs select their panel",
+                              "detail": "could not press 'Tab B'", "severity": "warn"}]
+
+
+def test_a_hard_child_failure_fails_the_group():
+    (t,) = _build_tests(make_result(outcome="failed", flow_steps=_skill_run(child_passed=False, marker_passed=False)))
+    assert [s["status"] for s in t["steps"]] == ["failed", "failed", "passed"]
+    assert t["warnings"] == []
+
+
+def test_steps_carry_stable_ids_and_parents():
+    steps = _build_steps([
+        make_step(label="goto a", section="Login"),
+        *[dict(s, section="Login") for s in _skill_run()],
+        make_step(label="goto b", section="Home"),
+    ], "2026-07-28T10:00:00")
+    assert [(s["id"], s["parent"], s["depth"]) for s in steps] == [
+        ("1", None, 0), ("1.1", "1", 1), ("1.2", "1", 1), ("1.2.1", "1.2", 2), ("1.3", "1", 1),
+        ("2", None, 0), ("2.1", "2", 1)]
+
+
+def test_a_skill_group_takes_its_duration_from_the_skill():
+    group = _build_steps(_skill_run(), "2026-07-28T10:00:00")[0]
+    assert group["duration_ms"] == 4000.0              # not the 1 s its child took
+
+
+def test_skipped_blocked_and_info_checks_are_not_warnings():
+    checks = [{"name": "sorting works", "passed": True, "severity": "skipped", "detail": "no header"},
+              {"name": "blocked by safety", "passed": True, "severity": "blocked", "detail": "Delete"},
+              {"name": "table", "passed": True, "severity": "info", "detail": "3 rows"}]
+    (t,) = _build_tests(make_result(flow_steps=_skill_run(marker_checks=checks)))
+    assert t["steps"][0]["status"] == "passed" and t["warnings"] == []
+
+
+def test_an_oracle_error_on_a_passing_step_is_a_test_warning():
+    step = make_step(label='goto: "x"', action="goto")
+    step["checks"] = [{"name": "no page errors", "passed": False, "severity": "error", "detail": "TypeError"}]
+    (t,) = _build_tests(make_result(flow_steps=[step]))
+    assert t["steps"][0]["status"] == "passed" and t["status"] == "passed"
+    assert [w["check"] for w in t["warnings"]] == ["no page errors"]
+
+
+def _totals(tmp_path, results, exit_status=None):
+    files = generate_report(results, time.time(), tmp_path / "report.html", "qa1", exit_status=exit_status)
+    summary = json.loads(files.summary.read_text(encoding="utf-8"))
+    return files, summary
+
+
+def test_totals_status_and_exit_code_agree(tmp_path):
+    warn = {"name": "tabs select their panel", "passed": False, "severity": "warn", "detail": "x"}
+    clean = make_result()
+    warned = make_result(nodeid="flows/w.md::W", flow_steps=_skill_run(marker_checks=[warn]))
+    failed = make_result(nodeid="flows/f.md::F", outcome="failed", error="boom")
+
+    _, summary = _totals(tmp_path, [clean], exit_status=0)
+    assert (summary["status"], summary["exit_code"], summary["totals"]["warnings"]) == ("passed", 0, 0)
+    _, summary = _totals(tmp_path, [clean, warned], exit_status=0)
+    assert (summary["status"], summary["exit_code"], summary["totals"]["warnings"]) == ("passed_with_warnings", 0, 1)
+    assert summary["totals"]["passed"] == 2                       # a warning never takes a pass away
+    files, summary = _totals(tmp_path, [clean, warned, failed], exit_status=1)
+    assert (summary["status"], summary["exit_code"]) == ("failed", 1)
+    assert (files.status, files.exit_code, files.totals) == (summary["status"], summary["exit_code"], summary["totals"])
+    root = ET.parse(files.junit).getroot()
+    assert (root.get("tests"), root.get("failures")) == ("3", "1")   # warnings pass in CI too
+
+
+def test_an_interrupted_run_reports_what_finished(tmp_path):
+    _, summary = _totals(tmp_path, [make_result()], exit_status=2)
+    assert (summary["status"], summary["exit_code"], summary["totals"]["total"]) == ("interrupted", 2, 1)
+
+
+def test_the_exit_code_follows_the_model_and_never_lowers_pytests():
+    from app.observability.reporter import run_status
+    ok = {"failed": 0, "errors": 0, "warnings": 0}
+    assert run_status({**ok, "failed": 1}, 0) == ("failed", 1)   # the model saw a failure pytest missed
+    assert run_status(ok, 4) == ("error", 4)                      # a usage error: the run broke, its code kept
+    assert run_status({**ok, "failed": 1}, 3) == ("error", 3)     # an internal error is never "failed tests"
+    assert run_status(ok, 1) == ("error", 1)                      # pytest failed something the model missed
+    assert run_status({**ok, "errors": 1}, 1) == ("failed", 1)
+    assert run_status({**ok, "warnings": 2}, None) == ("passed_with_warnings", 0)
+
+
+def test_partial_execution_counts_each_section_once(tmp_path):
+    steps = [
+        make_step(label="goto a", section="Login", ts_start=BASE, ts_end=BASE + 1),
+        make_step(label="assert a", section="Login", passed=False, msg="nope", ts_start=BASE + 1, ts_end=BASE + 2),
+        make_step(label="assert a2", section="Login", passed=False, skipped=True),
+        *[dict(s, section="Home", ts_start=BASE + 3 + i, ts_end=BASE + 3.5 + i) for i, s in enumerate(_skill_run())],
+        make_step(label="goto c", section="Never", passed=False, skipped=True),
+    ]
+    files, summary = _totals(tmp_path, [make_result(outcome="failed", error="nope", flow_steps=steps)], exit_status=1)
+    tests = json.loads(files.test_cases.read_text(encoding="utf-8"))["tests"]
+    assert [(t["name"], t["status"]) for t in tests] == [("Login", "failed"), ("Home", "passed"), ("Never", "skipped")]
+    assert summary["totals"] == {**summary["totals"], "total": 3, "passed": 1, "failed": 1, "skipped": 1}
+    assert [s["id"] for s in tests[1]["steps"]] == ["1", "1.1", "2"]   # nested actions are steps, not tests
+
+
+def test_a_test_that_is_one_section_is_not_wrapped_in_it():
+    steps = [make_step(label="goto a", section="Login Test"), make_step(label="assert a", section="Login Test")]
+    (t,) = _build_tests(make_result(flow_steps=steps))
+    assert t["name"] == "Login Test"
+    assert [(s["id"], s["name"], s["depth"]) for s in t["steps"]] == [("1", "goto a", 0), ("2", "assert a", 0)]
+
+
+def test_cancelled_requests_are_not_counted_as_failed(tmp_path):
+    net = [{"method": "POST", "url": "https://x/cdn-cgi/rum", "status": None, "ok": False, "failure": "net::ERR_ABORTED", "ts": 1},
+           {"method": "GET", "url": "https://x/api", "status": 500, "ok": False, "failure": None, "ts": 2}]
+    generate_report([make_result(network=net)], time.time(), tmp_path / "report.html", "qa")
+    assert _slim_payload(tmp_path)["tests"][0]["counts"]["net_bad"] == 1
+
+
+def test_a_failed_item_with_passing_sections_is_not_reported_green():
+    steps = [make_step(label="a", section="One", ts_start=BASE, ts_end=BASE + 1),
+             make_step(label="b", section="Two", ts_start=BASE + 1, ts_end=BASE + 2)]
+    tests = _build_tests(make_result(outcome="failed", error="trace upload failed", longrepr="tb", flow_steps=steps))
+    assert [t["status"] for t in tests] == ["passed", "failed"]
+    assert tests[1]["error"]["message"] == "trace upload failed"
+
+
+def test_each_profile_has_its_own_ids_and_junit_names(tmp_path):
+    steps = [make_step(label="a", section="One", ts_start=BASE, ts_end=BASE + 1),
+             make_step(label="b", section="Two", ts_start=BASE + 1, ts_end=BASE + 2)]
+    runs = [dict(make_result(nodeid=f"flows/a.md::A[{p}]", flow_steps=steps), profile={"name": p, "label": p})
+            for p in ("desktop", "mobile")]
+    files = generate_report(runs, time.time(), tmp_path / "report.html", "qa", exit_status=0)
+    tests = json.loads(files.test_cases.read_text())["tests"]
+    assert len({t["id"] for t in tests}) == 4
+    names = [c.get("name") for c in ET.parse(files.junit).getroot().iter("testcase")]
+    assert names == ["One", "Two", "One [mobile]", "Two [mobile]"]
+
+
+def test_setup_errors_skips_and_teardown_errors_reach_the_model():
+    from types import SimpleNamespace
+
+    from app.observability.report_plugin import ProfessionalReportPlugin
+    plugin = ProfessionalReportPlugin()
+
+    def report(nodeid, when, outcome):
+        return SimpleNamespace(nodeid=nodeid, when=when, outcome=outcome, failed=outcome == "failed",
+                               skipped=outcome == "skipped", passed=outcome == "passed",
+                               duration=0.1, start=None, longrepr=f"{when} {outcome}")
+    for r in [report("a.md::A", "setup", "failed"),                                  # setup error
+              report("b.md::B", "setup", "skipped"),                                 # skip marker
+              report("c.md::C", "setup", "passed"), report("c.md::C", "call", "passed"),
+              report("c.md::C", "teardown", "failed")]:                              # teardown error
+        plugin.pytest_runtest_logreport(r)
+    assert [(r["nodeid"], r["outcome"]) for r in plugin.results] == [
+        ("a.md::A", "error"), ("b.md::B", "skipped"), ("c.md::C", "error")]
+    assert "teardown failed" in plugin.results[2]["longrepr"]
+
+
+def test_junit_strips_characters_xml_cannot_hold(tmp_path):
+    from xml.dom import minidom
+    r = make_result(outcome="failed", error="\x1b[31mboom\x1b[0m\x00\x07 at step", longrepr="tb\x0b\x1f")
+    files = generate_report([r], time.time(), tmp_path / "report.html", "qa", exit_status=1)
+    failure = minidom.parse(str(files.junit)).getElementsByTagName("failure")[0]   # parses at all
+    assert failure.getAttribute("message") == "boom at step"
+
+
+def test_interrupted_matches_pytests_exit_code():
+    import pytest
+
+    from app.observability.reporter import INTERRUPTED
+    assert INTERRUPTED == pytest.ExitCode.INTERRUPTED
+
+
+def test_a_warned_test_that_passed_on_retry_counts_once(tmp_path):
+    warn = {"name": "w", "passed": False, "severity": "warn", "detail": "x"}
+    step = dict(make_step(label='goto: "x"', action="goto"), checks=[warn])
+    r = dict(make_result(flow_steps=[step]), retried={"0": "first attempt failed"})
+    files = generate_report([r], time.time(), tmp_path / "report.html", "qa", exit_status=0)
+    assert (files.totals["warnings"], files.status) == (0, "passed")

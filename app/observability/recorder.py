@@ -9,10 +9,21 @@ it to the section/step that was active when it started.
 Capture policy:
   console — every level, normalized to error/warning/info/debug (+pageerror),
             capped per class so noisy pages can't evict errors.
-  network — every response is kept as a metadata row (the report offers
-            JS/CSS/Image filters); xhr/fetch/document rows also carry
-            redacted headers and post data. Bodies are kept only for failed
-            responses and small JSON xhr/fetch responses.
+  network — every response of the site under test is kept as a metadata
+            row (the report offers JS/CSS/Image filters); xhr/fetch/document
+            rows also carry redacted headers and post data. Bodies are kept
+            only for failed responses and small JSON xhr/fetch responses.
+
+Only the site under test is recorded: requests whose host is the site domain
+or one of its subdomains (``urls.in_site``). The domain is given — the
+flow's first ``goto`` step, or its ``site_domain`` override
+(``engine.flow_site_domain``) — or else learned from the first main-frame
+navigation. Prefetches (resource type ``prefetch``, a ``Sec-Purpose`` /
+``Purpose: prefetch`` or ``Next-Router-Prefetch`` header) are speculative and
+never recorded either, nor the console's "Failed to load resource" echo of a
+request left out. Everything downstream — the oracle, skills, evidence, the
+report's counts — reads only what was recorded, so they all agree.
+``untracked`` counts what was left out.
 
 Sensitive values (Authorization, cookies, tokens…) are redacted before
 anything is stored; REPORT_REDACT adds project-specific key substrings.
@@ -27,6 +38,7 @@ from functools import lru_cache
 from typing import Any
 
 from app.config.settings import settings
+from app.utils.urls import in_site, site_domain
 
 MAX_ERROR_CONSOLE = 200      # error / warning / pageerror entries
 MAX_INFO_CONSOLE = 200       # info / debug entries
@@ -104,11 +116,28 @@ def _now_ms() -> int:
     return round(time.time() * 1000)
 
 
+_RESOURCE_ECHO = "Failed to load resource"
+_MAX_UNTRACKED_URLS = 500
+
+
+def is_prefetch(request: Any) -> bool:
+    """A speculative request the browser or the app's router made ahead of a
+    navigation: resource type ``prefetch`` or a prefetch purpose header."""
+    if request.resource_type == "prefetch":
+        return True
+    headers = request.headers or {}
+    purpose = str(headers.get("sec-purpose") or headers.get("purpose") or "").lower()
+    return purpose.startswith("prefetch") or "next-router-prefetch" in headers
+
+
 class PageRecorder:
-    def __init__(self) -> None:
+    def __init__(self, site_domain: str = "") -> None:
         self.console: list[dict[str, Any]] = []
         self.network: list[dict[str, Any]] = []
         self.dropped = {"console": 0, "network": 0}
+        self.site_domain = site_domain       # "" until the first main-frame navigation
+        self.untracked = {"prefetch": 0, "other_site": 0}
+        self._untracked_urls: dict[str, None] = {}   # for the console's resource echo
         self._seq = 0      # last sequence number handed out (console and network share it)
         self._n_err = 0    # error/warning/pageerror count
         self._n_info = 0   # info/debug count
@@ -166,10 +195,12 @@ class PageRecorder:
         level = _LEVELS.get(msg.type)
         if level is None:   # startGroup, table, …
             return
-        location = None
-        if msg.location and msg.location.get("url"):
-            location = (f"{msg.location['url']}:{msg.location.get('lineNumber', 0)}"
-                        f":{msg.location.get('columnNumber', 0)}")
+        loc = msg.location or {}
+        url = loc.get("url") or ""
+        if url and msg.text.startswith(_RESOURCE_ECHO) and (url in self._untracked_urls or (
+                url.startswith("http") and not in_site(url, self.site_domain))):
+            return          # the echo of a request that is not recorded
+        location = f"{url}:{loc.get('lineNumber', 0)}:{loc.get('columnNumber', 0)}" if url else None
         self._push_console(level, msg.text, location)
 
     def _on_page_error(self, error: Exception) -> None:
@@ -177,20 +208,49 @@ class PageRecorder:
 
     # ── Network ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _main_navigation(request: Any) -> bool:
+        if request.resource_type != "document":
+            return False
+        try:
+            return request.is_navigation_request() and request.frame.parent_frame is None
+        except Exception:   # a service-worker request has no frame
+            return False
+
+    def _untracked(self, request: Any) -> str:
+        """Why *request* is not recorded (``prefetch`` / ``other_site``), or ``""``.
+        A main-frame navigation is always recorded, whatever its site: when the
+        flow lands on another domain (an SSO page) and it fails, that is the cause."""
+        if is_prefetch(request):
+            return "prefetch"
+        if in_site(request.url, self.site_domain) or self._main_navigation(request):
+            return ""
+        return "other_site"
+
     def _on_request(self, request: Any) -> None:
+        if not self.site_domain and self._main_navigation(request):
+            self.site_domain = site_domain(request.url)
+        why = self._untracked(request)             # decided once, reused when the request completes
+        if why:
+            if request.url not in self._untracked_urls:
+                if len(self._untracked_urls) >= _MAX_UNTRACKED_URLS:
+                    self._untracked_urls.pop(next(iter(self._untracked_urls)))
+                self._untracked_urls[request.url] = None
+        else:
+            self._untracked_urls.pop(request.url, None)   # prefetched, now requested for real
         # Requests cancelled by a navigation never get a response/failed event;
         # bound the map so a long flow cannot grow it without limit.
         if len(self._starts) >= _MAX_INFLIGHT:
             self._starts.pop(next(iter(self._starts)))
-        self._starts[id(request)] = (time.time(), request.url, request.resource_type)
+        self._starts[id(request)] = (time.time(), request.url, request.resource_type, why)
 
-    def _finish(self, request: Any) -> tuple[int, float | None]:
-        """Return (start ts in epoch ms, duration in ms) for a completing request."""
+    def _finish(self, request: Any) -> tuple[int, float | None, str]:
+        """(start ts in epoch ms, duration in ms, why untracked) for a completing request."""
         started = self._starts.pop(id(request), None)
-        if started is None:
-            return _now_ms(), None
+        if started is None:                        # evicted, or no request event: decide now
+            return _now_ms(), None, self._untracked(request)
         start = started[0]
-        return round(start * 1000), round((time.time() - start) * 1000, 1)
+        return round(start * 1000), round((time.time() - start) * 1000, 1), started[3]
 
     def pending(self, types: frozenset[str], max_age_s: float,
                 ignore: tuple[str, ...] = ()) -> list[str]:
@@ -198,10 +258,13 @@ class PageRecorder:
 
         Older ones are treated as long-lived (polling, streaming) or as requests
         a navigation cancelled without an event, so they never block a wait.
+        Prefetches are speculative and never waited for; other sites' requests
+        are (a third-party widget can still be rendering).
         """
         cutoff = time.time() - max_age_s
-        return [url for start, url, rtype in list(self._starts.values())
-                if start >= cutoff and rtype in types and not any(p in url for p in ignore)]
+        return [url for start, url, rtype, why in list(self._starts.values())
+                if start >= cutoff and rtype in types and why != "prefetch"
+                and not any(p in url for p in ignore)]
 
     def _push_network(self, entry: dict) -> None:
         if len(self.network) >= MAX_NETWORK_ENTRIES:
@@ -212,7 +275,10 @@ class PageRecorder:
 
     def _on_response(self, response: Any) -> None:
         request = response.request
-        ts, duration = self._finish(request)   # always pop, even when capped
+        ts, duration, why = self._finish(request)   # always pop, even when capped
+        if why:
+            self.untracked[why] += 1
+            return
         if len(self.network) >= MAX_NETWORK_ENTRIES:
             self.dropped["network"] += 1
             return
@@ -241,7 +307,11 @@ class PageRecorder:
             if post:
                 entry["post_data"] = redact_text(
                     post[:MAX_POST_DATA * 2])[:MAX_POST_DATA]
-        body = None
+        # Record first, read the body after: response.text() waits on the
+        # browser, and the flow goes on meanwhile — a check right after the
+        # step must already see this response (the body may arrive later).
+        entry["body"] = None
+        self._push_network(entry)
         want_ok_body = (not failed and rt in ("xhr", "fetch")
                         and "json" in str(headers.get("content-type", ""))
                         and (size or 0) <= MAX_JSON_BODY_SIZE)
@@ -249,14 +319,15 @@ class PageRecorder:
             # Best-effort: the body may be gone after a navigation.
             try:
                 text = response.text().strip()[:MAX_RESPONSE_BODY]
-                body = redact_text(text)[:MAX_RESPONSE_BODY] if text else None
+                entry["body"] = redact_text(text)[:MAX_RESPONSE_BODY] if text else None
             except Exception:
-                body = None
-        entry["body"] = body
-        self._push_network(entry)
+                pass
 
     def _on_request_failed(self, request: Any) -> None:
-        ts, duration = self._finish(request)
+        ts, duration, why = self._finish(request)
+        if why:
+            self.untracked[why] += 1
+            return
         self._push_network({
             "method": request.method, "url": redact_url(request.url)[:500],
             "status": None, "ok": False,
@@ -266,6 +337,9 @@ class PageRecorder:
         })
 
     def _on_websocket(self, ws: Any) -> None:
+        if not in_site(ws.url, self.site_domain):
+            self.untracked["other_site"] += 1
+            return
         self._push_network({
             "method": "WS", "url": redact_url(ws.url)[:500], "status": None,
             "ok": True, "failure": None, "resource_type": "websocket",

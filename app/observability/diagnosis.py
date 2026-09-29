@@ -119,7 +119,7 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list]) -> dict:
     # ── application: what the browser recorded during the step ──
     def server_failures(network: list[dict]) -> list[dict]:
         return [n for n in network if (n.get("status") or 0) >= 500
-                or (n.get("failure") and "ERR_ABORTED" not in n.get("failure", ""))]
+                or (n.get("failure") and not oracle.cancelled(n))]
 
     def page_errors(console: list[dict]) -> list[str]:
         return [c.get("text", "") for c in console if c.get("level") == "pageerror"]

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from app.browser import profiles
 from app.browser.session import BrowserSession
-from app.execution.engine import FlowRunner
+from app.execution.engine import FlowRunner, flow_site_domain
 from app.flow.parser import FlowDefinition, parse_flow_file, parse_flow_markdown
 from app.observability.recorder import PageRecorder
 from app.schemas.actions import FlowResult
@@ -55,7 +55,7 @@ class Orchestrator:
         try:
             with session.page(flow.name, self.profile) as page:
                 page.set_default_timeout(flow.timeout)
-                recorder = PageRecorder()
+                recorder = PageRecorder(flow_site_domain(flow))
                 recorder.attach(page)
                 runner = FlowRunner(artifacts_dir=self.artifacts_dir, flows_dir=self.flows_dir,
                                     profile=self.profile)

@@ -32,7 +32,7 @@ def test_md_outside_a_flows_directory_is_collected():
     scratch.mkdir(parents=True)
     flow = scratch / "home.md"
     flow.write_text(_FLOW, encoding="utf-8")
-    env = {**os.environ, "AI_PROVIDER": "", "LLM_KEY": "", "LLM_MODEL": ""}
+    env = {**os.environ, "AI_PROVIDER": "", "LLM_KEY": "", "LLM_MODEL": "", "PROFILE": "desktop"}   # never the .env profiles
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",

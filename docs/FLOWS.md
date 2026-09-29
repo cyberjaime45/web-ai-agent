@@ -42,7 +42,13 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
   `pytest --profile …` overrides both. `ignore_console: "ResizeObserver" | "third-party"`
   and `ignore_network: "/analytics/"` list substrings of console messages
   and request URLs that the automatic checks and `check_console_network`
-  leave out. `allow_destructive: true` lets autonomous skills press controls
+  leave out. The site under test is the domain of the flow's first `goto`
+  step (`goto: "https://memberssitestaging.wheelsup.com/"` → `wheelsup.com`):
+  only requests to it and its subdomains are recorded — not
+  `otherwheelsup.com`, not third-party services — and never prefetches.
+  `site_domain: wheelsup.com` sets it explicitly, for a flow that starts on
+  another site (an SSO page); a flow whose first page is opened by a
+  `run_flow` component takes the domain of the first page load. `allow_destructive: true` lets autonomous skills press controls
   the safety policy blocks (delete, pay, send… — only for disposable
   environments), and `allow_actions: "Send message" | "Publish"` whitelists
   named controls. `rerun: false` keeps `RERUN_FAILED` from running the file a
@@ -220,8 +226,10 @@ browser; it does not pick a real device.
 After every navigation-class step (`goto`, `click`, `select`, `press`…) the
 runner records a few checks without an assertion in the flow: page rendered,
 no page errors, no console errors, no failed or 401/403/4xx requests, no
-stuck spinner, no blocking dialog, no horizontal overflow. They appear as a
-collapsed row under the step. `ORACLE=warn` (default) only records them;
+stuck spinner, no blocking dialog, no horizontal overflow (the page scrolls
+sideways — content the viewport clips does not count). They are recorded on
+the step in `test_cases.json`; flagged ones appear in the report's Warnings
+list, or as the failure reason when they fail the step. `ORACLE=warn` (default) only records them;
 `ORACLE=strict` fails the step on an error-severity check; `ORACLE=off`
 disables them.
 

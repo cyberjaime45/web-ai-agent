@@ -6,7 +6,7 @@ then on it runs deterministically through L1 (L2/L3 only when the page
 changes). Two sources:
 
   steps_to_markdown   the leaf steps a skill executed (fill, click, select,
-                      press, back, goto…), with an ``assert_url`` inserted
+                      press, back, goto…) — never test_form's submit presses —, with an ``assert_url`` inserted
                       after every step that changed the URL, and an
                       ``assert_text`` for each new heading, dialog title or
                       alert the step brought up (``StepResult.after``) —
@@ -61,8 +61,15 @@ def _assertions_after(step: StepResult, seen: dict[str, str]) -> list[str]:
     return out
 
 
+def _is_form_submit_press(s: StepResult) -> bool:
+    """test_form's presses: replaying them outside the skill (and its safety
+    policy) could submit the form on every run."""
+    return s.sub_flow.rsplit("/", 1)[-1] == "test_form" and s.action.type == ActionType.CLICK
+
+
 def _replayable(steps: list[StepResult]) -> list[StepResult]:
-    return [s for s in steps if not s.group and s.success and s.action.type in REPLAYABLE]
+    return [s for s in steps if not s.group and s.success and s.action.type in REPLAYABLE
+            and not _is_form_submit_press(s)]
 
 
 def suggested_assertions(steps: list[StepResult]) -> list[str]:

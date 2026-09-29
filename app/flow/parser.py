@@ -28,6 +28,7 @@ from app.schemas.actions import (
     ActionType,
     FlowAction,
 )
+from app.utils.urls import normalize_domain
 
 _md = MarkdownIt()
 
@@ -72,6 +73,9 @@ class FlowDefinition:
     # and `allow_actions: "Send message" | "Publish"` — safety overrides for skills.
     allow_destructive: bool | None = None
     allow_actions: list[str] = field(default_factory=list)
+    # `## Config` → `site_domain: example.com` — the site whose requests are
+    # recorded (it and its subdomains). "" = the domain of the first goto step.
+    site_domain: str = ""
     # `## Config` → `rerun: false` keeps RERUN_FAILED from running this flow twice
     # (flows whose steps create or submit data). None = follow the setting.
     rerun: bool | None = None
@@ -363,6 +367,8 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
             flow.allow_destructive = value.strip('"').lower() in ("true", "yes", "1", "on")
         elif key == "rerun":
             flow.rerun = value.strip('"').lower() in ("true", "yes", "1", "on")
+        elif key == "site_domain":
+            flow.site_domain = normalize_domain(value)
 
     # ── Steps — every non-metadata ## section (Credentials, Notes… are skipped) ──
     for step_num, (section_name, raw) in enumerate(_all_action_sections(text), start=1):

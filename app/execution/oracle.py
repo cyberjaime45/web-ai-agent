@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.schemas.actions import ActionType, Check
+from app.schemas.actions import ActionType, Check, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,22 @@ ORACLE_AFTER: frozenset[ActionType] = frozenset({
     ActionType.WAIT_FOR_URL, ActionType.PRESS,
 })
 
+
+# The render probe's modal check. A skill's probe step drops it: opening a
+# dialog is often exactly what the probe is for, and the skill judges that.
+DIALOG_CHECK = "no blocking dialog"
+
+# How far the page scrolls sideways — what a user can actually reach. The
+# scrolling element's width, not body.scrollWidth (that counts content the
+# viewport clips, e.g. a decorative image hanging off the edge), and nothing
+# when the viewport clips (overflow-x hidden / clip on <html>, or on <body>
+# when it propagates to the viewport). Shared with test_responsive.
+H_OVERFLOW_JS = """(() => {
+  const de = document.documentElement, se = document.scrollingElement || de;
+  const clips = el => el && ['hidden', 'clip'].includes(getComputedStyle(el).overflowX);
+  const viewportClips = clips(de) || (getComputedStyle(de).overflowX === 'visible' && clips(document.body));
+  return viewportClips ? 0 : se.scrollWidth - de.clientWidth;
+})()"""
 
 # Visible loading indicators: the probe's "stuck spinner" and wait_stable's "busy".
 BUSY_SELECTOR = '[class*="spinner" i], [class*="loading" i], [aria-busy="true"], [role="progressbar"]'
@@ -58,13 +74,28 @@ class IgnoreRules:
 
 # ── recorder-based checks ────────────────────────────────────────────────────
 
+# How each browser words a cancelled request: Chromium, Firefox, WebKit.  (report.js failedReq mirrors it)
+_CANCELLED = ("ERR_ABORTED", "NS_BINDING_ABORTED", "cancelled")
+
+
+def cancelled(entry: dict) -> bool:
+    """A request the page or a navigation cancelled (``net::ERR_ABORTED``,
+    ``NS_BINDING_ABORTED``, WebKit's "cancelled") — telemetry beacons, requests
+    cut off by leaving the page. Not a failure."""
+    failure = entry.get("failure") or ""
+    return any(s in failure for s in _CANCELLED)
+
+
 def diagnostics_checks(recorder: Any, since_seq: int, ignore: IgnoreRules | None = None) -> list[Check]:
-    """Page errors, console errors and failed requests since *since_seq*."""
+    """Page errors, console errors and failed requests since *since_seq*;
+    cancelled requests are an observation."""
     ignore = ignore or IgnoreRules()
     console = [c for c in recorder.errors_since(since_seq, limit=200) if ignore.keeps_console(c)]
     page_errors = [c["text"] for c in console if c["level"] == "pageerror"]
     errors = [c["text"] for c in console if c["level"] == "error"]
-    network = [n for n in recorder.failures_since(since_seq, limit=200) if ignore.keeps_network(n)]
+    recorded = [n for n in recorder.failures_since(since_seq, limit=200) if ignore.keeps_network(n)]
+    dropped = [n for n in recorded if cancelled(n)]
+    network = [n for n in recorded if not cancelled(n)]
     server = [n for n in network if n.get("failure") or (n.get("status") or 0) >= 500]
     auth = [n for n in network if n.get("status") in (401, 403)]
     client = [n for n in network if n not in server and n not in auth]
@@ -72,13 +103,17 @@ def diagnostics_checks(recorder: Any, since_seq: int, ignore: IgnoreRules | None
     def req(n: dict) -> str:
         return f"{n['method']} {n['url']} → {n['failure'] or n['status']}"
 
-    return [
+    checks = [
         Check.listing("no page errors", page_errors, "error"),
         Check.listing("no console errors", errors, "warn"),
         Check.listing("no failed requests", [req(n) for n in server], "error"),
         Check.listing("no 401/403 responses", [req(n) for n in auth], "error"),
         Check.listing("no 4xx responses", [req(n) for n in client], "warn"),
     ]
+    if dropped:
+        checks.append(Check("requests cancelled", True, "info",
+                            summarize([req(n) for n in dropped], 3), len(dropped)))
+    return checks
 
 
 # ── render-state probe ───────────────────────────────────────────────────────
@@ -94,10 +129,10 @@ _PROBE_JS = r"""
     textLength: (document.body && document.body.innerText || '').trim().length,
     spinner: spinners.length,
     dialog: dialogs.length ? (dialogs[0].getAttribute('aria-label') || (dialogs[0].innerText || '').trim().slice(0, 80)) : '',
-    overflow: Math.max(de.scrollWidth, document.body ? document.body.scrollWidth : 0) - de.clientWidth,
+    overflow: __OVERFLOW__,
   };
 }
-""".replace("__BUSY__", json.dumps(BUSY_SELECTOR))
+""".replace("__BUSY__", json.dumps(BUSY_SELECTOR)).replace("__OVERFLOW__", H_OVERFLOW_JS)
 
 
 def probe_checks(page: Any) -> list[Check]:
@@ -109,10 +144,11 @@ def probe_checks(page: Any) -> list[Check]:
         return []
     return [
         Check("page rendered", p["readyState"] != "loading" and p["textLength"] > 0, "error",
-              "" if p["textLength"] else "no visible text on the page"),
+              "no visible text on the page" if not p["textLength"]
+              else "the page was still loading" if p["readyState"] == "loading" else ""),
         Check("no stuck spinner", not p["spinner"], "warn",
               f"{p['spinner']} loading indicator(s) visible" if p["spinner"] else "", p["spinner"]),
-        Check("no blocking dialog", not p["dialog"], "warn",
+        Check(DIALOG_CHECK, not p["dialog"], "warn",
               f"modal dialog open: {p['dialog']}" if p["dialog"] else ""),
         Check("no horizontal overflow", p["overflow"] <= 1, "warn",
               f"content {p['overflow']}px wider than the viewport" if p["overflow"] > 1 else ""),
@@ -133,9 +169,9 @@ def failed(checks: list[Check], severity: str = "error") -> list[Check]:
 def summary(checks: list[Check]) -> str:
     """``5 checks passed`` / ``1 of 5 checks failed, 2 warnings``."""
     errors, warns = failed(checks), failed(checks, "warn")
-    total = len([c for c in checks if c.severity != "info"])
+    total = len([c for c in checks if c.severity in ("error", "warn")])
     if not errors and not warns:
-        return f"{total} checks passed" if total else "no checks"
+        return f"{total} check{'s' if total != 1 else ''} passed" if total else "no checks"
     parts = []
     if errors:
         parts.append(f"{len(errors)} of {total} checks failed")

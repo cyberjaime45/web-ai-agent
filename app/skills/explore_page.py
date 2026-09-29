@@ -6,17 +6,20 @@
 
 From the current page, every safe control the observer reports (links on the
 same site, buttons, tabs, menu items) is pressed once through the engine —
-a ``click`` child step — and the outcome recorded: navigates to a page (queued
+a ``click`` probe step — and the outcome recorded: navigates to a page (queued
 for the next depth), opens a dialog (closed with Escape), changes the page in
 place, or nothing observable. Controls the safety policy blocks are listed,
-never pressed. When an LLM provider is configured and ``max_ai_calls`` > 0,
-the planner only *orders* the observed controls (primary features first); it
-cannot add targets the observer did not see.
+never pressed; so are buttons that submit or confirm a form (``Save``,
+``Submit``, ``Apply``… — form testing is ``test_form``'s job, and pressing
+them here could change data). When an LLM provider is configured and
+``max_ai_calls`` > 0, the planner only *orders* the observed controls
+(primary features first); it cannot add targets the observer did not see.
 
 Limits: ``depth`` (link hops from the start page, default 2), ``max_actions``
-(clicks, default 20), ``max_pages`` (distinct pages, default 8),
-``max_ai_calls`` (default 3). The graph is stored in the run context as
-``explore_graph`` for the Markdown generator in Phase 4.
+(presses, default 20, shared with the caller's budget), ``max_pages``
+(distinct pages, default 8), ``max_ai_calls`` (default 3), ``timeout``.
+Returning to a page (``back``, ``goto``, Escape) is cleanup. The graph is
+stored in the run context as ``explore_graph``.
 """
 
 from __future__ import annotations
@@ -26,15 +29,18 @@ import logging
 from dataclasses import dataclass, field
 
 from app.agent.observer import Node, Observation
+from app.agent.safety import CONFIRM_WORDS
 from app.execution import oracle
 from app.flow.writer import graph_to_markdown
-from app.schemas.actions import ActionType, Check
+from app.schemas.actions import ActionType, Check, summarize
 from app.skills.base import SkillContext, info, skill
+from app.skills.base import skipped as skipped_check
 from app.utils.urls import origin, strip_fragment
 
 logger = logging.getLogger(__name__)
 
-DEFAULTS = {"depth": 2, "max_actions": 20, "max_pages": 8, "max_ai_calls": 3}
+DEFAULTS = {"depth": 2, "max_pages": 8}
+MAX_ACTIONS = 20          # presses, unless max_actions= (read by the runtime's budget) says otherwise
 CLICKABLE_ROLES = ("link", "button", "tab", "menuitem")
 GOAL = ("Explore this page's safe features one control at a time: primary navigation, "
         "search and filters, opening details or forms. Order the controls by how much "
@@ -58,7 +64,16 @@ class PageNode:
     skipped: list[str] = field(default_factory=list)
 
 
-def _candidates(ob: Observation, sc: SkillContext, node: PageNode, origin: str) -> list[Node]:
+def _submits_form(n: Node) -> bool:
+    """A button that submits or confirms a form — left to test_form."""
+    if n.role != "button":
+        return False
+    in_form = n.container.startswith("form:") and "search" not in n.container.lower()
+    name = n.name.lower().strip()
+    return in_form or name in CONFIRM_WORDS or any(name.startswith(w + " ") for w in CONFIRM_WORDS)
+
+
+def _candidates(ob: Observation, sc: SkillContext, node: PageNode, left: list[str]) -> list[Node]:
     """Safe, pressable, once-per-name controls — deterministic order: nav first."""
     seen: set[str] = set()
     out: list[Node] = []
@@ -71,9 +86,13 @@ def _candidates(ob: Observation, sc: SkillContext, node: PageNode, origin: str) 
         verdict = sc.policy.verdict(n.name, role=n.role, container=n.container, url=ob.url)
         if not verdict.allowed:
             node.skipped.append(f"{n.name} — {verdict.reason}")
+            sc.block(n.name, verdict.reason)
+            continue
+        if _submits_form(n):
+            left.append(f"{n.name}" + (f" ({n.container})" if n.container else ""))
             continue
         out.append(n)
-    rank = {"navigation": 0, "button": 2, "link": 3, "tab": 1, "menuitem": 1}
+    rank = {"tab": 1, "menuitem": 1, "button": 2, "link": 3}          # navigation landmarks first (0)
     out.sort(key=lambda n: (0 if n.container.startswith("navigation") else rank.get(n.role, 4)))
     return out
 
@@ -125,10 +144,11 @@ def _tree(pages: dict[str, PageNode], start: str) -> str:
 
 @skill(ActionType.EXPLORE_PAGE)
 def explore_page(sc: SkillContext) -> list[Check]:
-    limits = {k: int(sc.option(k, str(v)) or v) for k, v in DEFAULTS.items()}
+    limits = {k: sc.count(k, v) for k, v in DEFAULTS.items()}
+    if sc.budget.limit is None:
+        sc.budget.limit = MAX_ACTIONS
     if sc.flag("destructive", False):
         sc.policy = sc.policy.with_destructive(True)
-    sc.planner.max_calls = limits["max_ai_calls"]
 
     start = strip_fragment(sc.page.url)
     site = origin(start)
@@ -136,44 +156,72 @@ def explore_page(sc: SkillContext) -> list[Check]:
     queue: list[tuple[str, int]] = [(start, 0)]
     actions = 0
     externals: list[str] = []
-    broken: list[str] = []
+    broken: list[str] = []      # broken pages no step can be blamed for (the start page)
+    judged: list[str] = []      # broken pages failed on the step that led to them
     no_effect: list[str] = []
     failed: list[str] = []
+    unreachable: list[str] = []
+    left: list[str] = []
 
-    while queue and len(pages) < limits["max_pages"] and actions < limits["max_actions"]:
+    while queue and len(pages) < limits["max_pages"] and not sc.stopped:
         url, depth = queue.pop(0)
         if url in pages:
             continue
+        opened, since = None, sc.mark()
         if strip_fragment(sc.page.url) != url:
-            if not sc.run(ActionType.GOTO, url).success:
-                failed.append(f"open {url}")
+            opened = sc.run(ActionType.GOTO, url, kind="probe")
+            if not opened.success:
+                if not opened.skipped:
+                    unreachable.append(url)
                 continue
         ob = sc.observe(fresh=True)
         node = PageNode(url=url, title=ob.title, page_type=ob.page_type, depth=depth)
         pages[url] = node
         status = _document_status(sc, url)
         if status and status >= 400:
-            broken.append(f"{url} → HTTP {status}")
+            if opened is None:
+                broken.append(f"{url} → HTTP {status}")
+            else:
+                judged.append(f"{url} → HTTP {status}")
+                sc.fail_step(opened, f"broken page: {url} → HTTP {status}", since)
         before = ob.fingerprint()
-        candidates = _candidates(ob, sc, node, site)
+        candidates = _candidates(ob, sc, node, left)
         if sc.planner.available:
             candidates = _ai_order(sc, ob, candidates, [e.action for e in node.edges])
 
         for cand in candidates:
-            if actions >= limits["max_actions"]:
-                break
+            since = sc.mark()
+            sr = sc.run(ActionType.CLICK, cand.name, kind="probe")
+            if sr.skipped:
+                if sc.stopped:
+                    break
+                continue                                   # refused by the safety policy
             actions += 1
-            sr = sc.run(ActionType.CLICK, cand.name)
-            if not sr.success:
+            # ORACLE=strict fails a click whose page broke: that is a broken page, not an unpressable control
+            problems = [] if sr.success else [c.detail or f"expected {c.name}" for c in oracle.failed(sr.checks)]
+            if not sr.success and not problems:
                 failed.append(f"{cand.name} on {url}")
                 node.edges.append(Edge(cand.name, "failed"))
                 continue
             after = sc.observe(fresh=True)
             now = strip_fragment(sc.page.url)
+            # A broken page — whatever ORACLE says — is an error page, the new
+            # page's own 4xx/5xx, or a page that did not render. It is judged on
+            # the click that led to it: that step fails, with a screenshot taken
+            # before going back. Other signals (a failed XHR) stay the oracle's.
+            if now.startswith("chrome-error://"):
+                problems.append("the browser showed an error page")
+            elif now != url and origin(now) == site and (code := _document_status(sc, now)) and code >= 400:
+                problems.append(f"{now} → HTTP {code}")
+            if origin(now) == site:            # another site's page is not this site's defect
+                problems += [c.detail or f"expected {c.name}" for c in sr.checks
+                             if c.name == "page rendered" and not c.passed and sr.success]
+            if problems:
+                judged += [f"after '{cand.name}' on {url}: {p}" for p in problems]
+                sc.fail_step(sr, "broken page: " + "; ".join(problems), since)
             if now != url:
                 if now.startswith("chrome-error://"):          # navigation itself failed
                     node.edges.append(Edge(cand.name, "broken", now))
-                    broken.append(f"'{cand.name}' on {url} led to an error page")
                 elif origin(now) != site:
                     node.edges.append(Edge(cand.name, "external", now))
                     externals.append(now)
@@ -181,28 +229,26 @@ def explore_page(sc: SkillContext) -> list[Check]:
                     node.edges.append(Edge(cand.name, "navigates", now))
                     if depth + 1 <= limits["depth"] and now not in pages:
                         queue.append((now, depth + 1))
-                sc.run(ActionType.BACK)
+                sc.run(ActionType.BACK, kind="cleanup")
                 if strip_fragment(sc.page.url) != url:
-                    sc.run(ActionType.GOTO, url)
+                    sc.run(ActionType.GOTO, url, kind="cleanup")
             elif after.dialogs > ob.dialogs:
                 title = next((n.container.partition(":")[2] for n in after.nodes
                               if n.container.startswith(("dialog:", "alertdialog:"))), "")
                 node.edges.append(Edge(cand.name, "opens dialog", title))
-                sc.run(ActionType.PRESS, "Escape")
+                sc.run(ActionType.PRESS, "Escape", kind="cleanup")
             elif after.fingerprint() != before:
                 node.edges.append(Edge(cand.name, "changes page"))
                 before = after.fingerprint()
             else:
                 node.edges.append(Edge(cand.name, "no observable result"))
                 no_effect.append(f"{cand.name} on {url}")
-            for c in oracle.failed(sr.checks):
-                broken.append(f"after '{cand.name}' on {url}: {c.name}" + (f" — {c.detail}" if c.detail else ""))
 
     graph = {u: {"title": p.title, "type": p.page_type, "depth": p.depth,
                  "edges": [e.__dict__ for e in p.edges], "skipped": p.skipped} for u, p in pages.items()}
     sc.ctx.store("explore_graph", json.dumps(graph))
-    skipped = [s for p in pages.values() for s in p.skipped]
-    unexplored = len(queue)
+    skipped = list(dict.fromkeys(s for p in pages.values() for s in p.skipped))
+    unexplored = len({u for u, _ in queue if u not in pages})
     sc.agent.update({
         "page_type": pages[start].page_type if start in pages else "UNKNOWN",
         "skipped": skipped, "graph": graph,
@@ -215,21 +261,25 @@ def explore_page(sc: SkillContext) -> list[Check]:
         sc.agent["generated"] = str(path)
     checks = [
         info("pages visited", f"{len(pages)} (depth ≤ {limits['depth']}, max {limits['max_pages']})"),
-        info("controls pressed", f"{actions} of max {limits['max_actions']}"),
+        info("controls pressed", f"{actions} (max_actions {sc.budget.limit})"),
         info("planning", f"AI ordered candidates ({sc.planner.calls} call(s))" if sc.planner.calls
              else "deterministic order (navigation, tabs, buttons, links)"),
         info("graph", _tree(pages, start) if pages else "nothing explored"),
-        Check("no broken pages", not broken, "error", "; ".join(broken[:5])),
+        Check.listing("no broken pages", broken, "error"),      # the rest failed at their own step
         Check("controls respond", not no_effect, "warn",
               ("no observable result: " + ", ".join(no_effect[:5])) if no_effect else ""),
-        Check("controls pressable", not failed, "error", "; ".join(failed[:5])),
+        Check.listing("controls pressable", failed, "warn"),
+        Check.listing("linked pages open", unreachable, "warn"),
     ]
-    if skipped:
-        checks.append(info("skipped by safety", "; ".join(skipped[:8])))
+    if judged:
+        checks.append(info("broken pages found", summarize(judged, 8)))
+    if left:
+        checks.append(skipped_check("form buttons not pressed",
+                                    "submitting or confirming a form is test_form's job: " + summarize(left, 8)))
     if externals:
         checks.append(info("external links", ", ".join(dict.fromkeys(externals))[:300]))
     if unexplored:
-        checks.append(info("not explored (limits)", f"{unexplored} page(s) still queued"))
+        checks.append(skipped_check("pages not explored", f"{unexplored} page(s) still queued when a limit was reached"))
     if "generated" in sc.agent:
         checks.append(info("generated flow", sc.agent["generated"]))
     return checks

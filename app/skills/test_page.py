@@ -1,7 +1,7 @@
 """test_page — give the agent a page and let it decide what to test.
 
     - test_page
-    - test_page: "depth=1" | "max_actions=12" | "max_ai_calls=3" | "submit=false"
+    - test_page: "depth=1" | "max_actions=20" | "max_ai_calls=3" | "submit=false"
 
     OBSERVE → CLASSIFY → PLAN (by page type; the LLM only adds validated
     steps when a provider is configured) → EXECUTE through the other skills
@@ -25,23 +25,29 @@ them.
 With a provider, ``max_ai_calls`` bounds two uses: a classification tie-break
 when the deterministic type is CONTENT / UNKNOWN, and an adaptive plan of
 extra steps — each validated against the observation and the safety policy
-before it runs. Nested skills appear as groups under this step; the
-generated flow is linked from it.
+before it runs, and run as a probe: a planned step that fails is a warning,
+never the flow's failure. ``max_actions`` (default 20) bounds every press
+under this step — nested skills, exploration and planned steps share it.
+Nested skills appear as groups under this step; the generated flow is
+linked from it and leaves out form submissions.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 
 from app.agent.observer import Observation
 from app.flow.writer import steps_to_markdown, suggested_assertions
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill
+from app.skills.base import SkillContext, info, skill, skipped
 from app.utils.urls import same_page
 
 logger = logging.getLogger(__name__)
 
-DEFAULTS = {"depth": 1, "max_actions": 12, "max_ai_calls": 3}
+DEFAULTS = {"depth": 1}
+MAX_ACTIONS = 20          # presses under this step, unless max_actions= says otherwise
+PASSWORD_RE = re.compile(r"pass(word|code|phrase)|\bpin\b", re.IGNORECASE)
 LISTY = ("TABLE", "LIST", "SEARCH", "DASHBOARD", "DETAIL", "CONTENT", "UNKNOWN")
 GOAL = ("Test this {kind} page beyond what was already done: exercise one or two more "
         "primary features (filters, sorting, opening details, tabs) and add assertions "
@@ -76,7 +82,7 @@ def _listy_checks(sc: SkillContext, ob: Observation, start_url: str, plan: list[
         plan.append("test the table: sorting, pagination, row details")
         sc.run_skill(ActionType.TEST_TABLE)
         if not same_page(sc.page.url, start_url):
-            sc.run(ActionType.GOTO, start_url)
+            sc.run(ActionType.GOTO, start_url, kind="cleanup")
     box = ob.search_box()
     if box is not None and box.name:
         plan.append(f"search '{box.name}' for a value the page shows")
@@ -87,21 +93,26 @@ def _listy_checks(sc: SkillContext, ob: Observation, start_url: str, plan: list[
     if nxt is not None:
         plan.append(f"press '{nxt.name}' (pagination)")
         before = sc.observe().fingerprint()
-        sc.run(ActionType.CLICK, nxt.name)
+        pressed = sc.run(ActionType.CLICK, nxt.name, kind="probe")
+        if not pressed.success:
+            checks.append(skipped("pagination works", pressed.message) if pressed.skipped else
+                          Check("pagination works", False, "warn", f"could not press '{nxt.name}'"))
+            return checks
         after = sc.observe(fresh=True)
         checks.append(Check("pagination works", after.fingerprint() != before, "warn",
                             "" if after.fingerprint() != before else f"'{nxt.name}' changed nothing"))
         if not same_page(after.url, start_url):
-            sc.run(ActionType.GOTO, start_url)
+            sc.run(ActionType.GOTO, start_url, kind="cleanup")
     return checks
 
 
 @skill(ActionType.TEST_PAGE)
 def test_page(sc: SkillContext) -> list[Check]:
-    limits = {k: int(sc.option(k, str(v)) or v) for k, v in DEFAULTS.items()}
+    limits = {k: sc.count(k, v) for k, v in DEFAULTS.items()}
+    if sc.budget.limit is None:
+        sc.budget.limit = MAX_ACTIONS
     if sc.flag("destructive", False):
         sc.policy = sc.policy.with_destructive(True)
-    sc.planner.max_calls = limits["max_ai_calls"]
     submit = "submit=true" if sc.flag("submit", False) else "submit=false"
 
     start_url = sc.page.url
@@ -129,9 +140,16 @@ def test_page(sc: SkillContext) -> list[Check]:
     if kind == "LOGIN":
         plan += ["validate the login form without submitting", "check the password field is masked"]
         sc.run_skill(ActionType.TEST_FORM, "submit=false")
-        pw = [f for form in ob.forms for f in form.fields if f.type == "password"]
-        checks.append(Check("password field masked", bool(pw), "error",
-                            "" if pw else "a field looks like a password but is not type=password"))
+        fields = [f for form in ob.forms for f in form.fields]
+        plain = [f.label or f.target for f in fields
+                 if f.type != "password" and PASSWORD_RE.search(f"{f.label} {f.target}")]
+        if plain:
+            checks.append(Check.listing("password field masked", plain, "error"))
+        elif any(f.type == "password" for f in fields):
+            checks.append(Check("password field masked", True, "error", "type=password"))
+        else:
+            checks.append(skipped("password field masked",
+                                  "no password field on this page (e.g. an email-first sign-in)"))
         checks.append(info("credentials", "sign-in not attempted (no account configured for test_page)"))
     elif kind in ("FORM", "WIZARD"):
         plan.append(f"validate the form ({submit})")
@@ -141,33 +159,42 @@ def test_page(sc: SkillContext) -> list[Check]:
         checks.append(info("settings", "toggles and save buttons not pressed; explore skipped"))
     elif kind in LISTY:
         checks += _listy_checks(sc, ob, start_url, plan)
-        if not sc.child_failed:
+        if sc.child_failed:
+            checks.append(skipped("exploration", "not run: a nested skill failed, the page may be in a bad state"))
+        else:
             remaining = max(sc.planner.max_calls - sc.planner.calls, 0)
-            plan.append(f"explore safe controls (depth {limits['depth']}, max {limits['max_actions']} clicks)")
+            left = sc.budget.left() or 0
+            plan.append(f"explore safe controls (depth {limits['depth']}, up to {left} presses)")
             sc.run_skill(ActionType.EXPLORE_PAGE, f"depth={limits['depth']}",
-                         f"max_actions={limits['max_actions']}", f"max_ai_calls={remaining}", "generate=false")
+                         f"max_actions={left}", f"max_ai_calls={remaining}", "generate=false")
             if not same_page(sc.page.url, start_url):
-                sc.run(ActionType.GOTO, start_url)
+                sc.run(ActionType.GOTO, start_url, kind="cleanup")
 
     plan.append("check the layout at narrow widths")
     sc.run_skill(ActionType.TEST_RESPONSIVE)
 
     rejected: list[str] = []
-    if sc.planner.available and not sc.child_failed:
+    if sc.planner.available and sc.child_failed:
+        checks.append(skipped("adaptive plan", "not run: a nested skill failed, the page may be in a bad state"))
+    elif sc.planner.available:
         current = sc.observe(fresh=True)
         done = [s.action.raw for s in sc.leaf_steps][-12:]
         ai_plan = sc.planner.plan(current, GOAL.format(kind=kind), sc.policy, history=done, max_steps=6)
         if ai_plan is not None:
             rejected = ai_plan.rejected
-            executed = sc.run_planned(ai_plan.steps, limits["max_actions"])
-            plan += [f"[ai] {s.action} {s.target or s.value}".strip() for s in executed]
-            checks.append(info("adaptive plan", f"{len(executed)} AI-planned step(s) executed, "
+            ran = sc.run_planned(ai_plan.steps)
+            plan += [f"[ai] {s.action} {s.target or s.value}".strip() for s, _ in ran]
+            checks.append(info("adaptive plan", f"{len(ran)} AI-planned step(s) executed, "
                                                 f"{len(rejected)} rejected"))
+            failed = [f"{r.action.raw}: {(r.message or '').splitlines()[0][:100]}"
+                      for _, r in ran if not r.success]           # a planned skill that failed counts too
+            if failed:
+                checks.append(Check.listing("AI-planned steps completed", failed, "warn"))
 
-    skipped = [s for st in sc.steps if st.agent for s in st.agent.get("skipped", [])]
+    held_back = [*sc.blocked, *(s for st in sc.steps if st.agent for s in st.agent.get("skipped", []))]
     sc.agent.update({
         "page_type": kind, "classification": source, "components": components,
-        "plan": plan, "plan_rejected": rejected, "skipped": skipped,
+        "plan": plan, "plan_rejected": rejected, "skipped": held_back,
         "actions": [s.action.raw for s in sc.leaf_steps],
     })
     if sc.flag("generate", True):

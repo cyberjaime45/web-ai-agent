@@ -288,14 +288,26 @@ class Check:
 
     ``severity`` says what a failed check means: ``error`` (a defect —
     fails the step in strict mode, always fails an explicit skill step),
-    ``warn`` (worth a look, never fails), ``info`` (an observation;
-    ``passed`` is always True).
+    ``warn`` (worth a look, never fails), ``info`` (an observation). Two more
+    record work that did not happen, with the reason in ``detail``:
+    ``skipped`` (nothing to exercise, a limit reached) and ``blocked`` (the
+    safety policy withheld an action). ``info`` / ``skipped`` / ``blocked``
+    checks are always ``passed``. ``outcome`` names the result in one word.
     """
     name:     str
     passed:   bool = True
     severity: str = "error"
     detail:   str = ""
     count:    int = 0      # how many issues a failed check found, when it counts them
+
+    @property
+    def outcome(self) -> str:
+        """``passed`` / ``failed`` / ``warning`` / ``info`` / ``skipped`` / ``blocked``."""
+        if self.severity in ("info", "skipped", "blocked"):
+            return self.severity
+        if self.passed:
+            return "passed"
+        return "failed" if self.severity == "error" else "warning"
 
     @classmethod
     def listing(cls, name: str, items: list[str], severity: str = "error", *,
@@ -324,6 +336,13 @@ class StepResult:
     url:             str = ""         # page URL after the step (for generated flows)
     agent:           dict | None = None   # autonomous-run facts: page type, plan, skipped, ai_calls…
     after:           dict = field(default_factory=dict)   # skill child steps: heading / dialog / alert shown after it
+    soft:            bool = False     # a skill probe / cleanup step: its failure is the skill's finding, not the flow's
+
+    @property
+    def fails_flow(self) -> bool:
+        """Executed and failed, and not a soft (skill-judged) step — the one rule
+        behind a section stopping, a flow failing and a report test failing."""
+        return not self.success and not self.skipped and not self.soft
 
 
 @dataclass
@@ -339,7 +358,8 @@ class FlowResult:
 
     @property
     def failed(self) -> int:
-        return sum(1 for s in self.steps if not s.success and not s.skipped)
+        """Failed steps that fail the flow — a soft (skill-judged) failure does not."""
+        return sum(1 for s in self.steps if s.fails_flow)
 
     @property
     def skipped(self) -> int:

@@ -11,8 +11,11 @@ log. Links are deduplicated (fragment ignored) and same-site by default.
 
 Broken (error): 404 / 410, 5xx, or unreachable.
 Restricted (warn): 401 / 403 / 429 / other 4xx, or a redirect to a login page.
-Never requested: logout links, and links whose path looks destructive
-(delete, unsubscribe, checkout…) unless the flow allows destructive actions.
+Never requested: logout links, and links whose path or query looks
+destructive (delete, unsubscribe, checkout…) unless the flow allows
+destructive actions — listed under ``blocked by safety``. Links over
+``max_links``, or left when the time budget (``timeout``) runs out, are a
+skipped check.
 """
 
 from __future__ import annotations
@@ -21,8 +24,8 @@ import logging
 from urllib.parse import urlparse
 
 from app.agent.safety import DESTRUCTIVE_PATHS
-from app.schemas.actions import ActionType, Check, summarize
-from app.skills.base import SkillContext, info, skill
+from app.schemas.actions import ActionType, Check
+from app.skills.base import SkillContext, info, skill, skipped
 from app.utils.urls import LOGIN_RE, LOGOUT_RE
 
 logger = logging.getLogger(__name__)
@@ -57,8 +60,8 @@ def _unsafe(url: str, destructive_allowed: bool) -> str:
     target = f"{parsed.path}?{parsed.query}"
     if LOGOUT_RE.search(target):
         return "logout"
-    path = parsed.path.lower()
-    if not destructive_allowed and (hit := next((p for p in DESTRUCTIVE_PATHS if p in path), None)):
+    where = target.lower()
+    if not destructive_allowed and (hit := next((p for p in DESTRUCTIVE_PATHS if p in where), None)):
         return hit
     return ""
 
@@ -79,26 +82,31 @@ def _status(api, url: str) -> tuple[int | None, str, str]:
 
 @skill(ActionType.CHECK_LINKS)
 def check_links(sc: SkillContext) -> list[Check]:
-    found = sc.evaluate(_COLLECT_JS) or {"links": [], "images": []}
+    found = sc.evaluate(_COLLECT_JS)
+    if found is None:
+        return [Check("links collected", False, "warn", "the page could not be evaluated")]
     origin = urlparse(sc.page.url).netloc
     external = sc.flag("external")
-    max_links = int(sc.option("max_links", str(DEFAULT_MAX_LINKS)) or DEFAULT_MAX_LINKS)
+    max_links = sc.count("max_links", DEFAULT_MAX_LINKS)
 
+    # same host on purpose (not urls.in_site): subdomains are often SSO / CDN hosts
     same_site = [u for u in found["links"] if urlparse(u).netloc == origin]
     candidates = found["links"] if external else same_site
-    skipped: list[str] = []
     to_check: list[str] = []
     for url in candidates:
         if why := _unsafe(url, sc.policy.destructive_allowed):
-            skipped.append(f"{url} ({why})")
+            sc.block(url, f"{why} link, not requested")
         else:
             to_check.append(url)
-    checked = to_check[:max_links]
 
     api = sc.page.context.request
     broken: list[str] = []
     restricted: list[str] = []
-    for url in checked:
+    checked: list[str] = []
+    for url in to_check[:max_links]:
+        if sc.out_of_time():
+            break
+        checked.append(url)
         status, final, error = _status(api, url)
         if status is None:
             broken.append(f"unreachable {url}: {error}")
@@ -115,15 +123,14 @@ def check_links(sc: SkillContext) -> list[Check]:
     summary = f"{len(checked)} of {len(found['links'])} links checked ({scope})"
     if not external and len(found["links"]) > len(same_site):
         summary += f"; {len(found['links']) - len(same_site)} external not checked (external=true)"
-    if len(to_check) > max_links:
-        summary += f"; {len(to_check) - max_links} over max_links={max_links}"
     checks = [
         info("links checked", summary),
         Check.listing("no broken links", broken, "error"),
         Check.listing("no restricted links", restricted, "warn"),
     ]
-    if skipped:
-        checks.append(info("links not requested", summarize(skipped)))
+    if len(to_check) > len(checked):
+        checks.append(skipped("links not checked", f"{len(to_check) - len(checked)} link(s) over "
+                              f"max_links={max_links} or past the time budget"))
     if sc.flag("images", True):
         images = found["images"]
         checks.append(Check.listing("no broken images", images, "error"))

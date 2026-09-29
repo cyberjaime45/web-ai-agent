@@ -8,10 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.execution import oracle
 from app.observability.recorder import (
     MAX_ERROR_CONSOLE, MAX_INFO_CONSOLE, MAX_NETWORK_ENTRIES, REDACTED,
     PageRecorder, redact_headers, redact_text, redact_url,
 )
+from app.utils.urls import in_site, registrable_domain, site_domain
 
 
 class FakePage:
@@ -250,3 +252,135 @@ def test_seq_mark_windows_console_and_network(rec_page):
     assert [n["url"] for n in rec.failures_since(mark)] == [
         "https://x.test/api/save", "https://x.test/img.png"]
     assert rec.errors_since(mark, limit=1)[0]["text"] == "warned"   # newest kept
+
+
+# ── only the site under test: prefetches and other sites are never recorded ──
+
+
+
+def _nav(url):
+    """A main-frame navigation request, the way Playwright reports one."""
+    req = make_request(url=url, resource_type="document")
+    req.is_navigation_request = lambda: True
+    req.frame = SimpleNamespace(parent_frame=None)
+    return req
+
+
+def _serve(page, req, status):
+    page.emit("request", req)
+    page.emit("response", make_response(req, status=status))
+
+
+def test_site_domain_is_the_registrable_domain():
+    assert registrable_domain("memberssitestaging.wheelsup.com") == "wheelsup.com"
+    assert registrable_domain("a.shop.example.co.uk") == "example.co.uk"
+    assert registrable_domain("127.0.0.1") == "127.0.0.1" and registrable_domain("localhost") == "localhost"
+    assert site_domain("https://one.wheelsup.com/home") == "wheelsup.com"
+    assert site_domain("tel:855-FLY-8760") == site_domain("about:blank") == ""
+
+
+@pytest.mark.parametrize("url, inside", [
+    ("https://wheelsup.com/", True),
+    ("https://memberssitestaging.wheelsup.com/signin", True),
+    ("https://WheelsUp.com:8443/api", True),
+    ("wss://live.wheelsup.com/socket", True),
+    ("https://otherwheelsup.com/", False),                 # lookalike: not a subdomain
+    ("https://wheelsup.com.example.org/", False),          # the domain as a label of another
+    ("https://tracker.test/?ref=wheelsup.com", False),      # the domain only in the query
+    ("tel:855-FLY-8760", False),
+])
+def test_in_site_checks_the_hostname_label_by_label(url, inside):
+    assert in_site(url, "wheelsup.com") is inside
+
+
+def test_a_failed_prefetch_is_not_recorded_but_the_same_navigation_is(rec_page):
+    rec, page = rec_page
+    rec.site_domain = "wheelsup.com"
+    signin = "https://memberssitestaging.wheelsup.com/signin"
+    _serve(page, make_request(url=signin, resource_type="prefetch"), 503)
+    page.emit("console", console_msg(text="Failed to load resource: the server responded with a status of 503", url=signin))
+    assert rec.network == [] and rec.console == [] and rec.untracked == {"prefetch": 1, "other_site": 0}
+    assert {c.name: c for c in oracle.diagnostics_checks(rec, 0)}["no failed requests"].passed
+
+    _serve(page, _nav(signin), 503)                         # a real navigation to the same URL
+    assert [(n["url"], n["status"], n["resource_type"]) for n in rec.network] == [(signin, 503, "document")]
+    failed = {c.name: c for c in oracle.diagnostics_checks(rec, 0)}["no failed requests"]
+    assert not failed.passed and "signin → 503" in failed.detail
+
+
+@pytest.mark.parametrize("headers", [{"sec-purpose": "prefetch"}, {"purpose": "prefetch"},
+                                     {"sec-purpose": "prefetch;prerender"}, {"next-router-prefetch": "1"}])
+def test_prefetch_purpose_headers_are_prefetches_too(rec_page, headers):
+    rec, page = rec_page
+    req = make_request(url="https://wheelsup.com/next", resource_type="fetch", headers=headers)
+    page.emit("request", req)
+    page.emit("requestfailed", SimpleNamespace(**{**vars(req), "failure": "net::ERR_FAILED"}))
+    assert rec.network == [] and rec.untracked["prefetch"] == 1
+
+
+def test_the_site_is_learned_from_the_first_navigation_and_other_sites_are_left_out(rec_page):
+    rec, page = rec_page
+    _serve(page, _nav("https://memberssitestaging.wheelsup.com/"), 200)
+    assert rec.site_domain == "wheelsup.com"
+    for url, status in [("https://api.wheelsup.com/v1/me", 500),               # subdomain: kept
+                        ("https://otherwheelsup.com/x.js", 404),               # lookalike: left out
+                        ("https://pagead2.googlesyndication.com/collect", 503)]:  # third party: left out
+        _serve(page, make_request(url=url), status)
+    page.emit("console", console_msg(text="Failed to load resource: 404", url="https://otherwheelsup.com/x.js"))
+    page.emit("console", console_msg(text="TypeError: boom", url="https://otherwheelsup.com/x.js"))
+    assert [n["url"] for n in rec.network] == ["https://memberssitestaging.wheelsup.com/",
+                                               "https://api.wheelsup.com/v1/me"]
+    assert [n["url"] for n in rec.failures_since(0)] == ["https://api.wheelsup.com/v1/me"]
+    assert rec.untracked == {"prefetch": 0, "other_site": 2}
+    assert [c["text"] for c in rec.console] == ["TypeError: boom"]     # only the resource echo is dropped
+
+
+def test_a_given_site_domain_stays_and_navigations_elsewhere_are_still_recorded():
+    rec, page = PageRecorder("wheelsup.com"), FakePage()
+    rec.attach(page)
+    _serve(page, _nav("https://login.example-sso.com/"), 500)       # the flow lands on an SSO page
+    _serve(page, make_request(url="https://login.example-sso.com/app.js", resource_type="script"), 404)
+    assert rec.site_domain == "wheelsup.com"
+    assert [(n["url"], n["status"]) for n in rec.network] == [("https://login.example-sso.com/", 500)]
+    assert rec.untracked == {"prefetch": 0, "other_site": 1}
+
+
+def test_domains_as_written_are_normalized():
+    from app.utils.urls import normalize_domain
+    assert [normalize_domain(v) for v in ("Example.com", "https://example.com/", "localhost:3000",
+                                          " .wheelsup.com. ", "bücher.de")] == [
+        "example.com", "example.com", "localhost", "wheelsup.com", "xn--bcher-kva.de"]
+    assert in_site("https://xn--bcher-kva.de/a", normalize_domain("bücher.de"))
+    assert site_domain("https://myapp.azurewebsites.net/") == "myapp.azurewebsites.net"   # a tenant, not the platform
+    assert in_site("file:///tmp/fixture.html", "") and not in_site("tel:123", "")
+
+
+def test_other_browsers_cancelled_requests_are_not_failures():
+    for failure in ("net::ERR_ABORTED", "NS_BINDING_ABORTED", "Load request cancelled"):
+        assert oracle.cancelled({"failure": failure})
+    assert not oracle.cancelled({"failure": "net::ERR_CONNECTION_REFUSED"})
+
+
+def test_prefetches_are_never_waited_for(rec_page):
+    rec, page = rec_page
+    page.emit("request", make_request(url="https://x.test/next", resource_type="fetch",
+                                      headers={"next-router-prefetch": "1"}))
+    page.emit("request", make_request(url="https://x.test/api/me", resource_type="fetch"))
+    assert rec.pending(frozenset({"fetch"}), 10) == ["https://x.test/api/me"]
+
+
+def test_the_site_is_the_domain_of_the_first_goto_step(monkeypatch):
+    from app.execution.engine import flow_site_domain
+    from app.flow.parser import parse_flow_markdown
+
+    def site(md: str) -> str:
+        return flow_site_domain(parse_flow_markdown("# F\n\n" + md))
+
+    assert site('## S\n- click: "x"\n- goto: "https://memberssitestaging.wheelsup.com/"\n'
+                '- goto: "https://other.test/"\n') == "wheelsup.com"
+    monkeypatch.setenv("APP_URL", "https://one.wheelsup.com/home")
+    assert site('## S\n- goto: "<APP_URL>"\n') == "wheelsup.com"            # placeholders resolved
+    monkeypatch.delenv("APP_URL")
+    assert site('## S\n- goto: "<APP_URL>"\n') == ""                        # unset: the page load decides
+    assert site('## Config\n- site_domain: "wheelsup.com"\n\n## S\n- goto: "https://sso.example.com/"\n') == "wheelsup.com"
+    assert site('## S\n- run_flow: "components/login.md"\n') == ""

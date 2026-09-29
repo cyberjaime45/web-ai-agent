@@ -18,8 +18,10 @@ Reads the first visible table (``table=N`` for another; ``<table>``,
 
 Every finding is a warning (these are heuristics: equal values, server-side
 paging, virtualised rows can all look "unchanged" — reported as
-inconclusive). A control the safety policy blocks (a row's "Delete") is
-never pressed.
+inconclusive); a control that cannot be pressed is a warning too. Presses
+are probe steps, going back afterwards is cleanup. No table is skipped
+(an error when ``table=`` named one). A control the safety policy blocks (a
+row's "Delete") is never pressed.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ import time
 
 from app.agent.observer import EMPTY_STATE_RE, PREV_NAMES
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill
+from app.skills.base import SkillContext, info, missing, skill, skipped
 from app.utils.urls import same_page
 
 MAX_ROWS = 50
@@ -103,24 +105,32 @@ def _column(read: dict, col: int) -> list[str]:
     return [row[col] for row in read["cells"] if col < len(row)]
 
 
+def _press(sc: SkillContext, name: str, check: str) -> Check | None:
+    """Press *name* as a probe; the check to report when that did not happen."""
+    sr = sc.run(ActionType.CLICK, name, kind="probe")
+    if sr.success:
+        return None
+    return skipped(check, sr.message) if sr.skipped else Check(check, False, "warn", f"could not press '{name}'")
+
+
 def _sort(sc: SkillContext, read: dict, idx: int) -> list[Check]:
     header = next((h for h in read["headers"] if h["sortable"] and h["click"]
-                   and sc.policy.allows(h["click"], role="columnheader")), None)
+                   and sc.allowed(h["click"], role="columnheader")), None)
     if header is None:
-        return [info("sorting", "no sortable column header found")]
+        return [skipped("sorting works", "no sortable column header found")]
     col = read["headers"].index(header)
     label = header["name"].strip(_ARROWS).strip() or header["click"]
     before = _column(read, col)
     for _attempt in range(2):
-        if not sc.run(ActionType.CLICK, header["click"]).success:
-            return []
-        sc.run(ActionType.WAIT_STABLE)
+        if problem := _press(sc, header["click"], "sorting works"):
+            return [problem]
+        sc.run(ActionType.WAIT_STABLE, kind="probe")
         after = _column(sc.evaluate(_TABLE_JS, idx) or read, col)
         if after != before:
             break
     order = sort_order(after)
     if order == "equal":
-        return [info("sorting", f"'{label}' has too few distinct values to judge")]
+        return [skipped("sorting works", f"'{label}' has too few distinct values to judge")]
     ok = order in ("asc", "desc") and after != before
     detail = (f"'{label}' sorted {'ascending' if order == 'asc' else 'descending'}" if ok else
               f"clicking '{label}' changed nothing" if after == before else
@@ -130,54 +140,59 @@ def _sort(sc: SkillContext, read: dict, idx: int) -> list[Check]:
 
 def _paginate(sc: SkillContext, read: dict, idx: int) -> list[Check]:
     nxt = sc.observe(fresh=True).paging_control()
-    if nxt is None or not sc.policy.allows(nxt.name, role=nxt.role):
-        return [info("pagination", "no next-page control found")]
+    if nxt is None:
+        return [skipped("pagination works", "no next-page control found")]
     first = read["cells"][:1]
-    if not sc.run(ActionType.CLICK, nxt.name).success:
-        return []
-    sc.run(ActionType.WAIT_STABLE)
+    if problem := _press(sc, nxt.name, "pagination works"):
+        return [problem]
+    sc.run(ActionType.WAIT_STABLE, kind="probe")
     moved = (sc.evaluate(_TABLE_JS, idx) or {}).get("cells", [])[:1]
     checks = [Check("pagination works", moved != first, "warn",
                     f"'{nxt.name}' shows other rows" if moved != first else f"'{nxt.name}' changed nothing")]
+    if moved == first:
+        return checks
     prev = sc.observe(fresh=True).paging_control(PREV_NAMES)
-    if moved != first and prev is not None and sc.run(ActionType.CLICK, prev.name).success:
-        sc.run(ActionType.WAIT_STABLE)
-        back = (sc.evaluate(_TABLE_JS, idx) or {}).get("cells", [])[:1]
-        checks.append(Check("previous page restores the rows", back == first, "warn",
-                            "" if back == first else f"'{prev.name}' did not bring the first page back"))
+    if prev is None:
+        return checks
+    if problem := _press(sc, prev.name, "previous page restores the rows"):
+        return [*checks, problem]
+    sc.run(ActionType.WAIT_STABLE, kind="probe")
+    back = (sc.evaluate(_TABLE_JS, idx) or {}).get("cells", [])[:1]
+    checks.append(Check("previous page restores the rows", back == first, "warn",
+                        "" if back == first else f"'{prev.name}' did not bring the first page back"))
     return checks
 
 
 def _open_row(sc: SkillContext, read: dict) -> list[Check]:
     control = read.get("rowControl")
     if not control or not control["name"]:
-        return [info("row details", "the first row has no link or button")]
-    if not sc.policy.allows(control["name"], role=control["role"], url=sc.page.url):
-        return [info("row details", f"'{control['name']}' not pressed (safety policy)")]
-    before = sc.observe(fresh=True)
-    if not sc.run(ActionType.CLICK, control["name"]).success:
+        return [skipped("row opens details", "the first row has no link or button")]
+    if not sc.allowed(control["name"], role=control["role"]):
         return []
-    sc.run(ActionType.WAIT_STABLE)
+    before = sc.observe(fresh=True)
+    if problem := _press(sc, control["name"], "row opens details"):
+        return [problem]
+    sc.run(ActionType.WAIT_STABLE, kind="probe")
     after = sc.observe(fresh=True)
     navigated = not same_page(after.url, before.url)
     dialog = after.dialogs > before.dialogs
     opened = navigated or dialog or after.fingerprint() != before.fingerprint()
     how = "opens a page" if navigated else "opens a dialog" if dialog else "changes the page" if opened else ""
     if navigated:
-        sc.run(ActionType.BACK)
-        sc.run(ActionType.WAIT_STABLE)
+        sc.run(ActionType.BACK, kind="cleanup")
+        sc.run(ActionType.WAIT_STABLE, kind="cleanup")
     elif dialog:
-        sc.run(ActionType.PRESS, "Escape")
+        sc.run(ActionType.PRESS, "Escape", kind="cleanup")
     return [Check("row opens details", opened, "warn",
                   f"'{control['name']}' {how}" if opened else f"'{control['name']}' changed nothing")]
 
 
 @skill(ActionType.TEST_TABLE)
 def test_table(sc: SkillContext) -> list[Check]:
-    idx = max(int(sc.option("table", "1") or 1) - 1, 0)
+    idx = max(sc.count("table", 1) - 1, 0)
     read = sc.evaluate(_TABLE_JS, idx)
     if not read:
-        return [Check("table found", False, "warn", f"no visible table #{idx + 1} on the page")]
+        return [missing(sc, "table found", f"visible table #{idx + 1}", "table")]
     names = [h["name"] for h in read["headers"] if h["name"]]
     empty = read["rows"] == 0 and bool(EMPTY_STATE_RE.search(read["text"]))
     checks = [
@@ -191,8 +206,8 @@ def test_table(sc: SkillContext) -> list[Check]:
         return checks
     if sc.flag("sort", True):
         checks += _sort(sc, read, idx)
-    if sc.flag("paginate", True):
+    if sc.flag("paginate", True) and not sc.stopped:
         checks += _paginate(sc, sc.evaluate(_TABLE_JS, idx) or read, idx)
-    if sc.flag("open", True):
+    if sc.flag("open", True) and not sc.stopped:
         checks += _open_row(sc, sc.evaluate(_TABLE_JS, idx) or read)
     return checks

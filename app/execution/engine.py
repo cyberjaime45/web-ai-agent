@@ -41,6 +41,7 @@ from app.layers.ai_resolver import AIResolver
 from app.layers.deterministic import DeterministicRunner
 from app.layers.providers import LLMProvider, get_provider
 from app.skills import run_skill
+from app.utils.urls import site_domain
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,23 @@ def _resolve_env_placeholders(action: FlowAction) -> FlowAction:
         step_num=action.step_num,
         section=action.section,
     )
+
+
+def flow_site_domain(flow) -> str:
+    """The site under test, whose requests are recorded: the flow's
+    ``site_domain:`` override, else the registrable domain of its first
+    ``goto`` step (``<ENV_VAR>`` placeholders resolved). ``""`` when the flow
+    opens its first page some other way (a ``run_flow`` component) — the
+    recorder then takes the domain of the first page load."""
+    if getattr(flow, "site_domain", ""):
+        return flow.site_domain
+    first = next((a for a in flow.actions if a.type == ActionType.GOTO and a.args), None)
+    if first is None:
+        return ""
+    try:
+        return site_domain(_resolve_env_placeholders(first).args[0])
+    except RuntimeError:                       # placeholder not set: the step itself will say so
+        return ""
 
 
 def _append_error(result, msg: str) -> None:
@@ -209,7 +227,7 @@ class FlowRunner:
 
             for sr in self.run_action(action, page, runner, ctx):
                 result.steps.append(sr)
-                if not sr.success:
+                if sr.fails_flow:
                     _append_error(result, sr.message)
                     logger.error("Flow '%s' failed at step %s: %r — %s", flow.name,
                                  sr.action.step_num, sr.action.raw, _first_line(sr.message))
@@ -220,17 +238,18 @@ class FlowRunner:
 
     # ── One flow line: a step, or a group (run_flow / skill) ───────
 
-    def run_action(self, action, page, runner, ctx) -> list[StepResult]:
+    def run_action(self, action, page, runner, ctx, budget=None) -> list[StepResult]:
         """What one flow line produced: ``[step]``, or a marker step followed by
         its children for ``run_flow`` and skills. The top-level loop, sub-flows
         and skills composing other skills (``SkillContext.run_skill``) all
-        dispatch through here."""
+        dispatch through here. *budget* is the calling skill's (a nested skill
+        spends from it); a flow line has none."""
         if action.type == ActionType.RUN_FLOW:
             return self._run_sub_flow(action, page, runner, ctx)
         if action.type in SKILL_ACTIONS:
             return run_skill(self, action, page, runner, ctx, recorder=self._recorder,
                              ignore=self._ignore, profile=self.profile, policy=self._policy,
-                             provider=self.provider)
+                             provider=self.provider, parent_budget=budget)
         return [self.execute(action, page, runner, ctx)]
 
     def evidence_path(self, name: str) -> Path:
@@ -337,8 +356,8 @@ class FlowRunner:
                 for sr in produced:
                     sr.sub_flow = sr.sub_flow or sub_flow.name
                 results += produced
-                if not all(sr.success for sr in produced):
-                    break                      # a sub-flow stops at its first failure
+                if any(sr.fails_flow for sr in produced):
+                    break                      # a sub-flow stops at its first failure (a soft one does not count)
         finally:
             self._nesting_depth -= 1
             self._seen_flows.discard(ref)

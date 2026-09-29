@@ -17,15 +17,18 @@ Through ordinary child steps (``click``, ``press Escape``, ``wait_stable``):
                   Escape closes it, and focus returns to the button
 
 Disabled controls (``disabled``, ``aria-disabled``, a ``disabled`` class)
-are left alone. Every finding is a warning. Custom widgets without ARIA give nothing to
-check and are reported as not found, never as failures. Controls the safety
+are left alone. Every finding is a warning. Custom widgets without ARIA give
+nothing to check and are reported as skipped, never as failures — except an
+opener named with ``dialog=`` that is not on the page (an error). Presses are
+probe steps; putting a widget back (the original tab, a second disclosure
+click, closing a dialog Escape left open) is cleanup. Controls the safety
 policy blocks are never pressed.
 """
 
 from __future__ import annotations
 
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill
+from app.skills.base import SkillContext, info, skill, skipped
 
 DEFAULT_MAX = 5
 
@@ -70,18 +73,26 @@ def _listed(name: str, problems: list[str], tried: int) -> Check:
     return Check.listing(name, problems, "warn", ok=f"{tried} checked")
 
 
+def _press(sc: SkillContext, name: str, problems: list[str]) -> bool:
+    """Press *name* as a probe; a press that did not happen is noted in *problems*
+    (refusals by the budget or the policy are the runtime's to report)."""
+    sr = sc.run(ActionType.CLICK, name, kind="probe")
+    if not sr.success and not sr.skipped:
+        problems.append(f"could not press '{name}'")
+    return sr.success
+
+
 def _tabs(sc: SkillContext, tabs: list[dict], limit: int) -> list[Check]:
     targets = [t["name"] for t in tabs if t["name"] and not t["selected"]
-               and sc.policy.allows(t["name"], role="tab")][:limit]
+               and sc.allowed(t["name"], role="tab")][:limit]
     if not targets:
         return []
     original = next((t["name"] for t in tabs if t["selected"]), "")
     problems: list[str] = []
     for name in targets:
-        if not sc.run(ActionType.CLICK, name).success:
-            problems.append(f"could not press '{name}'")
+        if not _press(sc, name, problems):
             continue
-        sc.run(ActionType.WAIT_STABLE)
+        sc.run(ActionType.WAIT_STABLE, kind="probe")
         state = sc.evaluate(_TAB_JS, name)
         if state is None:
             continue
@@ -90,21 +101,20 @@ def _tabs(sc: SkillContext, tabs: list[dict], limit: int) -> list[Check]:
         elif state["panel"] is False:
             problems.append(f"the panel of '{name}' stays hidden")
     if original:
-        sc.run(ActionType.CLICK, original)
+        sc.run(ActionType.CLICK, original, kind="cleanup")
     return [_listed("tabs select their panel", problems, len(targets))]
 
 
 def _disclosures(sc: SkillContext, names: list[str], limit: int) -> list[Check]:
-    targets = [n for n in dict.fromkeys(names) if n and sc.policy.allows(n, role="button")][:limit]
+    targets = [n for n in dict.fromkeys(names) if n and sc.allowed(n, role="button")][:limit]
     problems: list[str] = []
     for name in targets:
         before = sc.evaluate(_DISCLOSURE_JS, name)
         if before is None:
             continue
-        if not sc.run(ActionType.CLICK, name).success:
-            problems.append(f"could not press '{name}'")
+        if not _press(sc, name, problems):
             continue
-        sc.run(ActionType.WAIT_STABLE)
+        sc.run(ActionType.WAIT_STABLE, kind="probe")
         after = sc.evaluate(_DISCLOSURE_JS, name)
         if after is None:
             continue
@@ -112,51 +122,57 @@ def _disclosures(sc: SkillContext, names: list[str], limit: int) -> list[Check]:
             problems.append(f"'{name}' aria-expanded stayed {str(before['expanded']).lower()}")
         elif after["region"] is not None and after["region"] != after["expanded"]:
             problems.append(f"the region of '{name}' is {'hidden' if after['expanded'] else 'still visible'}")
-        sc.run(ActionType.CLICK, name)                                   # restore
-        sc.run(ActionType.WAIT_STABLE)
+        sc.run(ActionType.CLICK, name, kind="cleanup")                   # restore
+        sc.run(ActionType.WAIT_STABLE, kind="cleanup")
     return [_listed("disclosures toggle", problems, len(targets))] if targets else []
 
 
-def _dialogs(sc: SkillContext, names: list[str], limit: int) -> list[Check]:
-    targets = [n for n in dict.fromkeys(names) if n and sc.policy.allows(n, role="button")][:limit]
+def _dialogs(sc: SkillContext, names: list[str], limit: int, named: str = "") -> list[Check]:
+    targets = [n for n in dict.fromkeys(names) if n and sc.allowed(n, role="button")][:limit]
     opened, focus, escape, restored = [], [], [], []
     for name in targets:
-        if not sc.run(ActionType.CLICK, name).success:
-            opened.append(f"could not press '{name}'")
+        if not _press(sc, name, opened):
             continue
-        sc.run(ActionType.WAIT_STABLE)
+        sc.run(ActionType.WAIT_STABLE, kind="probe")
         state = sc.evaluate(_DIALOG_JS, name) or {}
         if not state.get("open"):
             opened.append(f"'{name}' opened no dialog")
             continue
         if not state.get("focusInside"):
             focus.append(f"focus stays outside the dialog of '{name}'")
-        sc.run(ActionType.PRESS, "Escape")
-        sc.run(ActionType.WAIT_STABLE)
+        sc.run(ActionType.PRESS, "Escape", kind="probe")
+        sc.run(ActionType.WAIT_STABLE, kind="probe")
         after = sc.evaluate(_DIALOG_JS, name) or {}
         if after.get("open"):
             escape.append(f"Escape leaves the dialog of '{name}' open")
             if after.get("close"):
-                sc.run(ActionType.CLICK, after["close"])
+                sc.run(ActionType.CLICK, after["close"], kind="cleanup")
         elif not after.get("focusOnOpener"):
             restored.append(f"focus does not return to '{name}'")
     if not targets:
         return []
     n = len(targets)
-    return [_listed("dialogs open", opened, n), _listed("dialog takes focus", focus, n),
+    extra: list[Check] = []
+    if named and f"could not press '{named}'" in opened:          # the flow named it: it must be there
+        opened.remove(f"could not press '{named}'")
+        extra.append(Check("dialog opener found", False, "error", f"dialog='{named}' is not on the page"))
+    return extra + [_listed("dialogs open", opened, n), _listed("dialog takes focus", focus, n),
             _listed("Escape closes the dialog", escape, n), _listed("focus returns to the opener", restored, n)]
 
 
 @skill(ActionType.TEST_WIDGETS)
 def test_widgets(sc: SkillContext) -> list[Check]:
-    limit = int(sc.option("max", str(DEFAULT_MAX)) or DEFAULT_MAX)
-    found = sc.evaluate(_FIND_JS) or {"tabs": [], "disclosures": [], "dialogs": []}
-    dialogs = found["dialogs"] + ([sc.option("dialog")] if sc.option("dialog") else [])
+    limit = sc.count("max", DEFAULT_MAX)
+    found = sc.evaluate(_FIND_JS)
+    if found is None:
+        return [Check("widgets found", False, "warn", "the page could not be evaluated")]
+    named = sc.option("dialog")
+    dialogs = ([named] if named else []) + found["dialogs"]      # the named one first: max= never cuts it
     checks = [info("widgets", f"{len(found['tabs'])} tab(s), {len(found['disclosures'])} disclosure(s), "
                               f"{len(dialogs)} dialog trigger(s)")]
     checks += _tabs(sc, found["tabs"], limit)
     checks += _disclosures(sc, found["disclosures"], limit)
-    checks += _dialogs(sc, dialogs, limit)
+    checks += _dialogs(sc, dialogs, limit, named)
     if len(checks) == 1:
-        checks.append(info("nothing to exercise", "no ARIA tabs, disclosures or dialog triggers on the page"))
+        checks.append(skipped("widgets behave", "no ARIA tabs, disclosures or dialog triggers on the page"))
     return checks

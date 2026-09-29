@@ -23,7 +23,7 @@ from app.browser import profiles
 from app.browser.session import BrowserSession, report_status
 from app.config.settings import settings
 from app.execution import rerun
-from app.execution.engine import FlowRunner
+from app.execution.engine import FlowRunner, flow_site_domain
 from app.flow.parser import (
     FlowDefinition,
     FlowParseError,
@@ -94,7 +94,8 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_sessionstart(session: pytest.Session) -> None:
     show_banner()
     settings.images_dir.mkdir(parents=True, exist_ok=True)
-    session.config._webagent_browser = BrowserSession()
+    global _BROWSER
+    session.config._webagent_browser = _BROWSER = BrowserSession()
     # One LLM client for the whole session (L3 is optional). Partial config is
     # a startup error, not a per-test one.
     try:
@@ -112,9 +113,21 @@ def pytest_collection(session: pytest.Session) -> None:
     install_console_reporter(session.config)
 
 
+_BROWSER: BrowserSession | None = None     # this session's browser: the interrupt hook gets no config
+
+
+def pytest_keyboard_interrupt(excinfo) -> None:
+    """Ctrl-C anywhere (a step, browser launch, context setup): teardown must
+    make no more Playwright calls, they would hang (see BrowserSession)."""
+    if _BROWSER is not None:
+        _BROWSER.interrupted = True
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     browser = getattr(session.config, "_webagent_browser", None)
     if browser is not None:
+        if exitstatus == pytest.ExitCode.INTERRUPTED:
+            browser.interrupted = True          # however the Ctrl-C arrived
         browser.close()
 
 
@@ -123,14 +136,17 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     plugin = config.pluginmanager.get_plugin("professional_report")
     started = plugin.session_start if plugin else None
     duration = time.time() - started if started else 0.0
+    files = plugin.files if plugin else None
     lines = execution_summary(
-        terminalreporter.stats, plugin.files.totals if plugin and plugin.files else None,
-        duration, settings.run_label(), get_build_name(),
+        terminalreporter.stats, files.totals if files else None,
+        duration, settings.run_label(), get_build_name(), files.status if files else None,
     )
     if lines:
         terminalreporter.section("Execution summary")
         for line in lines:
             terminalreporter.write_line(line)
+    if plugin and not plugin.files and exitstatus == pytest.ExitCode.INTERRUPTED:
+        terminalreporter.write_line("Interrupted before any test finished — no report written.")
     if plugin and plugin.files:
         terminalreporter.section("Report")
         terminalreporter.write_line(f"HTML : {plugin.report_path}")
@@ -238,7 +254,7 @@ def _keep_trace(page, result: FlowResult | None, flow_name: str, profile: str,
     site — the last failed (non-skipped) step."""
     if not settings.trace_on_failure:
         return
-    failed = [] if result is None else [s for s in result.steps if not s.success and not s.skipped]
+    failed = [] if result is None else [s for s in result.steps if s.fails_flow]
     stem = f"{slugify(flow_name)}__{profile}" + ("__retry" if retry else "")
     path = stop_trace(page, keep=result is None or bool(failed),
                       traces_dir=settings.traces_dir, stem=stem)
@@ -308,7 +324,8 @@ class FlowItem(pytest.Item):
             if plugin:
                 plugin.record_profile_label(
                     self.nodeid, profiles.describe(self.profile, page.viewport_size))
-            recorder = PageRecorder()   # console errors/warnings + network, for the report
+            # console errors/warnings + the site's network, for the report
+            recorder = PageRecorder(flow_site_domain(self.flow))
             recorder.attach(page)
             slot: list = [None, recorder]
             attempts.append(slot)
@@ -316,18 +333,23 @@ class FlowItem(pytest.Item):
                                 provider=self.config._webagent_provider, profile=self.profile,
                                 attempt=n)
             result: FlowResult | None = None
+            session = self.config._webagent_browser
             try:
                 result = runner.run(self.flow, page, recorder=recorder)
                 if not result.success:
                     self._backfill_evidence(result, page, runner)
                 slot[0] = result
+            except KeyboardInterrupt:
+                session.interrupted = True     # no more Playwright calls: they would hang
+                raise
             finally:
-                _keep_trace(page, result, self.flow.name, self.profile, retry=n > 1)
-                report_status(
-                    page,
-                    result.success if result is not None else False,
-                    result.error if result is not None else "flow crashed before completing",
-                )
+                if not session.interrupted:
+                    _keep_trace(page, result, self.flow.name, self.profile, retry=n > 1)
+                    report_status(
+                        page,
+                        result.success if result is not None else False,
+                        result.error if result is not None else "flow crashed before completing",
+                    )
         return result
 
     def _record(self, plugin, attempts: list[list]) -> FlowResult | None:
@@ -354,7 +376,10 @@ class FlowItem(pytest.Item):
                 plugin.record_error(self.nodeid, result.error)
             if retried:
                 plugin.record_retries(self.nodeid, retried)
-            plugin.record_capture(self.nodeid, console, network, recorder.dropped)
+            recs = [recorder, attempts[1][1]] if retried else [recorder]   # a rerun adds its own counts
+            plugin.record_capture(self.nodeid, console, network, {
+                "console": sum(r.dropped["console"] for r in recs), "network": sum(r.dropped["network"] for r in recs),
+                "untracked": {k: sum(r.untracked[k] for r in recs) for k in recorder.untracked}})
         return result
 
     @staticmethod
@@ -365,8 +390,7 @@ class FlowItem(pytest.Item):
         shot was impossible there (page navigating, crash) capture the
         flow-end state here. Skipped steps never get evidence.
         """
-        failed_steps = [s for s in result.steps
-                        if not s.success and not getattr(s, "skipped", False)]
+        failed_steps = [s for s in result.steps if s.fails_flow]
         if not failed_steps or failed_steps[-1].screenshot_path:
             return
         step = runner.attach_evidence(failed_steps[-1], page)
@@ -388,12 +412,14 @@ class FlowItem(pytest.Item):
                     icon, layer = "—", "[skipped]"
                 elif s.success:
                     icon, layer = "✓", f"[L{s.layer_used}]"
+                elif s.soft:
+                    icon, layer = "!", f"[L{s.layer_used} warning]"
                 else:
                     icon, layer = "✗", f"[L{s.layer_used} FAIL]"
                 dur = f"{s.duration * 1000:.0f}ms" if s.duration < 1 else f"{s.duration:.2f}s"
                 prefix = f"↳ [{s.sub_flow}]  " if s.sub_flow else ""
                 lines.append(f"  {icon} Step {s.action.step_num:>2} {layer}  {prefix}{s.action.raw}  ({dur})")
-                if not s.success and not getattr(s, "skipped", False):
+                if s.fails_flow:
                     lines.append(f"       {s.message}")
                     if s.evidence and s.evidence.diagnosis:
                         lines.append(f"       likely cause: {s.evidence.diagnosis['summary']}")

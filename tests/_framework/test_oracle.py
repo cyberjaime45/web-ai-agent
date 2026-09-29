@@ -28,7 +28,9 @@ def test_diagnostics_split_by_severity():
     assert not checks["no console errors"].passed and checks["no console errors"].severity == "warn"
     assert not checks["no failed requests"].passed
     assert "api/save → 500" in checks["no failed requests"].detail
-    assert "img.png → net::ERR_ABORTED" in checks["no failed requests"].detail
+    assert "img.png" not in checks["no failed requests"].detail          # cancelled, not failed
+    assert checks["requests cancelled"].outcome == "info"
+    assert "img.png → net::ERR_ABORTED" in checks["requests cancelled"].detail
     assert not checks["no 401/403 responses"].passed
     assert not checks["no 4xx responses"].passed and "analytics" in checks["no 4xx responses"].detail
 
@@ -37,8 +39,8 @@ def test_diagnostics_count_what_they_found():
     # The report shows "Console errors · 2" from the count, never by splitting
     # the detail text (console messages contain "; " themselves).
     counts = {c.name: c.count for c in oracle.diagnostics_checks(_rec(), 0)}
-    assert counts == {"no page errors": 1, "no console errors": 2, "no failed requests": 2,
-                      "no 401/403 responses": 1, "no 4xx responses": 1}
+    assert counts == {"no page errors": 1, "no console errors": 2, "no failed requests": 1,
+                      "no 401/403 responses": 1, "no 4xx responses": 1, "requests cancelled": 1}
     assert {c.count for c in oracle.probe_checks(_Page(spinner=3))} >= {3}
     assert all(c.count == 0 for c in oracle.diagnostics_checks(_rec(), _rec().seq))
 

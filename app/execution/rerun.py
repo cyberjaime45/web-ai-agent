@@ -23,7 +23,7 @@ from app.schemas.actions import FlowResult, StepResult, section_runs
 
 
 def _failed(steps: list[StepResult]) -> list[StepResult]:
-    return [s for s in steps if not s.success and not s.skipped]
+    return [s for s in steps if s.fails_flow]
 
 
 def failed_sections(result: FlowResult) -> list[int]:

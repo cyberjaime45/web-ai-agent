@@ -530,16 +530,64 @@ See [FLOWS.md](FLOWS.md#reusable-sub-flows) for a worked login example.
 ## QA skills (13)
 
 Skills are higher-level checks that orchestrate ordinary actions. The engine
-runs one as a group: a marker step carrying the skill's **checks** (each
-passed / failed with a severity), followed by the child steps it executed —
-every `fill`, `click` or `select` a skill performs goes through the same
-L1 → L2 → L3 path as a hand-written step and shows up nested under it in the
-report. A skill step fails when a child step failed or an `error`-severity
-check did not pass; `warn` checks never fail it. Options are `key=value`
-arguments.
+runs one as a group: a marker step carrying the skill's **checks**, followed
+by the child steps it executed — every `fill`, `click` or `select` a skill
+performs goes through the same L1 → L2 → L3 path as a hand-written step and
+shows up nested under it in the report. Options are `key=value` arguments.
 
 None of them needs an LLM; `explore_page` and `test_page` can use one
 within a call budget.
+
+**Check outcomes.** Each check has one:
+
+| Outcome | Severity | Meaning |
+|---------|----------|---------|
+| passed | `error` / `warn` | Verified |
+| failed | `error` | A defect the skill verified with a deterministic signal |
+| warning | `warn` | Worth a look: a heuristic, an uncertain observation, a control that could not be operated, or something that could not be observed at all |
+| info | `info` | An observation, never judged |
+| skipped | `skipped` | Not done, with the reason: nothing to exercise on the page, or a limit reached |
+| blocked | `blocked` | The safety policy withheld an action (the `blocked by safety` check lists each one with its reason) |
+
+A skill that finds nothing to test (no table for `test_table`) reports that
+check as skipped — unless the flow named the target (`form=`, `table=`,
+`search=`, `dialog=`), which makes a missing target a failure. An option that
+is not a non-negative number is an `options valid` failure; the default is used.
+
+**Child steps.** Each child step is one of three kinds:
+
+| Kind | Examples | A failure… |
+|------|----------|------------|
+| action | none of the built-in skills need one today | fails the skill — it needed the step to work |
+| probe | a tab, sort header or submit button pressed to see what happens; a field filled; an AI-planned step | is the skill's finding: it becomes a check (usually a warning, "could not press …"); the step itself counts as passed (its message is kept) and never stops the section |
+| cleanup | `back`, Escape, the return `goto`, putting a tab or viewport back | adds one `page restored after the skill` warning |
+
+**Skill result.** A skill step *fails* when it crashed, an `error` check
+failed, an action child failed, or a skill it started failed. Otherwise it
+*passes* — *with warnings* when a `warn` check, a probe or a cleanup failed.
+A failed skill fails the section like any failed step (the rest of the
+section is skipped, the next section runs); warnings never do.
+
+**Run result.** Test cases are sections (see [REPORTS.md](REPORTS.md)); the
+steps a skill ran are steps inside them, never extra test cases. A test case
+passes with warnings when any check in it was flagged but nothing failed. The
+run is *failed* when any test case failed (exit code 1), *passed with
+warnings* or *passed* otherwise (exit 0), and *interrupted* (exit 2) when it
+stopped before every flow finished.
+
+**Limits.** Every skill has a time budget, `timeout` (seconds, default
+300), and a press budget, `max_actions` (clicks, key presses, ticks and
+selections; unlimited unless given, `20` for `explore_page` and `test_page`).
+A skill started by another skill — including the AI-planned steps of
+`test_page` — spends from the caller's budget too, so the caller's limit
+bounds everything under it. When a budget runs out the skill stops, keeps the
+checks it made and adds `finished within limits`: skipped for `max_actions`,
+a warning for `timeout`. Cleanup is always allowed.
+
+**Safety.** Every click a skill makes — chosen by the skill or planned by a
+model — passes the [safety policy](#explore_page) first; a refused click is
+not run and appears under `blocked by safety`. A model never passes options
+to a skill it plans (`test_form` always runs without `submit=true`).
 
 #### `inspect_page`
 Describe what is on the page: type (`LOGIN`, `FORM`, `TABLE`, `LIST`,
@@ -554,10 +602,13 @@ observation is kept in the run context for later skills.
 
 #### `check_console_network`
 JavaScript page errors, console errors, failed requests and 4xx/5xx
-responses recorded since the previous `check_console_network` step (or the
-start of the flow). Page errors, 5xx, aborted requests and 401/403 fail the
-step; console errors and other 4xx are warnings. `console=strict` makes
-console errors fail it too. Noise is excluded with `ignore_console` /
+responses of the site under test (prefetches and other sites are never
+recorded — see [REPORTS.md](REPORTS.md)) since the previous `check_console_network` step (or the
+start of the flow). Page errors, 5xx, requests that failed to connect and 401/403 fail the
+step; console errors and other 4xx are warnings. Cancelled requests
+(`net::ERR_ABORTED` — telemetry beacons, requests cut off by leaving the page)
+are listed as an observation, never a failure; the automatic checks after each
+step apply the same rules. `console=strict` makes console errors fail it too. Noise is excluded with `ignore_console` /
 `ignore_network` in `## Config`.
 
 ```markdown
@@ -570,11 +621,14 @@ console errors fail it too. Noise is excluded with `ignore_console` /
 #### `test_responsive`
 Layout checks at several viewport widths — the current one plus `390x664`
 and `768x1024` by default, or `viewports=…`. Per viewport: no horizontal
-overflow, controls on screen, form fields fit, dialog fits; on narrow widths
+overflow (the page scrolls sideways; content the viewport clips with
+`overflow-x: hidden` / `clip` does not count), controls on screen, form fields
+fit, dialog fits; on narrow widths
 also tap targets ≥ 24px and text ≥ 12px (warnings). When a navigation
 landmark hides its links on a narrow width, the menu toggle is clicked to
-check the mobile menu opens. A screenshot per viewport is kept on the step
-and the original viewport is restored.
+check the mobile menu opens (a toggle that cannot be pressed is a warning).
+A screenshot per viewport is kept on the step and the original viewport is
+restored — failing to restore it is a `page restored after the skill` warning.
 
 ```markdown
 1. goto: "https://example.com/members"
@@ -590,8 +644,19 @@ Inspect the first visible form (or `form=<name>`) and run the usual
 validation checks: empty submission rejected, invalid email rejected, value
 shorter than `minlength` rejected, valid sample input accepted. By default
 the valid input is **not** submitted; `submit=true` submits it and checks
-the outcome (no error messages, no failed requests). A submit button whose
-name looks destructive (pay, send, delete…) is never pressed.
+the outcome (no error messages, no failed requests).
+
+*Rejected* means the browser or the app flagged a field (`:invalid`,
+`aria-invalid`) or showed a message. The form staying on the page with no
+such signal is a warning (the skill cannot tell); the form going away means
+bad input was accepted — a failure. The invalid-email and too-short checks
+submit only when that cannot save anything: the browser flags the bad value
+itself, or the empty submission already showed validation. Otherwise they are
+skipped. A field that cannot be filled skips the check that needed it (a
+warning for the valid-input check). The submit button passes the safety
+policy with its form as context, so a destructive button — or any button of a
+form named like "Delete account", named or not — is never pressed. Generated
+flows never replay `test_form`'s submit presses.
 
 ```markdown
 1. goto: "https://example.com/contact"
@@ -605,9 +670,15 @@ reports — links on the same site, buttons, tabs, menu items — is pressed onc
 as a `click` child step and the outcome recorded: navigates to a page (queued
 for the next depth), opens a dialog (closed with Escape), changes the page in
 place, or nothing observable. The result is a page/action graph on the step,
-plus checks: `no broken pages` (4xx/5xx documents, failed render), `controls
-respond`, `controls pressable`, the controls skipped by the safety policy and
-the external links found.
+plus checks: `no broken pages` (4xx/5xx documents, error pages, error checks
+after a click — a failure), `controls respond`, `controls pressable` and
+`linked pages open` (warnings: a control can be covered for a moment), the
+controls `blocked by safety`, the external links found, and — skipped — the
+form buttons left alone and the pages still queued when a limit was reached.
+Buttons that submit or confirm a form (inside a form, or named `Save`,
+`Submit`, `Apply`, `OK`…) are never pressed here: that is `test_form`'s job,
+and pressing them while exploring could change data. Going back (`back`,
+Escape, `goto`) is cleanup.
 
 ```markdown
 1. goto: "<APP_URL>/members"
@@ -618,7 +689,7 @@ the external links found.
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `depth` | `2` | Link hops from the start page |
-| `max_actions` | `20` | Clicks in total |
+| `max_actions` | `20` | Presses in total (shared with the caller's budget under `test_page`) |
 | `max_pages` | `8` | Distinct pages visited |
 | `max_ai_calls` | `3` | Planner calls when an LLM provider is configured; `0` keeps it deterministic |
 | `destructive` | `false` | `true` presses controls the safety policy would block — only with `allow_destructive` in `## Config` or `ALLOW_DESTRUCTIVE=true` |
@@ -641,12 +712,12 @@ what ran under `reports/<ENVIRONMENT>/generated/`.
 ```markdown
 1. goto: "<APP_URL>/members"
 2. test_page
-3. test_page: "depth=1" | "max_actions=12" | "max_ai_calls=3" | "submit=false"
+3. test_page: "depth=1" | "max_actions=20" | "max_ai_calls=3" | "submit=false"
 ```
 
 | Page type | What runs (besides `check_console_network`, `check_accessibility` and `test_responsive`) |
 |-----------|--------------------------------------------------------------------|
-| `LOGIN` | `test_form` without submitting; password field masked; no sign-in attempted |
+| `LOGIN` | `test_form` without submitting; password field masked (a field labelled like a password that is not `type=password` fails; no password field — an email-first sign-in — is skipped); no sign-in attempted |
 | `FORM`, `WIZARD` | `test_form` (`submit=true` only when passed through) |
 | `TABLE`, `LIST`, `SEARCH`, `DASHBOARD`, `DETAIL`, `CONTENT` | `test_table` when there is a table (else a pager pressed once), `test_search` when there is a search field, then `explore_page` within `depth` / `max_actions` |
 | `SETTINGS` | nothing that changes data: toggles and save buttons are left alone |
@@ -655,7 +726,10 @@ With an LLM provider, `max_ai_calls` bounds two uses: a classification
 tie-break when the deterministic type is `CONTENT` or `UNKNOWN`, and an
 adaptive plan of a few extra steps — each validated against the observation
 and the safety policy before it runs; rejected steps are listed in the report.
-Without a provider everything above still runs.
+Planned steps are probes: one that fails is an `AI-planned steps completed`
+warning and ends the plan, never the flow. `max_actions` (default 20) bounds
+every press under `test_page` — table, search, pager, exploration and planned
+steps together. Without a provider everything above still runs.
 
 The report's **Agent** panel shows the page type, discovered components, the
 plan, actions executed, controls skipped by safety, AI calls and a link to
@@ -672,6 +746,8 @@ The generated flow replays the actions that ran (`fill`, `click`, `select`,
 up — skipping text that changes between runs (dates, times, amounts, long
 numbers, emails). The steps `test_responsive` performed at other viewports are
 left out. The Agent panel lists the assertions under *Suggested assertions*.
+`test_form`'s submit presses are never written to the generated flow: replayed
+outside the skill they could submit the form on every run.
 
 `profiles=` is not a `test_page` option: list profiles under `## Config` (or
 pass `--profile`) to run the whole flow on desktop and mobile.
@@ -702,10 +778,11 @@ failed to load are reported too.
 | `max_links` | `50` | Links requested at most; the rest are counted in `links checked` |
 | `images` | `true` | Check images too |
 
-Logout links, and links whose path looks destructive (delete, unsubscribe,
-checkout…), are never requested unless the flow allows destructive actions;
-they are listed under `links not requested`. The requests are not part of
-the report's network log.
+Logout links, and links whose path or query looks destructive (delete,
+unsubscribe, checkout…), are never requested unless the flow allows
+destructive actions; they are listed under `blocked by safety`. Links over
+`max_links`, or left when the time budget runs out, are a skipped `links not
+checked` check. The requests are not part of the report's network log.
 
 #### `check_accessibility`
 A basic accessibility pass in one page evaluation; nothing is clicked. Each
@@ -752,8 +829,11 @@ Exercise the first visible table (`<table>`, `role=grid` or `role=table`;
 ```
 
 Every finding is a warning: equal values, server-side paging and virtualised
-rows can look unchanged, and are reported as such. A control the safety policy
-blocks (a row's *Delete*) is never pressed.
+rows can look unchanged, and are reported as such; a header or pager that
+cannot be pressed is a warning too, and one that does not exist is skipped. No
+table is skipped — a failure when `table=` named one. A control the safety
+policy blocks (a row's *Delete*) is never pressed and is listed under
+`blocked by safety`.
 
 #### `test_search`
 Search for a value the page already shows — the first cell of the first table
@@ -774,8 +854,10 @@ row, else the first list item — so no test data is needed:
 
 `term=` searches for a given value; `search=` names the field when there are
 several. Findings are warnings: a search can match on fields the page does not
-show. When searching opens another page, the skill returns to the start page
-before the next search.
+show, and a field that cannot be typed into is a `search usable` warning. No
+search field is skipped — a failure when `search=` named one. When searching
+opens another page, the skill returns to the start page (cleanup) before the
+next search.
 
 #### `snapshot_page`
 Structural regression without pixels: save what the page is made of, and on
@@ -819,9 +901,11 @@ through ordinary child steps:
 ```
 
 `max=` limits the widgets of each kind (default 5); `dialog=` names an opener
-that has no ARIA hint. Disabled controls and controls the safety policy blocks
-are left alone. Findings are warnings; widgets without ARIA are reported as not
-found rather than failed.
+that has no ARIA hint — if it is not on the page, `dialog opener found` fails.
+Disabled controls and controls the safety policy blocks are left alone.
+Findings are warnings; a page without ARIA widgets is skipped rather than
+failed. Putting a widget back (the original tab, a second disclosure click)
+is cleanup.
 
 #### `check_performance`
 Read the browser's own timing for the current document and compare it with

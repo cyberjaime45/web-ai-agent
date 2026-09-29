@@ -4,12 +4,13 @@ const fmtMs = ms => ms >= 60000 ? Math.floor(ms/60000)+'m '+Math.round(ms%60000/
 const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
 const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 const failedLike = s => s === 'failed' || s === 'error';
-const isFlaky = t => t.retries > 0 && !failedLike(t.status);
-const effStatus = t => isFlaky(t) ? 'flaky' : t.status;
+const isFlaky = t => t.retries > 0 && t.status === 'passed';
+const hasWarnings = t => t.status === 'passed' && (t.warnings || []).length > 0;
+const effStatus = t => isFlaky(t) ? 'flaky' : hasWarnings(t) ? 'warned' : t.status;
 const areaOf = t => (t.file.match(/^(?:apps|tests|flows)\/([^/]+)\//) || [,'(root)'])[1];
 const areaLabel = a => { const s = a === '(root)' ? 'Other' : a.replace(/^_+/, '').replace(/_/g, ' '); return s.length <= 3 ? s.toUpperCase() : cap(s); };
 const suiteTitle = t => t.file_title || t.file.split('/').pop().replace(/\.(md|py)$/, '');
-const lvlOf = c => c.level === 'pageerror' ? 'error' : c.level === 'log' ? 'info' : c.level;
+const lvlOf = c => c.level === 'pageerror' || c.level === 'net' ? 'error' : c.level === 'log' ? 'info' : c.level;   // net: a failed request shown as a log row
 const fmtBytes = b => b == null ? '' : b >= 1048576 ? (b/1048576).toFixed(1)+' MB' : b >= 1024 ? (b/1024).toFixed(1)+' KB' : b+' B';
 const relTime = (ts, t0) => (ts != null && t0 != null) ? '+' + fmtMs(ts - t0) : '';
 const fmtDate = iso => new Date(iso).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
@@ -28,7 +29,6 @@ const ICONS = {
   monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
   phone: '<rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/>',
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
-  layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   chev: '<polyline points="9 18 15 12 9 6"/>',
   close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
@@ -48,6 +48,7 @@ const STATUS = {
   error:   {label: 'Error',           badge: 'danger',  icon: 'x'},
   skipped: {label: 'Skipped',         badge: 'neutral', icon: 'skip'},
   flaky:   {label: 'Passed on retry', badge: 'warning', icon: 'warn'},
+  warned:  {label: 'Passed with warnings', badge: 'warning', icon: 'warn'},
 };
 const badge = (text, kind = 'neutral', title = '') =>
   `<span class="qa-badge qa-badge-${kind}"${title ? ` title="${esc(title)}"` : ''}>${text}</span>`;
@@ -56,6 +57,9 @@ const iconBadge = (name, kind, label) =>
   `<span class="qa-badge qa-badge-${kind}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon(name)}</span>`;
 const HEALED = 'Self-healed: a fallback locator found an element the flow describes. Update the flow so it passes on the first attempt.';
 const statusBadge = st => badge(STATUS[st].label, STATUS[st].badge);
+// The device profile as an icon (monitor / phone), named for tooltips and screen readers.
+const deviceIcon = name => name ? `<span class="dev-ico" role="img" aria-label="${esc(cap(name))}" title="${esc(cap(name))}">${icon(name === 'mobile' ? 'phone' : 'monitor')}</span>` : '';
+const PROFILE_ORDER = {desktop: 0, mobile: 1};
 
 const T = DATA.tests, TOT = DATA.totals, ENV = DATA.environment;
 // Per-test values every renderer needs — computed once, not per row per keystroke.
@@ -67,7 +71,12 @@ T.forEach((t, i) => {
 });
 const titleOf = t => t._title;
 const failing = TOT.failed + TOT.errors;
-const flakyCount = T.filter(isFlaky).length;
+// A failed request; a cancelled one (net::ERR_ABORTED — a beacon, a request cut
+// off by leaving the page) is not, the same rule as the automatic checks.
+const failedReq = n => !n.ok && !/ERR_ABORTED|NS_BINDING_ABORTED|cancelled/.test(n.failure || '');   // oracle._CANCELLED
+// How many tests show each status — the parts of the hero bar and the filters, adding up to the total.
+const BY = T.reduce((m, t) => { const k = failedLike(t.status) ? 'failed' : effStatus(t); m[k] = (m[k] || 0) + 1; return m; }, {});
+const allOf = n => n === 1 ? 'The test' : n === 2 ? 'Both tests' : `All ${n} tests`;
 const healCount = T.reduce((n,t) => n + (t.healings||[]).length, 0);
 const profiles = [...new Set(T.map(t => t.profile && t.profile.name).filter(Boolean))];
 // ISO-8601 strings order correctly with plain comparison — no collator needed.
@@ -105,12 +114,17 @@ function loadDetail(i){
 }
 
 /* ── what failed, in words a reviewer can act on ── */
-function failedStep(t){
-  // The exception propagates up through nested steps, marking each ancestor
-  // failed too — the last failed step is the deepest one: the failure site.
-  const failed = (t.steps || []).filter(s => s.status === 'failed');
-  return failed.length ? failed[failed.length - 1] : null;
+function failureSites(t){
+  // Where the test failed, in execution order: failed steps with no failed
+  // step inside them. Their parents are marked failed only because of them.
+  const steps = t.steps || [], failed = steps.filter(s => s.status === 'failed');
+  if (failed.some(s => s.id == null)) return failed.slice(-1);    // no ids: the deepest one
+  return (t._sites ||= failed.filter(s => !failed.some(c => c.parent === s.id)));
 }
+const failedStep = t => failureSites(t)[0] || null;   // the first thing that went wrong
+const failedChecks = s => (s.checks || []).filter(c => c.outcome ? c.outcome === 'failed' : !c.passed && c.severity === 'error');
+// A check is named for what should hold ("no broken pages"); say so, then what was found.
+const checkFinding = c => `Expected ${c.name}${c.detail ? ` — found: ${c.detail}` : ''}`;
 function cleanError(msg){
   // Drop the layer-chain preamble and Playwright's call log; keep the sentence.
   return String(msg || '')
@@ -131,14 +145,15 @@ const ACTION_LABEL = {
   wait_for_element: 'Wait for element', wait_for_text: 'Wait for text', wait_for_url: 'Wait for page address',
   run_flow: 'Run shared steps', ai_click: 'AI click', ai_assert: 'AI check', ai_extract: 'AI extract', ai_summarize: 'AI summary',
   inspect_page: 'Inspect page', check_console_network: 'Check console and network', test_responsive: 'Test responsive layout',
-  test_form: 'Test form', explore_page: 'Explore page', test_page: 'Test page',
+  test_form: 'Test form', explore_page: 'Explore page', test_page: 'Test page', check_links: 'Check links',
+  check_accessibility: 'Check accessibility', test_table: 'Test table', test_search: 'Test search',
+  snapshot_page: 'Compare page structure', test_widgets: 'Test widgets', check_performance: 'Check performance',
 };
 const actionLabel = a => ACTION_LABEL[a] || cap(String(a || '').replace(/_/g, ' '));
 const INTERACT = {click: 'click', click_link_text: 'click', double_click: 'double-click', right_click: 'right-click', hover: 'hover over',
   fill: 'fill in', type: 'type into', clear: 'clear', focus: 'focus', select: 'choose an option in', check: 'tick', uncheck: 'untick',
   upload: 'upload a file to', drag_to: 'drag', table_click: 'click in', ai_click: 'click'};
-function explain(t){
-  const s = failedStep(t);
+function explain(t, s = failedStep(t)){
   const raw = (s && s.error) || (t.error && t.error.message) || '';
   if (!s || !s.action) return cleanError(raw) || 'The test stopped with an error.';
   const [a] = argParts(s.args), A = a ? `"${a}"` : 'the element';
@@ -146,8 +161,12 @@ function explain(t){
   const within = secs ? ` within ${Math.round(secs / 1000)} seconds` : '';
   const net = (raw.match(/net::(ERR_[A-Z_]+)/) || [])[1];
   const url = s.evidence && s.evidence.url;
-  const checks = (s.checks || []).filter(c => !c.passed && c.severity === 'error');
-  if (checks.length) return `The ${actionLabel(s.action).toLowerCase()} step found ${plural(checks.length, 'problem')}: ${checks.map(c => c.name).slice(0, 3).join(', ')}.`;
+  const checks = failedChecks(s);
+  // One line: a check that counted several findings says how many; the card lists them.
+  if (checks.length){
+    const first = checks[0], line = first.count > 1 ? `Expected ${first.name} — found ${first.count}` : checkFinding(first);
+    return line + (checks.length > 1 ? ` (+${checks.length - 1} more)` : '');
+  }
   if (/strict mode violation/i.test(raw)) return `More than one element matches ${A}, so the step could not tell which one to use.`;
   switch (s.action){
     case 'assert_text': case 'wait_for_text': return `Expected text ${A} was not found on the page${within}.`;
@@ -172,12 +191,6 @@ function explain(t){
 }
 function stepText(s){
   return s.action ? `${esc(actionLabel(s.action))}${s.args ? ` <code>${esc(s.args)}</code>` : ''}` : esc(s.name);
-}
-function failureShot(t){
-  // The viewport at the failure site is the one a reviewer recognises.
-  const a = t.artifacts || {};
-  const vp = (a.screenshots || []).find(x => x.kind === 'viewport');
-  return (vp && vp.path) || a.screenshot || ((a.screenshots || [])[0] || {}).path || null;
 }
 
 /* ── theme ── */
@@ -208,73 +221,54 @@ $('themebtn').onclick = () => setTheme(document.documentElement.dataset.theme ==
 
   const suites = Object.keys(bySuite).length;
   const failedSuites = Object.values(bySuite).filter(ts => ts.some(t => failedLike(t.status))).length;
-  const executed = TOT.total - TOT.skipped;
+  const executed = TOT.total - TOT.skipped, warns = BY.warned || 0;
+  const warnNote = warns ? ` ${plural(warns, 'other test', 'other tests')} passed with warnings.` : '';
+  const ran = TOT.skipped ? ' that ran' : '';
+  const passedWarn = warns === executed ? `${allOf(executed)}${ran} passed, ${executed === 1 ? 'with' : warns === 2 ? 'both with' : 'all with'} warnings to review.`
+    : `${allOf(executed)}${ran} passed; ${warns} with warnings to review.`;
   const v = !TOT.total ? ['unknown', 'info', 'No tests ran', 'The run finished without executing any test.']
+    : DATA.status === 'error' ? ['bad', 'x', 'Run error', `The run itself failed (exit code ${DATA.exit_code}): a setup, teardown or internal error, not only a failed check. ${failing ? `${failing} of ${TOT.total} tests failed; ` : ''}see the test output for details.`]
+    : DATA.status === 'interrupted' ? ['warn', 'warn', 'Run interrupted',
+        `The run stopped before every flow finished. ${plural(TOT.total, 'test')} completed: ${TOT.passed} passed, ${failing} failed.`]
     : failing ? ['bad', 'x', `${plural(failing, 'test')} failed`,
-        `${failing} of ${TOT.total} tests failed${failedSuites > 1 ? ` across ${failedSuites} suites` : ''}. Each failure is listed below with the step where it stopped.`]
-    : TOT.skipped ? ['info', 'info', 'Passed with skipped tests', `All ${executed} tests that ran passed; ${TOT.skipped} ${TOT.skipped === 1 ? 'was' : 'were'} skipped.`]
-    : ['good', 'check', 'All tests passed', `All ${TOT.total} tests passed in ${fmtMs(TOT.duration_ms)}.`];
+        `${failing} of ${TOT.total} tests failed${failedSuites > 1 ? ` across ${failedSuites} suites` : ''}. Their suites come first below; open a test to see the step that failed and why.${warnNote}`]
+    : warns ? ['warn', 'warn', 'Passed with warnings', `${passedWarn}${TOT.skipped ? ` ${TOT.skipped} skipped.` : ''} Open a test to see what to review.`]
+    : TOT.skipped ? ['info', 'info', 'Passed with skipped tests', `${allOf(executed)} that ran passed; ${TOT.skipped} ${TOT.skipped === 1 ? 'was' : 'were'} skipped.`]
+    : ['good', 'check', 'All tests passed', `${allOf(TOT.total)} passed in ${fmtMs(TOT.duration_ms)}.`];
   const healNote = healCount && !failing ? ` ${plural(healCount, 'step')} needed a fallback locator; see Run details.` : '';
   $('verdict').innerHTML = `<div class="run-verdict run-verdict-${v[0]}" role="status">
     <span class="run-verdict-icon">${icon(v[1])}</span>
     <div><p class="run-verdict-headline">${v[2]}</p><p class="run-verdict-detail">${v[3]}${healNote}</p></div></div>`;
 
+  // One set of parts that add up to the total: the words, the bar and its key agree.
   const pct = n => (n / Math.max(TOT.total, 1) * 100).toFixed(2);
-  const clean = TOT.passed - flakyCount;
+  const PARTS = [['pass', 'passed', BY.passed || 0], ['warn', 'with warnings', warns], ['flaky', 'passed on retry', BY.flaky || 0],
+    ['fail', 'failed', failing], ['skip', 'skipped', TOT.skipped]].filter(([k, , n]) => n || k === 'pass');
+  const attention = failing ? `<p class="run-attention"><span class="run-attention-value">${failing}</span> ${failing === 1 ? 'test failed' : 'tests failed'}${warns ? `<span class="run-attention-more">, ${warns} more with warnings</span>` : ''}</p>`
+    : warns ? `<p class="run-attention run-attention-warn"><span class="run-attention-value">${warns}</span> ${warns === 1 ? 'test has' : 'tests have'} warnings</p>`
+    : TOT.total ? `<p class="run-attention run-attention-clear">${icon('check')} Nothing needs attention</p>` : '';
   $('hero').innerHTML = `<div class="run-hero">
     <div class="run-rate"><span class="run-rate-value">${Math.floor(TOT.pass_rate)}<span class="run-rate-unit">%</span></span>
       <span class="run-rate-label">pass rate</span></div>
-    <div class="run-hero-counts">
-      ${failing ? `<p class="run-attention"><span class="run-attention-value">${failing}</span> ${failing === 1 ? 'test needs' : 'tests need'} attention</p>`
-        : TOT.total ? `<p class="run-attention run-attention-clear">${icon('check')} Nothing needs attention</p>` : ''}
-      <p class="run-breakdown"><span>${TOT.total} run</span><span class="run-breakdown-pass">${TOT.passed} passed</span>
-        ${failing ? `<span class="run-breakdown-fail">${failing} failed</span>` : ''}
-        ${flakyCount ? `<span>${flakyCount} passed on retry</span>` : ''}
-        ${TOT.skipped ? `<span class="run-breakdown-skip">${TOT.skipped} skipped</span>` : ''}</p>
-      <div class="run-bar" role="img" aria-label="${TOT.passed} passed, ${failing} failed, ${TOT.skipped} skipped">
-        <div class="run-bar-pass" style="width:${pct(clean)}%"></div><div class="run-bar-flaky" style="width:${pct(flakyCount)}%"></div>
-        <div class="run-bar-fail" style="width:${pct(failing)}%"></div><div class="run-bar-skip" style="width:${pct(TOT.skipped)}%"></div></div>
-      <p class="run-bar-key"><span class="run-key-pass">passed</span>${flakyCount ? '<span class="run-key-flaky">passed on retry</span>' : ''}
-        ${failing ? '<span class="run-key-fail">failed</span>' : ''}${TOT.skipped ? '<span class="run-key-skip">skipped</span>' : ''}</p>
+    <div class="run-hero-counts">${attention}
+      <p class="run-breakdown">${PARTS.map(([k, l, n]) => `<span class="run-breakdown-${k}">${n} ${l}</span>`).join('')}</p>
+      <div class="run-bar" role="img" aria-label="${PARTS.map(([, l, n]) => `${n} ${l}`).join(', ')}">
+        ${PARTS.map(([k, , n]) => `<div class="run-bar-${k}" style="width:${pct(n)}%"></div>`).join('')}</div>
+      <p class="run-bar-key">${PARTS.filter(([, , n]) => n).map(([k, l]) => `<span class="run-key-${k}">${l}</span>`).join('')}</p>
     </div>
     <div class="run-stats">
-      <div class="run-stat"><div class="metric-label">Duration</div><div class="metric-value">${esc(fmtMs(TOT.duration_ms))}</div></div>
+      <div class="run-stat"><div class="metric-label">Test cases</div><div class="metric-value">${TOT.total}</div></div>
       <div class="run-stat"><div class="metric-label">Suites</div><div class="metric-value">${suites}</div></div>
     </div></div>`;
   $('foot').textContent = `Generated ${fmtDate(DATA.created_at)} · Web Agent ${ENV.framework}`;
 })();
 
-/* ── 2. tests requiring attention ── */
-(function attention(){
-  const groups = {};
-  T.filter(t => failedLike(t.status)).forEach(t => (groups[t.file] ||= []).push(t));
-  if (!Object.keys(groups).length) return;
-  $('attention').hidden = false;
-  // A suite that is a single test (its heading is the test) needs no header of its own.
-  $('failures').innerHTML = Object.values(groups).map(ts => `<div class="failure-group">
-    ${ts.every(t => (t.title || t.name) === suiteTitle(t)) ? ''
-      : `<div class="failure-group-head"><b>${esc(suiteTitle(ts[0]))}</b>${esc(areaLabel(areaOf(ts[0])))} · ${plural(ts.length, 'failure')}</div>`}
-    ${ts.map(t => {
-      const s = failedStep(t), shot = failureShot(t);
-      return `<div class="failure-line">
-        <button class="failure-row" data-open="${t._i}" aria-haspopup="dialog">${icon('x')}
-          <span class="failure-row-main">
-            <span class="failure-row-name">${titleOf(t)}</span>
-            <span class="failure-row-why">${esc(explain(t))}</span>
-            ${s ? `<span class="failure-row-step">Failed step: ${stepText(s)}</span>` : ''}
-            <span class="failure-row-tags">${statusBadge(t.status)}${badge(esc(areaLabel(areaOf(t))))}${badge(icon('clock') + esc(fmtMs(t.duration_ms)))}
-              ${profiles.length > 1 && t.profile ? badge(esc(cap(t.profile.name)), 'primary') : ''}
-              ${shot ? '' : badge('No screenshot')}</span>
-          </span></button>
-        ${shot ? `<a class="failure-shot" href="${esc(shot)}" target="_blank" rel="noopener" title="Open the screenshot taken at the failure"><img src="${esc(shot)}" alt="Screen when ${titleOf(t)} failed" loading="lazy"></a>` : ''}
-      </div>`;
-    }).join('')}</div>`).join('');
-})();
 
-/* ── 3. all tests ── */
+/* ── 2. all tests ── */
 let statusFilter = '';
 const FILTERS = [['', 'All', TOT.total, 'var(--primary)'], ['failed', 'Failed', failing, 'var(--bad)'],
-  ['passed', 'Passed', TOT.passed, 'var(--good)'], ['flaky', 'Passed on retry', flakyCount, 'var(--warn)'], ['skipped', 'Skipped', TOT.skipped, 'var(--dot-skip)']]
+  ['passed', 'Passed', BY.passed || 0, 'var(--good)'], ['warned', 'With warnings', BY.warned || 0, 'var(--warn)'],
+  ['flaky', 'Passed on retry', BY.flaky || 0, 'var(--warn)'], ['skipped', 'Skipped', TOT.skipped, 'var(--dot-skip)']]
   .filter(([k, , n]) => !k || n);
 $('fchips').innerHTML = FILTERS.map(([k, l, n, c]) =>
   `<button class="qa-tab-btn filter-chip${k ? '' : ' active'}" data-f="${k}" style="--c:${c}">${l}<span class="n">${n}</span></button>`).join('');
@@ -298,45 +292,51 @@ function signalBadges(t){
   // nothing at all when the test stayed clean.
   const c = t.counts || {};
   return [c.con_err && badge(plural(c.con_err, 'console error'), 'danger'),
-          c.con_warn && badge(plural(c.con_warn, 'console warning'), 'warning'),
+          c.con_warn && badge(plural(c.con_warn, 'console warning')),   // browser messages, not check warnings
           c.net_bad && badge(plural(c.net_bad, 'failed request')),   // mostly third-party beacons: noted, not alarmed
-          c.checks_flagged && badge(plural(c.checks_flagged, 'check flagged', 'checks flagged'), 'warning')].filter(Boolean).join('');
+          !failedLike(t.status) && c.warnings && badge(plural(c.warnings, 'warning'), 'warning')].filter(Boolean).join('');
 }
 const openGroups = {};   // the reader's own open/close choices win over the defaults
 function renderTests(){
   const q = $('search').value.toLowerCase(), mk = $('marker').value, ar = $('suite').value;
   const filtering = !!(q || mk || ar || statusFilter);
   const keep = T.filter(t => {
-    if (statusFilter === 'failed' ? !failedLike(t.status) : statusFilter === 'flaky' ? !isFlaky(t) :
-        statusFilter === 'passed' ? (t.status !== 'passed' || isFlaky(t)) : (statusFilter && t.status !== statusFilter)) return false;
+    if (statusFilter && (statusFilter === 'failed' ? !failedLike(t.status) : effStatus(t) !== statusFilter)) return false;
     if (mk && !(t.markers||[]).includes(mk)) return false;
     if (ar && areaOf(t) !== ar) return false;
     return !q || t._hay.includes(q);
   });
   const groups = {};
   keep.forEach(t => (groups[t.file] ||= []).push(t));
+  // Within a suite, a test's profiles sit together (desktop, then mobile), tests in the order they first ran.
+  Object.values(groups).forEach(ts => {
+    const first = {};
+    ts.forEach(t => { first[t.title || t.name] ??= t._i; });
+    ts.sort((a, b) => first[a.title || a.name] - first[b.title || b.name]
+      || (PROFILE_ORDER[a.profile && a.profile.name] ?? 9) - (PROFILE_ORDER[b.profile && b.profile.name] ?? 9) || a._i - b._i);
+  });
   const few = Object.keys(groups).length <= 3;
-  // Suites with failures lead; the rest keep their run order.
-  const ordered = Object.entries(groups).sort(([, a], [, b]) => b.some(t => failedLike(t.status)) - a.some(t => failedLike(t.status)));
+  // Suites with failures lead; the rest keep their run order (failures counted once per suite).
+  const ko = Object.fromEntries(Object.entries(groups).map(([f, ts]) => [f, ts.filter(t => failedLike(t.status)).length]));
+  const ordered = Object.entries(groups).sort(([a], [b]) => (ko[b] > 0) - (ko[a] > 0));
   $('tests').innerHTML = keep.length ? ordered.map(([file, ts]) => {
-    const ko = ts.filter(t => failedLike(t.status)).length, time = ts.reduce((n,t) => n + t.duration_ms, 0);
+    const failed = ko[file], time = ts.reduce((n,t) => n + t.duration_ms, 0);
     // Passing suites fold away so the failing ones are what the eye lands on.
-    const open = openGroups[file] ?? (ko > 0 || few || filtering);
+    const open = openGroups[file] ?? (failed > 0 || few || filtering);
     return `<div class="tgroup${open ? '' : ' closed'}" data-file="${esc(file)}">
       <button class="tgroup-head" aria-expanded="${open}">${icon('chev', 'toggle-icon')}
         <span class="tgroup-name">${esc(suiteTitle(ts[0]))}<small>${esc(file)}</small></span>
-        <span class="tgroup-counts">${ts.length - ko} of ${ts.length} passed${ko ? `<span class="bad">${ko} failed</span>` : ''}</span>
+        <span class="tgroup-counts">${ts.length - failed} of ${ts.length} passed${failed ? `<span class="bad">${failed} failed</span>` : ''}</span>
         <span class="trow-dur">${fmtMs(time)}</span></button>
       <div class="tgroup-body">${ts.map(t => {
         const st = effStatus(t);
         return `<button class="trow ${st}" data-open="${t._i}" aria-haspopup="dialog"><span class="sdot ${st}"></span>
-          <span class="trow-name">${titleOf(t)}${t.title && t.title !== t.name ? `<span class="fn">${esc(t.name)}</span>` : ''}</span>
+          <span class="trow-name">${titleOf(t)}${t.profile ? deviceIcon(t.profile.name) : ''}${t.title && t.title !== t.name ? `<span class="fn">${esc(t.name)}</span>` : ''}</span>
           <span class="trow-tags">${signalBadges(t)}
             ${(t.healings||[]).length ? iconBadge('zap', 'warning', HEALED) : ''}
             ${t.agent ? badge(icon('bot') + 'Autonomous', 'info') : ''}
-            ${profiles.length > 1 && t.profile ? badge(esc(cap(t.profile.name)), 'primary') : ''}
             ${(t.markers||[]).map(m => badge(esc(m))).join('')}
-            ${st !== 'passed' ? statusBadge(st) : ''}</span>
+            ${st !== 'passed' && st !== 'warned' ? statusBadge(st) : ''}</span>
           <span class="trow-dur">${fmtMs(t.duration_ms)}</span></button>`;
       }).join('')}</div></div>`;
   }).join('') : `<div class="empty-state">${icon('search')}No tests match the current filters.</div>`;
@@ -443,7 +443,7 @@ document.addEventListener('keydown', e => {
 });
 (function globalBadges(){
   let c = 0, n = 0;
-  T.forEach(t => { c += t.counts.console; n += t.counts.network; });
+  T.forEach(t => { c += (t.counts || {}).console || 0; n += (t.counts || {}).network || 0; });
   $('ccount').textContent = c;
   $('ncount').textContent = n;
   $('gconlist').innerHTML = '<div class="empty-inline" style="padding:.75rem">Loading…</div>';

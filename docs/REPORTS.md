@@ -43,8 +43,18 @@ JUnit: .../reports/staging/junit.xml
 *Flows* counts the Markdown flows that ran. A flow with `## sections` is
 split into one test case per section; *Passed*, *Failed* (errors included)
 and *Skipped* count those test cases and are read from `summary.json`, so the
-console, the JSON and `junit.xml` always agree. A failed section still fails
-its flow, so pytest's exit code (the CI gate) is unchanged.
+console, the JSON and `junit.xml` always agree. *Warnings* (shown only when
+there are some) counts passed test cases with at least one warning — they are
+also in *Passed*. *Interrupted* appears when the run stopped before every flow
+finished (Ctrl-C); the counts then cover what completed.
+
+The process exit code comes from the same model (`summary.json` →
+`exit_code`): `1` when any test case failed, `2` when the run was interrupted,
+otherwise `0`. A usage or internal error (any other pytest code), or a pytest
+failure outside the test cases (a teardown error), is status `error` with an
+*Error* row and a *Run error* banner — the report never calls it passed.
+Warnings never change the exit code; a test that passed on retry counts as
+*passed on retry*, not as *with warnings*.
 
 *Healed steps* counts steps that L1 could not resolve and L2/L3 recovered.
 Pass `-v` or `-q` to get pytest's stock output instead.
@@ -59,7 +69,7 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 ```
 reports/staging/
 ├── report.html          # Interactive UI (summary, failures, tests, suites, timeline, console, network)
-├── summary.json         # Run metadata + totals (tool, run_id, environment, totals) for CI/tooling
+├── summary.json         # Run metadata, totals, status, exit_code (no tests) for CI/tooling
 ├── test_cases.json      # {"run_id", "tests": [...]}: every test, full detail inline
 │                        # (steps, failures, attachments, console, network); summary
 │                        # totals are counted from this list
@@ -67,8 +77,9 @@ reports/staging/
 │                        # for CI test tabs, e.g. Azure PublishTestResults
 ├── assets/
 │   ├── report.css
-│   ├── report.js         # Summary, attention list, tests, suites, timeline
-│   ├── report-detail.js  # Per-test drawer, console and network views
+│   ├── report.js         # Summary, tests, suites, timeline
+│   ├── report-logs.js    # Console and network views (drawer panes and execution tabs)
+│   ├── report-detail.js  # Per-test drawer
 │   ├── nunito.woff2      # Dashboard font, bundled so the report works offline
 │   ├── data.js          # Slim payload: run meta + per-test steps/errors/counts
 │   └── data/
@@ -96,68 +107,123 @@ badges, verdict banner, side drawer), so it reads as part of the same product.
 It is written for reviewers first and engineers second, top to bottom:
 
 - **Execution summary** — build name, environment, browser, device, duration,
-  run type and date; a verdict banner (`6 tests failed` / `All tests passed`)
-  with a one-line explanation; the pass rate, the passed / failed / skipped
-  counts with a bar, and the number of suites
-- **Tests requiring attention** — shown only when something failed. One row
-  per failure: the test, a plain-English explanation (`Expected text "Book now"
-  was not found on the page within 5 seconds.`), the failed step, duration, and
-  a thumbnail of the screen at the failure that opens full size
+  run type and date; a verdict banner (`6 tests failed` / `Passed with
+  warnings` / `All tests passed` / `Run interrupted`) with a one-line
+  explanation (`Both tests passed, both with warnings to review.`); the pass
+  rate; what needs attention — failures in red (`1 test failed, 2 more with
+  warnings`), warnings alone in amber (`2 tests have warnings`); the tests by
+  status as parts that add up to the total — *passed*, *with warnings*,
+  *passed on retry*, *failed*, *skipped* — in words, a bar and its key; and
+  the number of test cases and suites
 - **All tests** — tests grouped by suite (a flow file, named by its `# H1`, with
   the path underneath; each `## section` is its own test). Suites with failures
   come first and stay open; passing suites fold away. Search (`/`), status
-  filters (All / Failed / Passed / Passed on retry / Skipped), area and tag
-  filters. Row badges are coloured only when they carry status: console errors
-  in red; console warnings and flagged checks in amber; failed requests (mostly
-  third-party beacons) in grey; a lightning icon marks a self-healed test (a
-  fallback locator was needed — the tooltip says so); *Autonomous* (`test_page`, `explore_page`) and the device
-  (when a run used several) in blue; tags in grey
+  filters (All / Failed / Passed / With warnings / Passed on retry / Skipped —
+  the same parts as the summary, so they add up to All), area and tag filters.
+  Row badges are coloured only when they carry status: console errors in red;
+  the test's warnings in amber (the amber dot says the same, so no status
+  badge repeats it); console warnings (browser messages, not checks) and
+  failed requests in grey — a cancelled request (`net::ERR_ABORTED`: a beacon,
+  a request cut off by leaving the page) is not a failure, here or in the
+  Network views, where it shows as `CANCEL`; a lightning icon marks a self-healed test (a
+  fallback locator was needed — the tooltip says so); *Autonomous* (`test_page`, `explore_page`) in blue; tags in grey. Each
+  test name ends with its device icon (monitor for desktop, phone for mobile),
+  and a test's profiles sit together — `Login Page 🖥`, `Login Page 📱`, then
+  the next test — in the order the tests first ran
 - **Suites** — one row per suite with pass rate, results and duration; select a
   row to list its tests
 - **Timeline** — when each test ran, in lanes for parallel runs
-- **Console / Network** — every test's browser console messages and requests,
-  with level/type filters, search, source test, expandable headers and bodies,
-  and Copy cURL / Copy URL
+- **Console / Network** — every test's browser console messages and the
+  requests to the site under test, with level/type filters, search, source
+  test, expandable headers and bodies, and Copy cURL / Copy URL
+
+Only the site under test is recorded: requests whose host is the site domain
+or one of its subdomains — the domain of the flow's first `goto` step
+(`goto: "https://memberssitestaging.wheelsup.com/"` → `wheelsup.com`) — and
+never prefetches — Chromium's Speculation Rules prefetches (type
+`prefetch`, as Cloudflare Speed Brain issues them) or any request carrying a
+`Purpose` / `Sec-Purpose: prefetch` or `Next-Router-Prefetch` header. What is
+left out is never counted, checked or shown, so a failed prefetch or a
+third-party beacon cannot fail a step; a real navigation to the same URL is
+recorded as usual. A drawer's Network tab says how many requests were left out
+(`network_untracked` in `test_cases.json`). A classic `<link rel="prefetch">`
+reaches the framework as an ordinary request (type `other`, no prefetch
+header in the browser's event data), so it is recorded like one
 - **Run details** — timing, environment (devices, OS, run type), tool versions,
   run ID, the slowest tests, and the tests with self-healed steps
 
 Selecting a test opens a side drawer, which reads the same way:
 
-- **What went wrong** (failures) — the failed step as a red callout, the
-  plain-English explanation, the likely cause (`Likely application defect`,
-  `Likely test issue`, `Likely environment or session`, `Cause unclear`) with
-  the signals behind it, and the viewport / full-page / element screenshots
-- **Summary** — result, duration, start time, suite, area, device, reruns and
-  tags, laid out side by side and wrapping onto a second line when narrow; a
+- **Facts** (always first, no heading) — duration, start time, suite, area,
+  device (a monitor or phone icon for the profile, then browser and viewport:
+  `🖥 chromium · 1920x1080`), reruns and tags — the result is the badge in the
+  drawer's header — laid out side by side and wrapping onto a second line when narrow; a
   test rerun by `RERUN_FAILED` also shows the first attempt's error
+- **What went wrong** (failures) — one card per failed step, in the order they
+  ran: its number and action (`Step 3.3 · Explore page`), the flow or skill it
+  ran in (`in Test page`), what happened in plain words — a failed check reads
+  `Expected no broken pages — found: GET /signin → 503`, a failed action
+  `Could not find "Sign in" on the page to click within 5 seconds.` — the
+  likely cause (`Likely application defect`, `Likely test issue`, `Likely
+  environment or session`, `Cause unclear`) with its signals, that step's
+  screenshots, and links to the step in the list and to its technical details.
+  A group whose step failed inside it (`Test page` above) is failed too, but
+  only the step where it happened gets a card
+- **Warnings** (when the test has any) — each finding that did not fail the
+  test, worded like a failure (`Expected no console errors — found: TypeError…`)
+  with a link to the step that recorded it
 - **Autonomous run** (when present) — page type and how it was classified,
   components, plan, actions executed, plan steps the validator rejected,
   controls skipped by the safety policy, the assertions added to the generated
   flow, AI calls, and a link to the generated flow under `generated/`
-- **Steps** — each step as a readable action (`Check text is shown "Book now"`,
-  the keyword on hover), its duration, the self-healed lightning icon when L2/L3
-  found the element, screenshots, and automatic checks / skill findings as one
-  collapsed line (`9 checks passed`, `1 warning in 9 checks`, `1 of 8 checks
-  failed`) that expands to one row per check. The list is a
-  summary: a passed check keeps its wording (`No failed requests`), a flagged
-  one names what was found with a count (`Failed requests 9`, `Console errors
-  2`); the messages are in the tooltip, and **Details** opens Technical
-  details on the Console or Network tab. In a failing test, passing
-  groups fold so the failing one stands out
-- **Technical details** (folded; stays open across tests once opened) — the raw
-  error output and full traceback, how each layer attempted the step
+- **Steps** — the execution order, numbered by position: `3` is the third
+  step of the test, `3.3` the third step inside it, and a group shows how many
+  steps it holds (`Explore page · 21 steps`). Each row is the readable action
+  (`Check text is shown "Book now"`, the keyword on hover), its status (✓, ✕,
+  skipped) and duration, and the self-healed lightning icon when L2/L3 found
+  the element. The failed step is the red row, with its one-line reason; the
+  groups it ran in keep a red ✕ and stay open, every other group folds. A
+  passed step's own screenshots (a `screenshot` step, a skill's viewports) sit
+  on its row; a failed step's are on its card. A step with warnings keeps its
+  passed status but shows an amber ⚠ with each finding under it (`Expected
+  fields have labels — found: input[name=email]`), the same entries as the
+  test's Warnings section, and the groups on the way to it open. A skill step
+  whose failure the skill judged (a control it could not press) is passed —
+  the skill reports it as a check, shown on the skill's step. Passed checks
+  are not listed per step; they are in `test_cases.json`
+- **Technical details** (folded; stays open across tests once opened) — for
+  each failed step, under the same `Step 3.3 · …` heading as its card: the
+  full error and every failed check, how each layer attempted the step
   (`L1 exact: failed · L2 fuzzy: failed · L3 AI: skipped: …`), the page URL
-  and title at the failure, the Playwright trace download, console errors and
-  failed requests logged during the step, browser activity near the failure
-  (hints, not a confirmed cause), self-healed steps, and the test's Console and
-  Network views
+  and title, the Playwright trace download, and the console errors and failed
+  requests logged during the step. Then the full test output, browser activity
+  near the first failed step (hints, not a confirmed cause), self-healed
+  steps, and the test's Console and Network views
 
 `✕`, `Esc` or the backdrop closes the drawer; filters are untouched. A moon
 button in the header switches to dark mode (remembered per browser). The JSON
 carries each failed step's `evidence` (with `diagnosis`: `verdict`, `summary`,
 `signals`), the test's `artifacts` (`screenshot`, `screenshots`, `trace`),
 `retries` and `retry_error` for tests rerun by `RERUN_FAILED`, and `checks` on
-each step. Sensitive headers and fields
+each step.
+
+Each step record in `test_cases.json` has a stable `id` — its position path
+(`"2.1.3"`: the third step of the first group in the second top-level step) —
+and `parent` (the enclosing group's id, `null` at the top), `status` (`passed`, `failed`, `skipped`),
+`started_at`, `duration_ms` (a skill group's own clock), `error` for a step
+that did not succeed, and `evidence` when there is some. A check is `{name, passed,
+severity, detail, count, outcome}`: `name` states the expected result
+(`empty submission rejected`), `detail` what was observed, `outcome` one of
+`passed` / `failed` / `warning` / `info` / `skipped` / `blocked`. Each test
+lists its `warnings` — `{step, step_name, check, detail, severity}`, one per
+flagged check that did not fail the test — and `summary.json` has
+`totals.warnings` (passed test cases with warnings), `status` (`passed`,
+`passed_with_warnings`, `failed`, `error`, `interrupted`) and `exit_code`.
+Step ids start at `1` in each test; a test that holds several sections it
+could not split (steps without timings) has the sections as its top level, so
+its steps read `1.1`, `2.1`…; each profile's tests have their own ids
+(`…::Home Page[mobile]::s1`), and `junit.xml` names carry the profile
+(`Home Page [mobile]`) when it is not desktop. Sensitive headers and fields
 (Authorization, cookies, tokens…) are redacted automatically; extend the list
 with `REPORT_REDACT`.
 

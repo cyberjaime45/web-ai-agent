@@ -186,12 +186,13 @@ def execution_summary(
     duration_s: float,
     environment: str | None = None,
     build_name: str | None = None,
+    status: str | None = None,
 ) -> list[str]:
     """The end-of-run summary block.
 
-    Passed / Failed / Skipped are *totals* — ``summary.json``'s counts of test
-    cases (one per flow ``## section``), the numbers junit.xml and the report
-    show. ``TerminalReporter.stats`` adds what only the pytest items know:
+    Passed / Failed / Skipped / Warnings are *totals* — ``summary.json``'s
+    counts of test cases (one per flow ``## section``), the numbers junit.xml
+    and the report show; *status* is ``summary.json``'s run status. ``TerminalReporter.stats`` adds what only the pytest items know:
     how many flows ran, healed steps, retries and the slowest flows. No
     filesystem access. Returns no lines when no report was written
     (collect-only, full deselect).
@@ -221,12 +222,18 @@ def execution_summary(
         rows.append(("Build", build_name))
     if environment:
         rows.append(("Environment", environment))
+    if status == "interrupted":
+        rows.append(("Interrupted", "the run stopped early; the counts cover the test cases that finished"))
+    elif status == "error":
+        rows.append(("Error", "the run itself failed (setup, teardown or internal) — see the output above"))
     if timed:
         files = len(flow_files)
         rows.append(("Flows", f"{len(timed)} (in {files} file{'' if files == 1 else 's'})"))
     rows.append(("Passed", str(totals["passed"])))
     rows.append(("Failed", str(totals["failed"] + totals["errors"])))
     rows.append(("Skipped", str(totals["skipped"])))
+    if totals.get("warnings"):
+        rows.append(("Warnings", f"{totals['warnings']} passed with warnings — see the report"))
     if retries := len(stats.get("rerun", [])):
         rows.append(("Retries", str(retries)))
     if on_retry:

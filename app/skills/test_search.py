@@ -16,15 +16,17 @@ Through ordinary child steps (``fill``, ``press Enter``, ``wait_stable``):
     clearing restores         clearing the field brings back the original count
 
 Every finding is a warning: a search can legitimately match on fields the
-page does not show. When searching opens another page, the skill goes back
-to the start page before the next search.
+page does not show. Typing and pressing Enter are probe steps (a field that
+cannot be used is a warning, never a failure); going back to the start page
+when a search opened another one is cleanup. No search field is skipped (an
+error when ``search=`` named one).
 """
 
 from __future__ import annotations
 
 from app.agent.observer import EMPTY_STATE_RE
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill
+from app.skills.base import SkillContext, info, missing, skill, skipped
 from app.utils.urls import same_page
 
 NO_MATCH = "zzqx-no-match-7f3"
@@ -55,17 +57,28 @@ def _results(sc: SkillContext) -> dict:
     return sc.evaluate(_RESULTS_JS) or {"count": None, "candidate": "", "text": ""}
 
 
-def _search(sc: SkillContext, box: str, term: str) -> dict:
-    sc.run(ActionType.FILL, box, term)
-    sc.run(ActionType.PRESS, "Enter")
-    sc.run(ActionType.WAIT_STABLE)
+def _search(sc: SkillContext, box: str, term: str) -> dict | None:
+    """Results after searching for *term*; None when the search could not be run."""
+    mark = len(sc.steps)
+    typed = sc.run(ActionType.FILL, box, term, kind="probe")
+    if typed.success:
+        sc.run(ActionType.PRESS, "Enter", kind="probe")
+        sc.run(ActionType.WAIT_STABLE, kind="probe")
+    if not typed.success or sc.failures_since(mark) or sc.stopped:
+        return None
     return _results(sc)
 
 
 def _back_to_start(sc: SkillContext, start_url: str) -> None:
     if not same_page(sc.page.url, start_url):
-        sc.run(ActionType.GOTO, start_url)
-        sc.run(ActionType.WAIT_STABLE)
+        sc.run(ActionType.GOTO, start_url, kind="cleanup")
+        sc.run(ActionType.WAIT_STABLE, kind="cleanup")
+
+
+def _unusable(sc: SkillContext, box: str) -> Check:
+    if sc.stopped:
+        return skipped("search usable", f"stopped early: {sc.stopped}")
+    return Check("search usable", False, "warn", f"could not type into '{box}' and press Enter")
 
 
 @skill(ActionType.TEST_SEARCH)
@@ -75,19 +88,23 @@ def test_search(sc: SkillContext) -> list[Check]:
     box = next((n for n in ob.by_role("searchbox", "textbox") if n.name == wanted), None) if wanted \
         else ob.search_box()
     if box is None or not box.name:
-        return [info("search", "no search field found" + (f" named '{wanted}'" if wanted else ""))]
+        return [missing(sc, "search found", "search field", "search")]
 
     start_url = sc.page.url
     baseline = _results(sc)
     term = sc.option("term") or (baseline["candidate"] or "").strip()
     if not term:
-        return [info("search", f"'{box.name}' found, but no result on the page to search for (term=…)")]
+        return [skipped("search finds a visible value",
+                        f"'{box.name}' found, but no result on the page to search for (term=…)")]
     checks = [info("search", f"'{box.name}': searched for '{term}'; {baseline['count']} result(s) before")]
 
     found = _search(sc, box.name, term)
-    visible = term.lower() in (found["text"] or "").lower()
-    if visible:
-        sc.run(ActionType.ASSERT_TEXT, term)
+    if found is None:
+        return [*checks, _unusable(sc, box.name)]
+    # the page text first (cheap), then the same assertion the generated flow will
+    # replay — the check agrees with it, so the report never contradicts itself
+    visible = term.lower() in (found["text"] or "").lower() and \
+        sc.run(ActionType.ASSERT_TEXT, term, kind="probe").success
     checks.append(Check("search finds a visible value", visible, "warn",
                         "" if visible else f"'{term}' is not on the page after searching for it"))
     if baseline["count"] is not None and found["count"] is not None:
@@ -97,6 +114,8 @@ def test_search(sc: SkillContext) -> list[Check]:
 
     _back_to_start(sc, start_url)
     miss = _search(sc, box.name, NO_MATCH)
+    if miss is None:
+        return [*checks, _unusable(sc, box.name)]
     empty = miss["count"] == 0 or bool(EMPTY_STATE_RE.search(miss["text"] or ""))
     checks.append(Check("no match shows no results", empty, "warn",
                         "" if empty else f"'{NO_MATCH}' still shows {miss['count']} result(s)"))
@@ -104,9 +123,12 @@ def test_search(sc: SkillContext) -> list[Check]:
     if not same_page(sc.page.url, start_url):
         _back_to_start(sc, start_url)
         return checks
-    sc.run(ActionType.CLEAR, box.name)
-    sc.run(ActionType.PRESS, "Enter")
-    sc.run(ActionType.WAIT_STABLE)
+    mark = len(sc.steps)
+    sc.run(ActionType.CLEAR, box.name, kind="probe")
+    sc.run(ActionType.PRESS, "Enter", kind="probe")
+    sc.run(ActionType.WAIT_STABLE, kind="probe")
+    if sc.failures_since(mark) or sc.stopped:
+        return [*checks, _unusable(sc, box.name)]
     restored = _results(sc)
     if baseline["count"] is not None:
         ok = restored["count"] == baseline["count"]

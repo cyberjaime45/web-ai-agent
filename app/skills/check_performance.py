@@ -68,7 +68,7 @@ def check_performance(sc: SkillContext) -> list[Check]:
     m = sc.evaluate(_METRICS_JS)
     if not m:
         return [Check("performance measured", False, "warn", "the browser returned no timing data")]
-    budgets = {k: float(sc.option(k, str(v)) or v) for k, v in BUDGETS.items()}
+    budgets = {k: sc.number(k, v) for k, v in BUDGETS.items()}
     measured = [f"{k} {_fmt(k, m[k])}" for k in BUDGETS if m.get(k) is not None]
     checks = [info("performance", ", ".join(measured) + f"; {m['resources']} resources, {m['kb']} KB")]
     for metric, budget in budgets.items():
