@@ -10,7 +10,7 @@ dependencies = [
     "markdown-it-py==3.0.0",
     "openai==1.58.1",
     "pillow>=12.1.1",
-    "playwright==1.51.0",
+    "playwright==1.63.0",
     "pymysql>=1.1.0",
     "pytest==8.3.4",
     "python-dotenv==1.0.1",
