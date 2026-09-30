@@ -51,6 +51,9 @@ test-results/
 .claude-flow/
 .swarm/
 ruvector.db
+# ruflo local database — machine-local, never pushed
+agentdb.rvf
+agentdb.rvf.lock
 /AGENTS.md
 /CLAUDE.md
 
