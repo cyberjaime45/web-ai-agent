@@ -23,13 +23,14 @@ from app.browser import profiles
 from app.browser.session import BrowserSession, report_status
 from app.config.settings import settings
 from app.execution import rerun
-from app.execution.engine import FlowRunner, flow_site_domain
+from app.execution.engine import FlowRunner
 from app.flow.parser import (
     FlowDefinition,
     FlowParseError,
     parse_flow_file,
     parse_flow_markdown,
 )
+from app.flow.placeholders import flow_site_domain
 from app.layers.providers import ConfigError, get_provider
 from app.observability.console import (
     FLAKY_PROP,
@@ -306,7 +307,7 @@ class FlowItem(pytest.Item):
         try:
             result = self._attempt(1, attempts, plugin)
             rerun_allowed = settings.rerun_failed if self.flow.rerun is None else self.flow.rerun
-            if not result.success and rerun_allowed and rerun.failed_sections(result):
+            if not result.success and rerun_allowed and rerun.worth_rerunning(result):
                 self._attempt(2, attempts, plugin)
         finally:
             # Whatever happened inside the flow, the report still gets what was captured.
@@ -359,11 +360,13 @@ class FlowItem(pytest.Item):
         result, recorder = attempts[0]
         console, network = recorder.console, recorder.network
         retried: dict[int, str] = {}
+        first_verdicts: dict[int, str] = {}
         if len(attempts) == 2 and result is not None and attempts[1][0] is not None:
             second, rec2 = attempts[1]
             merged = rerun.merge(result, (recorder.console, recorder.network),
                                  second, (rec2.console, rec2.network))
             result, retried = merged.result, merged.retried
+            first_verdicts = merged.first_verdicts
             console, network = merged.console, merged.network
             self.user_properties.append((FLAKY_PROP, merged.passed_on_retry))
         if result is not None:
@@ -375,7 +378,7 @@ class FlowItem(pytest.Item):
             if result is not None and not result.success:
                 plugin.record_error(self.nodeid, result.error)
             if retried:
-                plugin.record_retries(self.nodeid, retried)
+                plugin.record_retries(self.nodeid, retried, first_verdicts)
             recs = [recorder, attempts[1][1]] if retried else [recorder]   # a rerun adds its own counts
             plugin.record_capture(self.nodeid, console, network, {
                 "console": sum(r.dropped["console"] for r in recs), "network": sum(r.dropped["network"] for r in recs),

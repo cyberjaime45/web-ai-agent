@@ -79,6 +79,9 @@ class FlowDefinition:
     # `## Config` → `rerun: false` keeps RERUN_FAILED from running this flow twice
     # (flows whose steps create or submit data). None = follow the setting.
     rerun: bool | None = None
+    # `## Expected Outcome` → its lines: what the flow is meant to prove. Never
+    # executed; the report shows it with each test and a failure is read against it.
+    expected: list[str] = field(default_factory=list)
 
 
 # ── Section extraction ────────────────────────────────────────────────────────
@@ -369,6 +372,12 @@ def parse_flow_markdown(text: str, name: str = "inline") -> FlowDefinition:
             flow.rerun = value.strip('"').lower() in ("true", "yes", "1", "on")
         elif key == "site_domain":
             flow.site_domain = normalize_domain(value)
+
+    # ── Expected Outcome: the intent, as list items (or plain lines) ──
+    outcome = _section_pattern("Expected Outcome").search(text)
+    if outcome:
+        body = outcome.group(1)
+        flow.expected = _items_from_section(body) or [ln.strip() for ln in body.splitlines() if ln.strip()]
 
     # ── Steps — every non-metadata ## section (Credentials, Notes… are skipped) ──
     for step_num, (section_name, raw) in enumerate(_all_action_sections(text), start=1):

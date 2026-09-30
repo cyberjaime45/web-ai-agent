@@ -65,7 +65,7 @@ Thirteen QA skills replace pages of hand-written assertions — `inspect_page`,
 (bounded, safe exploration that maps a page's controls and pages) and
 `test_page` (classify the page, run what fits, write the result as a plain
 flow with the assertions it observed) — and every navigation step gets automatic checks (page rendered, no
-page errors, no failed requests, no stuck spinner…). None of it needs an LLM;
+page errors, no failed requests, no horizontal overflow…). None of it needs an LLM;
 with one configured, the planner only adds validated steps on controls the
 observer already found, behind a deterministic safety policy. See
 [docs/ACTIONS.md](docs/ACTIONS.md#qa-skills-13).
@@ -101,7 +101,7 @@ Copy `.env.example` to `.env`. Every variable is read once by
 | `PROFILE` | `desktop` | Device profile(s) flows run under by default: `desktop`, `mobile`, or both (comma-separated). `pytest --profile …` and a flow's `## Config` `profiles:` line override it |
 | `MOBILE_DEVICE` | `iPhone 13` | Playwright device descriptor behind the `mobile` profile |
 | `TRACE` | `on-failure` | Keep a Playwright trace under `reports/<ENVIRONMENT>/traces/` for every failed flow; `off` disables recording |
-| `ORACLE` | `warn` | Automatic checks after navigation steps: `warn` records them, `strict` fails the step on an error-severity check, `off` disables them |
+| `ORACLE` | `warn` | Automatic checks after navigation steps and the verify stage (did the click change the page, does the field hold the value): `warn` records them, `strict` fails the step on an error-severity check, `off` disables them |
 | `ALLOW_DESTRUCTIVE` | `false` | `true` lets `explore_page` and the planner press controls that look destructive (delete, pay, send…) — disposable environments only |
 | `DISMISS_BLOCKERS` | `false` | Dismiss cookie banners and modals before each step (a failed click or fill is always retried once after a dismissal) |
 | `RERUN_FAILED` | `false` | Run a flow with a failed section once more (pytest); sections that pass then are reported as *passed on retry* |

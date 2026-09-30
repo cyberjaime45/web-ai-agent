@@ -28,7 +28,7 @@ policy blocks are never pressed.
 from __future__ import annotations
 
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill, skipped
+from app.skills.base import SkillContext, inconclusive, info, skill, skipped
 
 DEFAULT_MAX = 5
 
@@ -165,7 +165,7 @@ def test_widgets(sc: SkillContext) -> list[Check]:
     limit = sc.count("max", DEFAULT_MAX)
     found = sc.evaluate(_FIND_JS)
     if found is None:
-        return [Check("widgets found", False, "warn", "the page could not be evaluated")]
+        return [inconclusive("widgets found", "the page could not be evaluated")]
     named = sc.option("dialog")
     dialogs = ([named] if named else []) + found["dialogs"]      # the named one first: max= never cuts it
     checks = [info("widgets", f"{len(found['tabs'])} tab(s), {len(found['disclosures'])} disclosure(s), "

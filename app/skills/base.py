@@ -115,6 +115,12 @@ def skipped(name: str, why: str) -> Check:
     return Check(name, True, "skipped", why)
 
 
+def inconclusive(name: str, why: str) -> Check:
+    """The agent could not gather enough evidence (it could not press, fill or
+    observe something): recorded with the reason, never an application defect."""
+    return Check(name, True, "inconclusive", why)
+
+
 def missing(sc: SkillContext, name: str, what: str, option: str) -> Check:
     """The thing a skill tests is not on the page: an error when the flow named
     it (``option=`` given), otherwise nothing to test here (skipped)."""
@@ -229,14 +235,14 @@ class SkillContext:
             self.budget.take()
         sr = self.engine.execute(fa, self.page, self.runner, self.ctx)
         sr.sub_flow = self.action.type.value
-        if kind == "probe":         # a dialog is often what the probe opened; the skill judges it
-            sr.checks = [c for c in sr.checks if c.name != oracle.DIALOG_CHECK]
+        if kind == "probe":         # a dialog, or no change, is often what the probe tests; the skill judges it
+            sr.checks = [c for c in sr.checks if c.name not in (oracle.DIALOG_CHECK, oracle.EFFECT_CHECK)]
         if not sr.success and kind != "action":
             sr.soft = True
             if kind == "cleanup":
                 self.cleanup_failed.append(f"{fa.raw}: {(sr.message or '').splitlines()[0][:120]}")
-        if sr.success and kind != "cleanup" and action_type in oracle.ORACLE_AFTER:
-            sr.after = landmarks(self.page)      # raw material for suggested assertions (not for returns)
+        if sr.success and kind != "cleanup" and action_type in oracle.ORACLE_AFTER and not sr.after:
+            sr.after = landmarks(self.page)      # ORACLE=off: the engine recorded nothing after the step
         self.steps.append(sr)
         self._ob = None          # the page may have changed
         return sr
@@ -349,7 +355,7 @@ class SkillContext:
     def diagnostics(self, since_seq: int) -> list[Check]:
         if self.recorder is None:
             return []
-        return oracle.diagnostics_checks(self.recorder, since_seq, self.ignore)
+        return oracle.diagnostics_checks(self.recorder, since_seq, self.ignore, explicit=True)
 
     def screenshot(self, label: str) -> str | None:
         """Viewport shot kept on the skill step as evidence (``label`` → path)."""
@@ -373,10 +379,10 @@ def _runtime_checks(sc: SkillContext) -> list[Check]:
         checks.append(Check("blocked by safety", True, "blocked", summarize(sc.blocked, 8), len(sc.blocked)))
     if sc.stopped:
         timed_out = "time" in sc.stopped
-        checks.append(Check("finished within limits", not timed_out, "warn" if timed_out else "skipped",
+        checks.append(Check("finished within limits", True, "inconclusive" if timed_out else "skipped",
                             f"stopped early: {sc.stopped}; the remaining checks did not run"))
-    if sc.cleanup_failed:
-        checks.append(Check.listing("page restored after the skill", sc.cleanup_failed, "warn"))
+    if sc.cleanup_failed:       # the agent's own housekeeping, not the application
+        checks.append(Check.listing("page restored after the skill", sc.cleanup_failed, "inconclusive"))
     return checks
 
 

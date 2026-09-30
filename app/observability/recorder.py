@@ -17,7 +17,7 @@ Capture policy:
 Only the site under test is recorded: requests whose host is the site domain
 or one of its subdomains (``urls.in_site``). The domain is given — the
 flow's first ``goto`` step, or its ``site_domain`` override
-(``engine.flow_site_domain``) — or else learned from the first main-frame
+(``flow.placeholders.flow_site_domain``) — or else learned from the first main-frame
 navigation. Prefetches (resource type ``prefetch``, a ``Sec-Purpose`` /
 ``Purpose: prefetch`` or ``Next-Router-Prefetch`` header) are speculative and
 never recorded either, nor the console's "Failed to load resource" echo of a
@@ -173,6 +173,10 @@ class PageRecorder:
         """Failed responses (4xx/5xx) and aborted requests recorded after *seq*."""
         found = [n for n in self.network if n["seq"] > seq and not n["ok"]]
         return found[-limit:]
+
+    def requests_since(self, seq: int) -> int:
+        """How many requests of the site completed after *seq* — a step's network effect."""
+        return sum(1 for n in reversed(self.network) if n["seq"] > seq)
 
     # ── Console ──────────────────────────────────────────────────────────
 

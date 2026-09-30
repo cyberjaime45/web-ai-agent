@@ -370,7 +370,7 @@ def test_prefetches_are_never_waited_for(rec_page):
 
 
 def test_the_site_is_the_domain_of_the_first_goto_step(monkeypatch):
-    from app.execution.engine import flow_site_domain
+    from app.flow.placeholders import flow_site_domain
     from app.flow.parser import parse_flow_markdown
 
     def site(md: str) -> str:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.execution import rerun
-from app.schemas.actions import ActionType, FlowAction, FlowResult, StepResult
+from app.schemas.actions import ActionType, Evidence, FlowAction, FlowResult, StepResult
 
 
 def _step(section: str, ok: bool, t: float, raw: str = "click: \"x\"", sub_flow: str = "",
@@ -59,3 +59,26 @@ def test_rerun_that_crashed_early_keeps_the_first_attempt():
     merged = rerun.merge(first, ([_entry(2.1, "b1")], []), second, ([], []))
     assert merged.result is first and merged.retried == {1: "B failed"}
     assert [e["text"] for e in merged.console] == ["b1"]
+
+
+def _diagnosed(section: str, t: float, verdict: str) -> StepResult:
+    s = _step(section, False, t)
+    s.evidence = Evidence(diagnosis={"verdict": verdict, "summary": "", "signals": []})
+    return s
+
+
+def test_a_framework_failure_is_not_worth_rerunning_but_a_server_failure_is():
+    own = _result([_step("A", True, 1), _diagnosed("B", 2, "framework")])
+    assert rerun.failed_sections(own) == [1] and rerun.worth_rerunning(own) == []
+    mixed = _result([_diagnosed("A", 1, "framework"), _diagnosed("B", 2, "application"), _step("C", False, 3)])
+    assert rerun.verdicts(mixed) == {0: "framework", 1: "application", 2: ""}
+    assert rerun.worth_rerunning(mixed) == [1, 2]            # an undiagnosed failure is still retried
+
+
+def test_merge_keeps_the_first_attempts_verdict_for_the_report():
+    first = _result([_step("A", True, 1), _diagnosed("B", 2, "application")])
+    second = _result([_step("A", True, 11), _step("B", True, 12)])
+    merged = rerun.merge(first, ([], []), second, ([], []))
+    assert merged.passed_on_retry == 1 and merged.first_verdicts == {1: "application"}
+    crashed = rerun.merge(first, ([], []), _result([_step("A", False, 11)]), ([], []))
+    assert crashed.first_verdicts == {1: "application"}

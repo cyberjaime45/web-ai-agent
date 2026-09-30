@@ -302,32 +302,13 @@ def observe(page: Any) -> Observation:
     return ob
 
 
-# What the page shows right after a step — the raw material for suggested
-# assertions (app/flow/writer.py). One evaluate; skills call it after a
-# navigation-class child step, never the per-step loop.
-_LANDMARKS_JS = r"""
-() => {
-  const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  const text = el => (el && (el.innerText || el.textContent) || '').replace(/\s+/g, ' ').trim();
-  const first = sel => [...document.querySelectorAll(sel)].find(vis);
-  const dialog = first('[role="dialog"], [role="alertdialog"], dialog[open]');
-  const alert = first('[role="alert"], [role="status"]');
-  return {
-    heading: text(first('main h1, h1') || first('main h2, h2')),
-    dialog: dialog ? text(dialog.querySelector('h1, h2, h3, [role="heading"]')) : '',
-    alert: text(alert),
-  };
-}
-"""
-
-
-def landmarks(page: Any) -> dict[str, str]:
-    """``{"heading", "dialog", "alert"}`` visible on the page now; empty on failure."""
-    try:
-        return page.evaluate(_LANDMARKS_JS) or {}
-    except Exception as exc:
-        logger.debug("[observer] landmarks unavailable: %s", exc)
-        return {}
+def landmarks(page: Any) -> dict:
+    """What the page shows right after a step (``StepResult.after``): heading,
+    dialog, alert, text hash, focus — the oracle's probe, one evaluate. The
+    engine records it after navigation-class steps; a skill calls this only
+    when the oracle is off. Empty on failure."""
+    from app.execution import oracle  # the probe lives with the checks it feeds
+    return oracle.after_state(oracle.probe(page))
 
 
 PAGE_TYPES = ("LOGIN", "WIZARD", "SETTINGS", "FORM", "TABLE", "SEARCH", "DASHBOARD",

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from app.agent.observer import EMPTY_STATE_RE
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, missing, skill, skipped
+from app.skills.base import SkillContext, inconclusive, info, missing, skill, skipped
 from app.utils.urls import same_page
 
 NO_MATCH = "zzqx-no-match-7f3"
@@ -78,7 +78,7 @@ def _back_to_start(sc: SkillContext, start_url: str) -> None:
 def _unusable(sc: SkillContext, box: str) -> Check:
     if sc.stopped:
         return skipped("search usable", f"stopped early: {sc.stopped}")
-    return Check("search usable", False, "warn", f"could not type into '{box}' and press Enter")
+    return inconclusive("search usable", f"the agent could not type into '{box}' and press Enter")
 
 
 @skill(ActionType.TEST_SEARCH)

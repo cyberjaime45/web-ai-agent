@@ -48,8 +48,6 @@ def inspect_page(sc: SkillContext) -> list[Check]:
         checks.append(info("dialogs", f"{ob.dialogs} open"))
     if ob.nav:
         checks.append(info("navigation", f"{ob.nav} landmark(s)"))
-    checks.append(Check("page has a heading", bool(ob.headings), "warn",
-                        "" if ob.headings else "no heading role in the accessibility tree"))
     if ob.truncated:
         checks.append(info("observation truncated", "the accessibility tree was cut for size"))
     return checks

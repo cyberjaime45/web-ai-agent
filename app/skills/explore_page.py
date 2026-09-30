@@ -8,7 +8,14 @@ From the current page, every safe control the observer reports (links on the
 same site, buttons, tabs, menu items) is pressed once through the engine —
 a ``click`` probe step — and the outcome recorded: navigates to a page (queued
 for the next depth), opens a dialog (closed with Escape), changes the page in
-place, or nothing observable. Controls the safety policy blocks are listed,
+place, or nothing observable. A press with no visible change is looked at
+before it is reported: a new tab, a ``tel:``/``mailto:`` hand-off, a link to
+the page already open, or a state change the page fingerprint misses (an
+input's type, ``aria-expanded``/``pressed``/``checked``) is an outcome, not a
+problem. Only what remains unexplained is reported — as *inconclusive*: the
+agent cannot tell a broken control from one that needs data or a signed-in
+user. A control the agent could not press is inconclusive too, with the cause
+(covered by another element, not visible, timed out). Controls the safety policy blocks are listed,
 never pressed; so are buttons that submit or confirm a form (``Save``,
 ``Submit``, ``Apply``… — form testing is ``test_form``'s job, and pressing
 them here could change data). When an LLM provider is configured and
@@ -50,7 +57,8 @@ GOAL = ("Explore this page's safe features one control at a time: primary naviga
 @dataclass
 class Edge:
     action: str            # control name
-    outcome: str           # navigates | external | opens dialog | changes page | no observable result | failed
+    outcome: str           # navigates | external | opens dialog | opens new tab | changes page | hands off |
+                           # links to this page | no observable result | failed
     to: str = ""           # URL or dialog name
 
 
@@ -108,6 +116,76 @@ def _ai_order(sc: SkillContext, ob: Observation, candidates: list[Node], done: l
     return first + [n for n in candidates if n not in first]
 
 
+# What a press can change that the accessibility fingerprint does not see.
+_STATE_JS = r"""
+() => [location.href,
+  [...document.querySelectorAll('input')].map(i => i.type).join(','),
+  [...document.querySelectorAll('[aria-expanded], [aria-pressed], [aria-checked], [aria-selected]')]
+    .map(e => ['aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected']
+      .map(a => e.getAttribute(a) || '').join('')).join(''),
+  document.querySelectorAll('*').length].join('|')
+"""
+_LINK_JS = r"""
+el => { const a = el.closest('a[href]'); if (!a) return null;
+  const here = new URL(location.href), to = new URL(a.href, location.href);
+  return {href: a.getAttribute('href'), scheme: to.protocol, blank: a.target === '_blank',
+          same: to.origin === here.origin && to.pathname === here.pathname}; }
+"""
+_HANDOFF = {"tel:": "phone", "mailto:": "email", "sms:": "messages"}
+
+
+def _tabs(page) -> int:
+    try:
+        return len(page.context.pages)
+    except Exception:
+        return 0
+
+
+def _new_tab(page) -> bool:
+    """A ``target=_blank`` link's tab opens asynchronously: wait briefly for it."""
+    try:
+        page.context.wait_for_event("page", timeout=3000)
+        return True
+    except Exception:
+        return False
+
+
+def _explain(sc: SkillContext, cand: Node, state_before: str | None, tabs_before: int) -> tuple[str, str]:
+    """Why a press changed nothing the observer sees: (outcome, detail)."""
+    try:
+        link = cand.locator(sc.page).evaluate(_LINK_JS, timeout=1000)
+    except Exception:
+        link = None
+    if _tabs(sc.page) > tabs_before or (link and link["blank"] and _new_tab(sc.page)):
+        popup = sc.page.context.pages[-1]
+        url = popup.url
+        try:
+            popup.close()       # housekeeping of the agent's own probe, not an interaction with the app
+        except Exception:
+            pass
+        return "opens new tab", url
+    if link and link["scheme"] in _HANDOFF:
+        return "hands off", f"{_HANDOFF[link['scheme']]} app ({link['href']})"
+    reload = link and link["same"] and not link["href"].startswith("#")    # reloading resets the state
+    if not reload and state_before is not None and sc.evaluate(_STATE_JS) not in (None, state_before):
+        return "changes page", "state"
+    if link and link["same"]:
+        return "links to this page", link["href"]
+    return "no observable result", ""
+
+
+def _press_problem(message: str) -> str:
+    """Why the agent could not press a control — the cause, not the call log."""
+    m = message.lower()
+    if "intercepts pointer events" in m:
+        return "covered by another element"
+    if "not visible" in m or "outside of the viewport" in m:
+        return "not visible"
+    if "timeout" in m:
+        return "timed out"
+    return (message.splitlines() or [""])[0][:80]
+
+
 def _document_status(sc: SkillContext, url: str) -> int | None:
     if sc.recorder is None:
         return None
@@ -159,6 +237,7 @@ def explore_page(sc: SkillContext) -> list[Check]:
     broken: list[str] = []      # broken pages no step can be blamed for (the start page)
     judged: list[str] = []      # broken pages failed on the step that led to them
     no_effect: list[str] = []
+    explained: list[str] = []   # presses whose outcome the fingerprint missed (new tab, tel:, same page, state)
     failed: list[str] = []
     unreachable: list[str] = []
     left: list[str] = []
@@ -190,7 +269,7 @@ def explore_page(sc: SkillContext) -> list[Check]:
             candidates = _ai_order(sc, ob, candidates, [e.action for e in node.edges])
 
         for cand in candidates:
-            since = sc.mark()
+            since, tabs, state = sc.mark(), _tabs(sc.page), sc.evaluate(_STATE_JS)
             sr = sc.run(ActionType.CLICK, cand.name, kind="probe")
             if sr.skipped:
                 if sc.stopped:
@@ -200,7 +279,7 @@ def explore_page(sc: SkillContext) -> list[Check]:
             # ORACLE=strict fails a click whose page broke: that is a broken page, not an unpressable control
             problems = [] if sr.success else [c.detail or f"expected {c.name}" for c in oracle.failed(sr.checks)]
             if not sr.success and not problems:
-                failed.append(f"{cand.name} on {url}")
+                failed.append(f"{cand.name} on {url} ({_press_problem(sr.message or sr.error or '')})")
                 node.edges.append(Edge(cand.name, "failed"))
                 continue
             after = sc.observe(fresh=True)
@@ -241,8 +320,14 @@ def explore_page(sc: SkillContext) -> list[Check]:
                 node.edges.append(Edge(cand.name, "changes page"))
                 before = after.fingerprint()
             else:
-                node.edges.append(Edge(cand.name, "no observable result"))
-                no_effect.append(f"{cand.name} on {url}")
+                outcome, to = _explain(sc, cand, state, tabs)
+                node.edges.append(Edge(cand.name, outcome, "" if to == "state" else to))
+                if outcome == "no observable result":
+                    no_effect.append(f"{cand.name} on {url}")
+                else:
+                    explained.append(f"{cand.name} → {outcome}" + (f" {to}" if to and to != "state" else ""))
+                    if outcome == "changes page":
+                        before = after.fingerprint()
 
     graph = {u: {"title": p.title, "type": p.page_type, "depth": p.depth,
                  "edges": [e.__dict__ for e in p.edges], "skipped": p.skipped} for u, p in pages.items()}
@@ -266,13 +351,17 @@ def explore_page(sc: SkillContext) -> list[Check]:
              else "deterministic order (navigation, tabs, buttons, links)"),
         info("graph", _tree(pages, start) if pages else "nothing explored"),
         Check.listing("no broken pages", broken, "error"),      # the rest failed at their own step
-        Check("controls respond", not no_effect, "warn",
-              ("no observable result: " + ", ".join(no_effect[:5])) if no_effect else ""),
-        Check.listing("controls pressable", failed, "warn"),
+        # Unexplained after checking tabs, links and state: the agent cannot tell
+        # a broken control from one that needs data or a signed-in user.
+        Check("controls respond", True, "inconclusive" if no_effect else "info",
+              ("no observable result: " + summarize(no_effect, 5)) if no_effect else "", len(no_effect)),
+        *([Check.listing("controls pressable", failed, "inconclusive")] if failed else []),
         Check.listing("linked pages open", unreachable, "warn"),
     ]
     if judged:
         checks.append(info("broken pages found", summarize(judged, 8)))
+    if explained:
+        checks.append(info("outcomes found on a closer look", summarize(list(dict.fromkeys(explained)), 8)))
     if left:
         checks.append(skipped_check("form buttons not pressed",
                                     "submitting or confirming a form is test_form's job: " + summarize(left, 8)))

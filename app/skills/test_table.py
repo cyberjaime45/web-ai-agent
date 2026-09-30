@@ -32,7 +32,7 @@ import time
 
 from app.agent.observer import EMPTY_STATE_RE, PREV_NAMES
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, missing, skill, skipped
+from app.skills.base import SkillContext, inconclusive, info, missing, skill, skipped
 from app.utils.urls import same_page
 
 MAX_ROWS = 50
@@ -110,7 +110,7 @@ def _press(sc: SkillContext, name: str, check: str) -> Check | None:
     sr = sc.run(ActionType.CLICK, name, kind="probe")
     if sr.success:
         return None
-    return skipped(check, sr.message) if sr.skipped else Check(check, False, "warn", f"could not press '{name}'")
+    return skipped(check, sr.message) if sr.skipped else inconclusive(check, f"the agent could not press '{name}'")
 
 
 def _sort(sc: SkillContext, read: dict, idx: int) -> list[Check]:

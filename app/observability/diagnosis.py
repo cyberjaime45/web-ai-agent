@@ -9,10 +9,17 @@ observation of the page (for the closest control or text to a missing
 target). No LLM. The verdict is a hint, never a result: the report labels
 it "likely" and lists the signals behind it.
 
-    application    the page or its backend misbehaved (5xx, JS error, blank page, stuck loading)
+    application    the page or its backend misbehaved (5xx, JS error, blank page)
+    timing         the page was still loading when the step ran
     test           the flow no longer matches the page (text changed, element covered, ambiguous)
-    environment    network, browser, configuration or session problems
+    environment    network, browser or session problems
+    framework      the flow or its setup, not the site (unset placeholder, missing sub-flow)
     unclassified   nothing conclusive — the signals are still listed
+
+``triage`` is the cheap half, run by the engine *before* recovery: the same
+signals (recorder deltas, one probe, the error text) reduced to one cause,
+so the engine can retry a loading page once, skip the fuzzy and AI layers
+when they cannot help, and never hide a server failure behind a retry.
 """
 
 from __future__ import annotations
@@ -51,6 +58,73 @@ _ELEMENT_TARGETS = frozenset({
 })
 
 
+# ── triage: one cause for a failed L1 attempt, before any recovery ──────────
+
+# What the engine may still try for each cause. Anything not listed gets
+# neither L2 nor L3: a fuzzier locator or an LLM cannot fix a blank page, a
+# sign-in redirect, a covered control or a network that is down.
+RETRY_AFTER_SETTLE = frozenset({"loading"})              # wait_stable once, then L1 again
+L2_ONLY = frozenset({"server", "script"})                # fuzzy is cheap; an LLM call cannot help
+FULL_CHAIN = frozenset({"not_found"})                    # the ordinary locator problem: L2 → L3
+
+_COVERED_RE = re.compile(r"intercepts pointer events")
+_AMBIGUOUS_RE = re.compile(r"strict mode violation")
+_DISABLED_RE = re.compile(r"not enabled|element is disabled", re.IGNORECASE)
+_BUSY_TYPES = frozenset({"document", "xhr", "fetch"})
+_IN_FLIGHT_S = 15
+
+
+def triage(error: str, action: Any, page: Any, recorder: Any = None, since_seq: int = 0,
+           section_seq: int = 0, ignore: Any = None, prev_url: str = "") -> str:
+    """The likely cause of an L1 failure, from what is already in memory plus
+    one probe: ``network`` / ``closed`` (environment), ``server`` / ``script``
+    / ``blank`` (application), ``loading`` (timing), ``session`` (the browser
+    was sent from *prev_url* to a sign-in page), ``covered`` / ``ambiguous``
+    / ``disabled`` (test), else ``not_found``. Never raises."""
+    try:
+        return _triage(error or "", action, page, recorder, since_seq, section_seq, ignore, prev_url)
+    except Exception as exc:
+        logger.debug("[triage] skipped: %s", exc)
+        return "not_found"
+
+
+def _triage(error: str, action: Any, page: Any, recorder: Any, since_seq: int,
+            section_seq: int, ignore: Any, prev_url: str) -> str:
+    if _NET_ENV_RE.search(error):
+        return "network"
+    if _CLOSED_RE.search(error):
+        return "closed"
+    if recorder is not None:
+        if oracle.broken_requests(recorder, section_seq, ignore):
+            return "server"
+        if any(c.get("level") == "pageerror" for c in recorder.errors_since(since_seq, 50)):
+            return "script"
+    p = oracle.probe(page) or {}
+    if p and not p.get("textLength"):
+        return "blank"
+    in_flight = bool(recorder is not None
+                     and recorder.pending(_BUSY_TYPES, _IN_FLIGHT_S, tuple(getattr(ignore, "network", ()))))
+    if p.get("spinner") or p.get("readyState") == "loading" or in_flight:
+        return "loading"
+    target = action.args[0] if getattr(action, "args", None) else ""
+    try:
+        url = page.url
+    except Exception:
+        url = ""
+    # A sign-in page the flow was *sent to* (the step before ran elsewhere) —
+    # not one it is working on, where a missing control is an ordinary locator problem.
+    redirected = prev_url and not LOGIN_RE.search(prev_url)
+    if redirected and url and LOGIN_RE.search(url) and not LOGIN_RE.search(target) and action.type != ActionType.GOTO:
+        return "session"
+    if _COVERED_RE.search(error):
+        return "covered"
+    if _AMBIGUOUS_RE.search(error):
+        return "ambiguous"
+    if _DISABLED_RE.search(error):
+        return "disabled"
+    return "not_found"
+
+
 def _names(page: Any) -> list[str]:
     """Headings, controls and form field labels on the page, for near matches."""
     from app.agent.observer import observe  # imported lazily: only failures pay for it
@@ -76,28 +150,88 @@ def closest(target: str, names: list[str]) -> tuple[str, float]:
 
 
 def _probe(page: Any) -> dict[str, str]:
-    """Failed render checks by name → detail (blank page, spinner, dialog)."""
+    """Render problems by name → detail: failed checks (blank page, overflow)
+    and the notes the probe records only when seen (spinner, dialog)."""
     try:
-        return {c.name: c.detail for c in oracle.probe_checks(page) if not c.passed}
+        return {c.name: c.detail for c in oracle.probe_checks(page) if not c.passed or c.severity == "info"}
     except Exception:
         return {}
 
 
-def diagnose(sr: StepResult, page: Any, section: tuple[list, list] = ([], [])) -> dict:
-    """``{"verdict", "summary", "signals"}`` for a failed step. Never raises.
-    *section* is ``(console, network)`` recorded since the step's section began."""
+# What a step is meant to bring about, in the reader's words — the "Expected"
+# line of a failure, derived from the action alone (never from a model).
+_EXPECTED = {
+    ActionType.GOTO: "the page at {t} opens and renders",
+    ActionType.RELOAD: "the page reloads and renders",
+    ActionType.BACK: "the previous page shows again",
+    ActionType.CLICK: '"{t}" can be pressed and the page reacts',
+    ActionType.CLICK_LINK_TEXT: 'the link "{t}" can be followed',
+    ActionType.DOUBLE_CLICK: '"{t}" can be double-clicked and the page reacts',
+    ActionType.TABLE_CLICK: 'the row "{t}" can be clicked',
+    ActionType.FILL: '"{t}" accepts the value "{v}"',
+    ActionType.TYPE: '"{t}" accepts the typed "{v}"',
+    ActionType.SELECT: '"{v}" can be chosen in "{t}"',
+    ActionType.CHECK: '"{t}" can be ticked',
+    ActionType.UNCHECK: '"{t}" can be unticked',
+    ActionType.ASSERT_TEXT: 'the text "{t}" is visible',
+    ActionType.ASSERT_NOT_TEXT: 'the text "{t}" is not shown',
+    ActionType.ASSERT_VISIBLE: '"{t}" is visible',
+    ActionType.ASSERT_HIDDEN: '"{t}" is not visible',
+    ActionType.ASSERT_URL: 'the address contains "{t}"',
+    ActionType.ASSERT_ENABLED: '"{t}" is enabled',
+    ActionType.ASSERT_DISABLED: '"{t}" is disabled',
+    ActionType.ASSERT_CHECKED: '"{t}" is ticked',
+    ActionType.WAIT_FOR_ELEMENT: '"{t}" appears',
+    ActionType.WAIT_FOR_TEXT: 'the text "{t}" appears',
+    ActionType.WAIT_FOR_URL: 'the address changes to contain "{t}"',
+    ActionType.WAIT_STABLE: "the page settles",
+}
+
+
+def expected_of(action: Any) -> str:
+    """The step's postcondition in plain words (``""`` for a skill or a sub-flow marker)."""
+    args = list(getattr(action, "args", []) or [])
+    t = args[0] if args else ""
+    v = args[1] if len(args) > 1 else ""
+    template = _EXPECTED.get(action.type)
+    if template:
+        return template.format(t=t, v=v)
+    return f"{action.type.value.replace('_', ' ')}{' ' + repr(t) if t else ''} completes"
+
+
+def _observed(ev: Any, probe: dict[str, str], error: str) -> str:
+    """What the page showed at the failure, one line: where it was, render
+    notes (blank, loading, a dialog), then the failure's first line."""
+    parts: list[str] = []
+    if ev and (ev.title or ev.url):
+        parts.append(f"the page {ev.title!r} at {ev.url}" if ev.title else f"the page at {ev.url}")
+    notes = [probe[k] for k in ("page rendered", "no stuck spinner", "no blocking dialog") if k in probe]
+    parts += notes
+    first = next((ln.strip() for ln in error.splitlines() if ln.strip()), "")
+    if first:
+        parts.append(first[:200])
+    return "; ".join(parts)
+
+
+def diagnose(sr: StepResult, page: Any, section: tuple[list, list] = ([], []),
+             notes: list[str] | None = None) -> dict:
+    """``{"verdict", "summary", "signals", "expected", "observed"}`` for a
+    failed step. Never raises. *section* is ``(console, network)`` recorded
+    since the step's section began; *notes* are facts the engine kept from
+    earlier steps (a press that changed nothing)."""
     try:
-        return _diagnose(sr, page, section)
+        return _diagnose(sr, page, section, list(notes or []))
     except Exception as exc:
         logger.debug("[diagnosis] skipped: %s", exc)
-        return {"verdict": "unclassified", "summary": "No diagnosis could be made.", "signals": []}
+        return {"verdict": "unclassified", "summary": "No diagnosis could be made.", "signals": [],
+                "expected": expected_of(sr.action), "observed": ""}
 
 
-def _diagnose(sr: StepResult, page: Any, section: tuple[list, list]) -> dict:
+def _diagnose(sr: StepResult, page: Any, section: tuple[list, list], notes: list[str]) -> dict:
     action, ev = sr.action, sr.evidence
     error = f"{sr.error or ''}\n{sr.message or ''}"
     target = action.args[0] if action.args else ""
-    signals: list[str] = []
+    signals: list[str] = list(notes)
     verdict, summary = "", ""
 
     def conclude(v: str, s: str) -> None:
@@ -105,10 +239,25 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list]) -> dict:
         if not verdict:
             verdict, summary = v, s
 
-    # ── environment: configuration, network, browser ──
+    # ── what the engine's triage and recovery found before giving up ──
+    layers = ev.layers if ev else {}
+    cause = layers.get("triage", "")
+    if recovery := layers.get("recovery"):
+        signals.append(recovery)
+    if cause.endswith("loading"):
+        signals.append("the page was still loading when the step ran")
+        conclude("timing", "The page was still loading: the content the step needed had not appeared yet"
+                           + (", and it did not settle in time." if "did not settle" in recovery else "."))
+
+    # ── framework: the flow or its setup, not the site ──
     if m := _PLACEHOLDER_RE.search(error):
         signals.append(f"placeholder <{m.group(1)}> has no value")
-        conclude("environment", f"<{m.group(1)}> is not set in the environment (.env or CI variables).")
+        conclude("framework", f"<{m.group(1)}> is not set in the environment (.env or CI variables).")
+    if re.search(r"sub-flow|nesting depth|Circular flow", error):
+        signals.append("the flow could not be assembled")
+        conclude("framework", "The flow references a sub-flow that could not be loaded.")
+
+    # ── environment: network, browser ──
     if m := _NET_ENV_RE.search(error):
         signals.append(f"network error {m.group(1)}")
         conclude("environment", f"The site could not be reached ({m.group(1)}).")
@@ -146,7 +295,7 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list]) -> dict:
         conclude("application", "The page did not render.")
     if "no stuck spinner" in probe:
         signals.append(probe["no stuck spinner"])
-        conclude("application", "The page was still loading — a slow or failing backend call.")
+        conclude("timing", "The page was still loading — a slow or failing backend call.")
 
     # ── session ──
     url = ev.url if ev else ""
@@ -188,4 +337,5 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list]) -> dict:
     if url and not any(s.startswith("the browser is on") for s in signals):
         signals.append(f"page at the failure: {url}")
     conclude("unclassified", "The signals collected do not point to a single cause.")
-    return {"verdict": verdict, "summary": summary, "signals": signals[:MAX_SIGNALS]}
+    return {"verdict": verdict, "summary": summary, "signals": signals[:MAX_SIGNALS],
+            "expected": expected_of(action), "observed": _observed(ev, probe, sr.error or sr.message or "")}

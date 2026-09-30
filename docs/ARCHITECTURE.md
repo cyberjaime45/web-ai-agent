@@ -38,23 +38,46 @@ failure evidence identical everywhere.
 |-------|---------|----------|
 | **L1 — Deterministic** | Always tried first | `_h_<keyword>` handlers in `app/layers/deterministic.py`: exact Playwright `get_by_role`, `get_by_label`, `get_by_placeholder` locators, capped at 5 s (`_L1_TIMEOUT`) so failover stays fast. Text checks match **visible** elements only, so a hidden duplicate never hides the visible one. When a click, fill or other interaction fails, a covering cookie banner or modal is dismissed and L1 is retried once (a `dismissed blocker` info check); assertions are never retried this way. |
 | **L2 — Fallback** | L1 fails | `_l2_<keyword>` handlers in `deterministic_l2.py`. Element actions: looser Playwright strategies polled for up to 5 s, then one similarity pass over the DOM (≥ 0.6). Text checks: the page's rendered, visible text (case-insensitive, whitespace collapsed) — never the raw HTML, where hidden elements and scripts would make an absent text look present. |
-| **L3 — AI** | L1 + L2 fail on an element interaction, or an AI-native action | One LLM call with page context via a pluggable provider (OpenAI, Gemini, Claude). Only actions L3 can perform with a locator (`_LOCATOR_ACTIONS`: click, fill, select, check…) are sent; assertions and waits never reach it. Off when `AI_PROVIDER` is empty. |
+| **L3 — AI** | L1 + L2 fail on an element interaction and triage says it is a locator problem, or an AI-native action | One LLM call with the observation (refs, roles, names — never HTML) via a pluggable provider (OpenAI, Gemini, Claude). The model names an observed control by its ref; a suggestion that is not on the page — a CSS or XPath selector in particular — is refused. Only actions L3 can perform with a locator (`_LOCATOR_ACTIONS`: click, fill, select, check…) are sent; assertions and waits never reach it. Off when `AI_PROVIDER` is empty. |
 
 L1 signals failure by raising, L2 by `RuntimeError`, L3 by returning `None`.
 Most flows run entirely on L1 with no API calls.
+
+## Verify: execution success is not test success
+
+A step that Playwright performed is not yet a step that worked. After a
+navigation-class step (`goto`, `click`, `select`, `press`…) the engine takes
+one probe (the same evaluate the oracle uses) and keeps the page's
+after-state on the step — heading, dialog, alert, focus, a hash of the visible
+text, URL — then compares a press with the state before it: a click that
+changed nothing (same URL and text, no dialog, alert, focus change or
+request) gets the warning `action changed the page`. After `fill`, `type`,
+`check`, `uncheck` and `select` the control is read back (`control holds the
+value`). Both are warnings, never failures — a no-op click can be legitimate —
+and a later failure's diagnosis reads them. `ORACLE=off` disables the stage.
 
 ## Failure and recovery
 
 ```
 L1 fails ─► blocker dismissed? (interactions) ─► L1 once more
-        └─► L2 ─► L3 (element interactions, provider set) ─► failed StepResult (_fail: what each layer did)
+        └─► triage (diagnosis.triage: error text, recorder since the section, one probe — no LLM)
+              loading                 ─► wait_stable once (≤ 10 s) ─► L1 once more (warning: page settled in time)
+              not_found               ─► L2 ─► L3 (element interactions, provider set)
+              server / script         ─► L2 only — an LLM cannot fix a 5xx or a JS error
+              blank / session / covered / ambiguous / disabled / network / closed
+                                      ─► no retry: it could only hide the problem
+                                                              ─► failed StepResult (_fail: what each layer,
+                                                                  the triage and the recovery did)
                                                                   │
                      FlowRunner.attach_evidence ◄─────────────────┘
                        evidence.collect   screenshots, URL/title, console + network since the step
-                       diagnosis.diagnose likely cause: application / test / environment / unclassified
+                       diagnosis.diagnose likely cause: application / timing / test / environment / framework / unclassified
+                       explainer.explain_failure  optional, ≤ 2 LLM calls per flow, only when the cause is unclassified:
+                                                  a model's reading of the same evidence, shown as "AI diagnosis · unverified"
                                                                   │
                      section stops; next section runs            ▼
-                     RERUN_FAILED (pytest): whole flow once more, merged per section (execution/rerun.py)
+                     RERUN_FAILED (pytest): whole flow once more, merged per section (execution/rerun.py) —
+                       skipped when every failure is the flow's own (framework verdict); the first attempt's cause is kept
                                                                   │
                      report: failed / passed on retry / consistent failure, with evidence and cause
 ```
@@ -90,7 +113,9 @@ A skill (`app/skills/`) is a function that looks at the page (`observe`,
 The engine runs a skill keyword like `run_flow`: a marker step carrying the
 skill's checks, then the child steps it executed. Skills never enter the layer
 chain themselves, so a skill as a whole cannot be "healed". Checks carry a
-severity: `error` fails the skill step, `warn` never does, `info` observes.
+severity: `error` fails the skill step, `warn` never does, `info` observes,
+`inconclusive` records what the agent could not judge (coverage, never a
+warning).
 
 The observer (`app/agent/observer.py`) turns Playwright's accessibility
 snapshot plus one form-metadata `evaluate` into an `Observation`: headings and
@@ -100,10 +125,12 @@ heading, dialog title and alert after a skill's navigation steps — the raw
 material for the assertions `test_page` writes into generated flows.
 
 The oracle (`app/execution/oracle.py`) runs after successful navigation-class
-steps: recorder checks (page errors, console errors, failed / 401 / 403 / 4xx
-requests since the step's mark) plus one render probe (blank page, stuck
-spinner, blocking dialog, overflow). `ORACLE=warn` records; `strict` fails the
-step on an error check; `off` skips it.
+steps: recorder checks since the step's mark, judged by what each request
+was for (page errors and failed pages, scripts, stylesheets and API 5xx are
+errors; console errors, API 401/403/4xx and failed images are info here and
+warnings in `check_console_network`) plus one render probe (blank page and
+overflow judged; a spinner or dialog noted only when seen). `ORACLE=warn`
+records; `strict` fails the step on an error check; `off` skips it.
 
 The planner (`app/agent/planner.py`) is the only place an LLM decides *what*
 to do: it returns JSON steps validated before anything runs — known keywords

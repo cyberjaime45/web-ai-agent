@@ -30,6 +30,7 @@ class ProfessionalReportPlugin:
         self.flow_steps: dict[str, list[dict]] = {}
         self.flow_errors: dict[str, str] = {}
         self.flow_retries: dict[str, dict[str, str]] = {}
+        self.flow_retry_verdicts: dict[str, dict[str, str]] = {}
         self.captures: dict[str, dict] = {}
         self.session_start = time.time()
         self.report_path: Path | None = None
@@ -41,6 +42,7 @@ class ProfessionalReportPlugin:
             "flow_title": flow.title,
             "flow_markers": list(flow.markers),
             "section_markers": {k: list(v) for k, v in flow.section_markers.items()},
+            "flow_expected": list(getattr(flow, "expected", [])),
             "profile": {"name": profile, "label": profile},
         }
 
@@ -52,9 +54,12 @@ class ProfessionalReportPlugin:
     def record_error(self, nodeid: str, error: str) -> None:
         self.flow_errors[nodeid] = error
 
-    def record_retries(self, nodeid: str, retried: dict[int, str]) -> None:
-        """Sections (by index) a RERUN_FAILED rerun retried → first attempt's error."""
+    def record_retries(self, nodeid: str, retried: dict[int, str],
+                       verdicts: dict[int, str] | None = None) -> None:
+        """Sections (by index) a RERUN_FAILED rerun retried → first attempt's
+        error, and its likely cause (diagnosis verdict) when known."""
         self.flow_retries[nodeid] = {str(i): err for i, err in retried.items()}
+        self.flow_retry_verdicts[nodeid] = {str(i): v for i, v in (verdicts or {}).items() if v}
 
     def record_capture(self, nodeid: str, console: list[dict],
                        network: list[dict], dropped: dict | None = None) -> None:
@@ -128,6 +133,7 @@ class ProfessionalReportPlugin:
             r.update(self.flow_meta.get(nodeid, {}))
             r["error"] = self.flow_errors.get(nodeid, "")
             r["retried"] = self.flow_retries.get(nodeid, {})
+            r["retried_verdicts"] = self.flow_retry_verdicts.get(nodeid, {})
             r["flow_steps"] = self.flow_steps.get(nodeid, [])
             capture = self.captures.get(nodeid, {})
             r["console"] = capture.get("console", [])

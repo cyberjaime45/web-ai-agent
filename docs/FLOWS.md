@@ -62,7 +62,9 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
   applies to every test in the file; under a `##` heading it applies to that
   test only. Markers are report metadata: they do not drive `pytest -m`.
 - **`## Credentials`, `## Expected Outcome`, `## Error Scenarios`, `## Notes`**
-  are metadata sections kept for humans; the runner does not execute them.
+  are metadata sections; the runner never executes them. `## Expected Outcome`
+  is the flow's intent: its lines appear with every test of the file in the
+  report's drawer, so a failure is read against what the flow set out to prove.
   Put real secrets in `.env` and reference them with `<NAME>` placeholders,
   never in the flow file.
 

@@ -10,7 +10,11 @@ section before the pages it opens). Then, per ``## section``:
 
 A section that passed the first time is never replaced by the rerun, so a
 rerun can only turn red into green-on-retry, never green into red. The first
-attempt's error of every retried section is kept for the report. Console and
+attempt's error and likely cause (its diagnosis verdict) of every retried
+section are kept for the report, so "passed on retry" after a server failure
+reads differently from a locator that was slow once. A flow whose failures
+are all the flow's own (``framework``: an unset placeholder, a missing
+sub-flow) is not rerun — it would fail the same way. Console and
 network entries follow their section: each attempt contributes the entries
 recorded inside the time windows of the sections taken from it.
 """
@@ -31,6 +35,27 @@ def failed_sections(result: FlowResult) -> list[int]:
     return [i for i, (_, steps) in enumerate(section_runs(result.steps)) if _failed(steps)]
 
 
+def verdicts(result: FlowResult) -> dict[int, str]:
+    """Failed section index → the diagnosis verdict of its failing step."""
+    return {i: _verdict(steps) for i, (_, steps) in enumerate(section_runs(result.steps)) if _failed(steps)}
+
+
+# A failure the flow or its setup caused (an unset placeholder, a missing
+# sub-flow) fails the same way every time: a rerun proves nothing.
+NO_RERUN = frozenset({"framework"})
+
+
+def worth_rerunning(result: FlowResult) -> list[int]:
+    """The failed sections a rerun could tell something about."""
+    return [i for i, v in verdicts(result).items() if v not in NO_RERUN]
+
+
+def _verdict(steps: list[StepResult]) -> str:
+    failed = _failed(steps)
+    ev = failed[-1].evidence if failed else None
+    return (ev.diagnosis or {}).get("verdict", "") if ev else ""
+
+
 def _window(steps: list[StepResult]) -> tuple[int, int] | None:
     stamped = [s for s in steps if s.started_at]
     if not stamped:
@@ -42,6 +67,7 @@ def _window(steps: list[StepResult]) -> tuple[int, int] | None:
 class Merged:
     result:  FlowResult
     retried: dict[int, str] = field(default_factory=dict)   # section index → first attempt's error
+    first_verdicts: dict[int, str] = field(default_factory=dict)   # section index → first attempt's likely cause
     console: list[dict] = field(default_factory=list)
     network: list[dict] = field(default_factory=list)
 
@@ -59,16 +85,17 @@ def merge(first: FlowResult, first_capture: tuple[list, list],
     if [name for name, _ in a] != [name for name, _ in b]:
         # The rerun did not reach the same sections (it crashed early): keep
         # the first attempt and still say which sections were retried.
-        return Merged(first, {i: _error(a[i][1]) for i in retry},
+        return Merged(first, {i: _error(a[i][1]) for i in retry}, {i: _verdict(a[i][1]) for i in retry},
                       list(first_capture[0]), list(first_capture[1]))
 
     steps: list[StepResult] = []
     windows: list[tuple[int, tuple[int, int]]] = []   # (attempt 0 | 1, window)
     retried: dict[int, str] = {}
+    first_verdicts: dict[int, str] = {}
     for i, ((_, sa), (_, sb)) in enumerate(zip(a, b)):
         chosen, attempt = (sb, 1) if i in retry else (sa, 0)
         if i in retry:
-            retried[i] = _error(sa)
+            retried[i], first_verdicts[i] = _error(sa), _verdict(sa)
         steps.extend(chosen)
         if win := _window(chosen):
             windows.append((attempt, win))
@@ -85,7 +112,7 @@ def merge(first: FlowResult, first_capture: tuple[list, list],
                        if e.get("ts") is not None and lo <= e["ts"] <= hi),
                       key=lambda e: e["ts"])
 
-    return Merged(merged, retried, keep(0), keep(1))
+    return Merged(merged, retried, first_verdicts, keep(0), keep(1))
 
 
 def _error(steps: list[StepResult]) -> str:

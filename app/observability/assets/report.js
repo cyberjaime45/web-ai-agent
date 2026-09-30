@@ -123,8 +123,79 @@ function failureSites(t){
 }
 const failedStep = t => failureSites(t)[0] || null;   // the first thing that went wrong
 const failedChecks = s => (s.checks || []).filter(c => c.outcome ? c.outcome === 'failed' : !c.passed && c.severity === 'error');
-// A check is named for what should hold ("no broken pages"); say so, then what was found.
-const checkFinding = c => `Expected ${c.name}${c.detail ? ` — found: ${c.detail}` : ''}`;
+/* ── findings: a failed check as a short headline plus one row per affected element ──
+   A check is named for what should hold ("fields have labels") and its detail lists
+   what was found ("input[name=email] (shows "Email", not linked as its label); …
+   (+2 more)"). FINDINGS turns the known checks into plain words; anything else keeps
+   the check's name as its headline. Splitting the detail into rows never changes the
+   finding's count, severity or step. */
+const isCodey = x => /^(<|#|\.|\[|[a-z]+[#.\[]|[a-z]+$|GET |POST |PUT |PATCH |DELETE |HEAD |OPTIONS |https?:|src=|h\d\b)/.test(x) || /→/.test(x);
+function detailItems(detail){
+  // "a; b; c (+4 more)" → {items: [a, b, c], more: 4}; a single sentence is one item.
+  const m = String(detail || '').match(/^(.*?)\s*\(\+(\d+) more\)$/s);
+  const body = m ? m[1] : String(detail || ''), more = m ? +m[2] : 0;
+  return {items: body ? body.split(/;\s+(?=\S)/) : [], more};
+}
+// item "code (note)" → {code, text}; a bare selector/request stays code; prose stays text.
+const codeNote = x => { const m = x.match(/^(\S+)\s+\((.*)\)$/s); return m ? {code: m[1], text: cap(m[2]) + '.'} : isCodey(x) ? {code: x, text: ''} : {code: '', text: x}; };
+const labelRow = x => {
+  const m = x.match(/^(\S+)\s+\((.*)\)$/s), code = m ? m[1] : x, note = m ? m[2] : '';
+  let show; if ((show = note.match(/^shows "(.*)", not linked as its label$/))) return {code, text: `The ${show[1]} input's visible label is not associated with the field.`};
+  if ((show = note.match(/^placeholder "(.*)" only$/))) return {code, text: `Only the placeholder "${show[1]}" names this field; it disappears while typing.`};
+  return {code, text: 'This field has no label.'};
+};
+const headingRow = x => { const m = x.match(/^"(.*)" \((\w+), (\d+px)\)$/s); return m ? {code: `<${m[2]}>`, text: `“${m[1]}” (${m[3]}) appears as a heading but is not marked up as one.`} : codeNote(x); };
+const FINDINGS = {
+  'fields have labels': {title: items => items.every(i => /not linked as its label/.test(i)) ? 'Form labels are not associated with their inputs' : 'Form fields without an accessible label', row: labelRow},
+  'visual headings marked up': {title: 'Text styled as a heading is not marked up as one', row: headingRow,
+    one: x => { const m = x.match(/^"(.*)" \((\w+), (\d+px)\)$/s); return m ? `“${m[1]}” appears as a heading but uses a <${m[2]}>.` : ''; }},
+  'images have alt text': {title: 'Images without alternative text', row: x => ({...codeNote(x), text: 'Has no alt attribute.'})},
+  'controls have names': {title: 'Buttons or links without an accessible name', row: x => ({code: x, text: 'Assistive technology announces nothing for this control.'})},
+  'heading levels in order': {title: 'Heading levels skip', row: x => { const m = x.match(/^h(\d) → h(\d) "(.*)"$/s); return m ? {code: `h${m[2]}`, text: `“${m[3]}” is an h${m[2]} right after an h${m[1]}.`} : codeNote(x); }},
+  'referenced ids are unique': {title: 'Duplicate ids referenced by labels or aria attributes', row: x => ({code: x, text: 'Used by more than one element.'})},
+  'no positive tabindex': {title: 'A positive tabindex overrides the natural focus order', row: x => ({code: x, text: ''})},
+  'page language set': {title: 'The page declares no language', row: x => ({code: '<html lang>', text: 'Missing, so assistive technology cannot pick a voice.'})},
+  'dialog holds focus': {title: 'Focus is outside the open dialog', row: x => ({code: '', text: x})},
+  'no page errors': {title: 'JavaScript errors on the page', row: x => ({code: x, text: ''})},
+  'no failed requests': {title: 'Requests that failed on the server or never answered', row: x => ({code: x, text: ''})},
+  'no console errors': {title: "Console errors from the site's own scripts", row: x => ({code: x, text: ''})},
+  'no 401/403 responses': {title: 'Requests refused with 401 or 403', row: x => ({code: x, text: ''})},
+  'no 4xx responses': {title: 'Requests answered with a client error', row: x => ({code: x, text: ''})},
+  'no failed resources': {title: 'Images, fonts or scripts that failed to load', row: x => ({code: x, text: ''})},
+  'no broken pages': {title: 'Pages that broke after a press', row: x => { const m = x.match(/^after '(.*?)': (.*)$/s); return m ? {code: m[2], text: `After pressing “${m[1]}”.`} : codeNote(x); }},
+  'no broken links': {title: 'Links that lead to an error', row: x => ({code: x, text: ''})},
+  'no restricted links': {title: 'Links that need sign-in or are forbidden', row: x => ({code: x, text: ''})},
+  'linked pages open': {title: 'Linked pages that did not open', row: x => ({code: x, text: ''})},
+  'no broken images': {title: 'Images that failed to load', row: x => ({code: x, text: ''})},
+  'page rendered': {title: 'The page showed no content', row: x => ({code: '', text: cap(x) + '.'})},
+  'no horizontal overflow': {title: 'Content wider than the viewport', row: x => ({code: '', text: cap(x) + '.'})},
+  'action changed the page': {title: 'A press changed nothing on the page', row: x => { const m = x.match(/^"(.*?)" changed nothing visible: (.*)$/s); return m ? {code: `"${m[1]}"`, text: `Nothing visible changed after the press: ${m[2]}.`} : {code: '', text: x}; }},
+  'control holds the value': {title: 'A field does not hold the value that was entered', row: x => { const m = x.match(/^"(.*?)" (reads .*|is .*|shows .*)$/s); return m ? {code: `"${m[1]}"`, text: cap(m[2]) + '.'} : {code: '', text: x}; }},
+  'page settled in time': {title: 'The page was still loading when the step ran', row: x => ({code: '', text: cap(x) + '.'})},
+  'valid input accepted': {title: 'The form rejected valid input', row: x => ({code: '', text: x})},
+  'empty submission rejected': {title: 'An empty form was accepted', row: x => ({code: '', text: x})},
+  'submission accepted': {title: 'The submission was not accepted', row: x => ({code: '', text: x})},
+};
+function describeFinding(c){
+  // → {title, rows: [{code, text}], more, count}
+  const {items, more} = detailItems(c.detail);
+  const spec = FINDINGS[c.name];
+  if (spec){
+    const one = items.length === 1 && !more && spec.one && spec.one(items[0]);
+    const title = one || (typeof spec.title === 'function' ? spec.title(items) : spec.title);
+    return {title, rows: one ? [] : items.map(spec.row), more, count: c.count || items.length};
+  }
+  const title = `Check ${c.severity === 'error' ? 'failed' : 'not met'}: ${c.name}`;
+  return {title, rows: items.map(codeNote), more, count: c.count || items.length};
+}
+// One line of plain text for a finding: the headline, then its rows.
+function findingText(c){
+  const f = describeFinding(c);
+  const rows = f.rows.map(r => [r.code, r.text].filter(Boolean).join(' — '));
+  return f.title + (rows.length ? ` — ${rows.join('; ')}` : '') + (f.more ? ` (+${f.more} more)` : '');
+}
+// The headline alone, with how many it counted: "Pages that broke after a press (2)".
+const findingLine = c => { const f = describeFinding(c); return f.title + (f.count > 1 ? ` (${f.count})` : ''); };
 function cleanError(msg){
   // Drop the layer-chain preamble and Playwright's call log; keep the sentence.
   return String(msg || '')
@@ -164,8 +235,7 @@ function explain(t, s = failedStep(t)){
   const checks = failedChecks(s);
   // One line: a check that counted several findings says how many; the card lists them.
   if (checks.length){
-    const first = checks[0], line = first.count > 1 ? `Expected ${first.name} — found ${first.count}` : checkFinding(first);
-    return line + (checks.length > 1 ? ` (+${checks.length - 1} more)` : '');
+    return findingLine(checks[0]) + (checks.length > 1 ? ` (+${checks.length - 1} more)` : '');
   }
   if (/strict mode violation/i.test(raw)) return `More than one element matches ${A}, so the step could not tell which one to use.`;
   switch (s.action){

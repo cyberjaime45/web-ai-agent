@@ -25,7 +25,7 @@ initial load.
 from __future__ import annotations
 
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill
+from app.skills.base import SkillContext, inconclusive, info, skill
 
 BUDGETS: dict[str, float] = {"ttfb": 800, "dcl": 3000, "load": 5000, "lcp": 2500, "cls": 0.1}
 LABELS = {"ttfb": "time to first byte", "dcl": "DOM ready", "load": "page load",
@@ -67,7 +67,7 @@ def _fmt(metric: str, value: float) -> str:
 def check_performance(sc: SkillContext) -> list[Check]:
     m = sc.evaluate(_METRICS_JS)
     if not m:
-        return [Check("performance measured", False, "warn", "the browser returned no timing data")]
+        return [inconclusive("performance measured", "the browser returned no timing data")]
     budgets = {k: sc.number(k, v) for k, v in BUDGETS.items()}
     measured = [f"{k} {_fmt(k, m[k])}" for k in BUDGETS if m.get(k) is not None]
     checks = [info("performance", ", ".join(measured) + f"; {m['resources']} resources, {m['kb']} KB")]

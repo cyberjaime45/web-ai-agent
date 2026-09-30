@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Div menu — QA fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; }
+  .menu-box { display: none; width: 32px; height: 32px; cursor: pointer; background: #333; }
+  @media (max-width: 767px) {
+    nav ul { display: none; }
+    nav ul.open { display: block; }
+    .menu-box { display: block; }
+  }
+</style>
+</head>
+<body>
+<nav aria-label="Main">
+  <div class="menu-box"></div>
+  <ul><li><a href="members.html">Members</a></li><li><a href="login.html">Sign in</a></li></ul>
+</nav>
+<h1>Home</h1>
+<script>
+  document.querySelector('.menu-box').addEventListener('click', () =>
+    document.querySelector('nav ul').classList.toggle('open'));
+</script>
+</body>
+</html>

@@ -51,6 +51,7 @@ from typing import Any, NamedTuple
 from app.config.settings import settings
 from app.execution import oracle
 from app.observability.report_model import build_tests
+from app.schemas.actions import NOT_JUDGED
 from app.utils.banner import APP_VERSION
 from app.utils.build import get_build_name
 
@@ -218,6 +219,8 @@ def generate_report(
     skipped = sum(1 for t in tests if t["status"] == "skipped")
     # a test that passed on retry counts there, not here (the report shows it once)
     warnings = sum(1 for t in tests if t["status"] == "passed" and t.get("warnings") and not t.get("retries"))
+    # coverage gaps: test cases with a check the agent could not judge — never a failure or warning
+    unverified = sum(1 for t in tests if t["status"] != "skipped" and t.get("unverified"))
     executed = total - skipped
     now = datetime.datetime.now().astimezone()
 
@@ -243,6 +246,7 @@ def generate_report(
             "skipped": skipped,
             "errors": errors,
             "warnings": warnings,          # passed test cases with at least one warning
+            "unverified": unverified,      # test cases with a check the agent could not judge
             "pass_rate": round(passed / executed * 100, 1) if executed else 0.0,
             "duration_ms": round((time.time() - session_start) * 1000, 1),
         },
@@ -282,7 +286,7 @@ def generate_report(
             "network": len(network),
             # cancelled requests (beacons, cut off by leaving a page) are not failures
             "net_bad": sum(1 for n in network if not n.get("ok") and not oracle.cancelled(n)),
-            "checks": len([c for c in checks if c.get("severity") not in ("info", "skipped", "blocked")]),
+            "checks": len([c for c in checks if c.get("severity") not in NOT_JUDGED]),
             "warnings": len(t.get("warnings") or []),
         }
         slim_tests.append(slim)

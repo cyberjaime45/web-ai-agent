@@ -14,34 +14,35 @@ through the same L1 → L2 → L3 chain, timing and evidence as a Markdown step.
 from __future__ import annotations
 
 import logging
-import os
-import re
 import time
 from pathlib import Path
 
 from playwright.sync_api import Page
 
+from app.agent import explainer
 from app.agent.safety import SafetyPolicy
 from app.config.settings import PROJECT_ROOT, settings
 from app.execution import oracle
+from app.flow.parser import parse_flow_file, resolve_flow_path
+from app.flow.placeholders import resolve_env_placeholders
+from app.layers import stability
+from app.layers.ai_resolver import AIResolver
+from app.layers.deterministic import DeterministicRunner
+from app.layers.providers import LLMProvider, get_provider
+from app.observability import diagnosis
 from app.observability import evidence as evidence_mod
-from app.observability.diagnosis import diagnose
 from app.schemas.actions import (
     AI_ONLY_ACTIONS,
     SKILL_ACTIONS,
     ActionType,
+    Check,
     Evidence,
     FlowAction,
     FlowResult,
     RunContext,
     StepResult,
 )
-from app.flow.parser import parse_flow_file, resolve_flow_path
-from app.layers.ai_resolver import AIResolver
-from app.layers.deterministic import DeterministicRunner
-from app.layers.providers import LLMProvider, get_provider
 from app.skills import run_skill
-from app.utils.urls import site_domain
 
 logger = logging.getLogger(__name__)
 
@@ -50,82 +51,8 @@ _RESOLVE_PROVIDER = object()   # sentinel: FlowRunner(provider=...) not given
 
 # Layer names as they appear in Evidence.layers, in resolution order.
 L1, L2, L3 = "L1 exact", "L2 fuzzy", "L3 AI"
-
-# ── Environment variable placeholder resolution ─────────────────────────────
-_ENV_PLACEHOLDER_RE = re.compile(r"^<([A-Z_][A-Z0-9_]*)>$")
-_SENSITIVE_KEYWORDS = {"PASSWORD", "SECRET", "KEY", "TOKEN"}
-_MASK = "******"
-
-
-def _is_sensitive(var_name: str) -> bool:
-    """Return True if the env var name contains a sensitive keyword."""
-    upper = var_name.upper()
-    return any(kw in upper for kw in _SENSITIVE_KEYWORDS)
-
-
-def _resolve_env_placeholders(action: FlowAction) -> FlowAction:
-    """Return a copy of *action* with ``<ENV_VAR>`` placeholders resolved.
-
-    - Resolved args contain real values (for execution).
-    - ``action.raw`` is rewritten with sensitive values masked as ``******``.
-    - Non-sensitive placeholders (e.g. ``<FMS_EMAIL>``) show the resolved value.
-    - If the env var is not set, raises ``RuntimeError`` with a helpful message.
-    """
-    has_placeholder = False
-    for arg in action.args:
-        if _ENV_PLACEHOLDER_RE.match(arg):
-            has_placeholder = True
-            break
-
-    if not has_placeholder:
-        return action  # nothing to resolve — return original (no copy needed)
-
-    resolved_args: list[str] = []
-    masked_raw = action.raw
-
-    for arg in action.args:
-        m = _ENV_PLACEHOLDER_RE.match(arg)
-        if not m:
-            resolved_args.append(arg)
-            continue
-
-        var_name = m.group(1)
-        value = os.environ.get(var_name)
-        if value is None:
-            raise RuntimeError(
-                f"Environment variable '{var_name}' is not set "
-                f"(referenced in step {action.step_num}: {action.raw!r})"
-            )
-
-        resolved_args.append(value)
-        display = _MASK if _is_sensitive(var_name) else value
-        masked_raw = masked_raw.replace(f"<{var_name}>", display)
-
-    return FlowAction(
-        type=action.type,
-        args=resolved_args,
-        raw=masked_raw,
-        step_num=action.step_num,
-        section=action.section,
-    )
-
-
-def flow_site_domain(flow) -> str:
-    """The site under test, whose requests are recorded: the flow's
-    ``site_domain:`` override, else the registrable domain of its first
-    ``goto`` step (``<ENV_VAR>`` placeholders resolved). ``""`` when the flow
-    opens its first page some other way (a ``run_flow`` component) — the
-    recorder then takes the domain of the first page load."""
-    if getattr(flow, "site_domain", ""):
-        return flow.site_domain
-    first = next((a for a in flow.actions if a.type == ActionType.GOTO and a.args), None)
-    if first is None:
-        return ""
-    try:
-        return site_domain(_resolve_env_placeholders(first).args[0])
-    except RuntimeError:                       # placeholder not set: the step itself will say so
-        return ""
-
+_SETTLE_MS = 10_000            # the one bounded wait a still-loading page gets before L1 runs again
+SETTLED_CHECK = "page settled in time"
 
 def _append_error(result, msg: str) -> None:
     result.error = f"{result.error}\n{msg}" if result.error else msg
@@ -176,7 +103,14 @@ class FlowRunner:
         self._recorder = None          # PageRecorder for the current run (optional)
         self._flow_slug = "flow"
         self._n_failures = 0           # numbers the evidence files of one run
+        self._n_shots = 0              # numbers skill screenshots: a skill run twice keeps both sets
         self._section_seq = 0          # recorder mark at the current section's start (diagnosis)
+        self._last_state: dict = {}    # page state after the last navigation-class step (effect checks)
+        self._last_effect = ""         # note for the next diagnosis: the last press changed nothing
+        self._ctx = RunContext()
+        self._goal, self._expected = "", []
+        self._ai_explanations = 0      # explainer calls this run (≤ explainer.MAX_CALLS)
+        self._step_seq = 0             # recorder mark at the current step's start (triage)
         self._ignore = oracle.IgnoreRules()
         self._policy = SafetyPolicy()
 
@@ -190,8 +124,13 @@ class FlowRunner:
         """
         result = FlowResult(flow_name=flow.name)
         ctx = RunContext()
+        self._ctx = ctx
         self._recorder = recorder
+        self._goal = flow.title or flow.name          # intent, for the report and the explainer
+        self._expected = list(getattr(flow, "expected", []))
+        self._ai_explanations = 0
         self._flow_slug = evidence_mod.slugify(flow.name) + ("__retry" if self.attempt > 1 else "")
+        self._last_state, self._last_effect = {}, ""
         self._ignore = oracle.IgnoreRules(list(getattr(flow, "ignore_console", [])),
                                           list(getattr(flow, "ignore_network", [])))
         runner = DeterministicRunner(page, artifacts_dir=self.artifacts_dir, ctx=ctx,
@@ -253,8 +192,11 @@ class FlowRunner:
         return [self.execute(action, page, runner, ctx)]
 
     def evidence_path(self, name: str) -> Path:
-        """Where a skill keeps an extra screenshot: ``images/<flow>__<profile>__<name>``."""
-        return self._artifacts_abs / f"{self._flow_slug}__{self.profile}__{name}"
+        """Where a skill keeps an extra screenshot:
+        ``images/<flow>__<profile>__shot<NN>__<name>`` — numbered per run, so a
+        skill that runs twice in a flow never overwrites the first step's files."""
+        self._n_shots += 1
+        return self._artifacts_abs / f"{self._flow_slug}__{self.profile}__shot{self._n_shots:02d}__{name}"
 
     def generated_path(self, name: str) -> Path:
         """Where a skill writes a generated flow: ``reports/<env>/generated/<flow>__<profile>__<name>.md``."""
@@ -301,8 +243,31 @@ class FlowRunner:
                             if self._ignore.keeps_console(c)],
                            [n for n in self._recorder.failures_since(self._section_seq, 50)
                             if self._ignore.keeps_network(n)])
-            sr.evidence.diagnosis = diagnose(sr, page, section)
+            sr.evidence.diagnosis = diagnosis.diagnose(sr, page, section, notes=[self._last_effect] if self._last_effect else None)
+            self._explain(sr, page)
         return sr
+
+    def _explain(self, sr: StepResult, page: Page) -> None:
+        """One optional LLM call (app/agent/explainer.py) when the deterministic
+        diagnosis is unclassified — at most ``explainer.MAX_CALLS`` per flow run.
+        The answer is recorded as ``diagnosis["ai"]``; it never changes the verdict
+        or the result."""
+        d = sr.evidence.diagnosis if sr.evidence else {}
+        if (self.provider is None or d.get("verdict") != "unclassified" or "ai" in d
+                or self._ai_explanations >= explainer.MAX_CALLS):
+            return
+        self._ai_explanations += 1
+        try:
+            from app.agent.observer import observe  # failures only pay for it
+            observation = observe(page).to_prompt(2500)
+        except Exception:
+            observation = ""
+        history = [f"{h['action']}({h['target']}) → {h['result']}" for h in self._ctx.recent_history(5)]
+        answer = explainer.explain_failure(
+            self.provider, goal=self._goal, expected=self._expected, step=sr.action.raw,
+            diagnosis=d, layers=dict(sr.evidence.layers), history=history, observation=observation)
+        if answer:
+            d["ai"] = answer
 
     # ── Sub-flow handling ──────────────────────────────────────────
 
@@ -317,18 +282,15 @@ class FlowRunner:
         ref = action.args[0]
         not_attempted = {L1: "not attempted (sub-flow could not start)"}
 
-        # Nesting depth check
         if self._nesting_depth >= _MAX_NESTING_DEPTH:
             return [self.attach_evidence(_fail(
                 action, f"Max nesting depth ({_MAX_NESTING_DEPTH}) exceeded for '{ref}'",
                 0, not_attempted), page)]
 
-        # Circular dependency check
         if ref in self._seen_flows:
             return [self.attach_evidence(_fail(
                 action, f"Circular flow reference detected: '{ref}'", 0, not_attempted), page)]
 
-        # Resolve and parse
         try:
             flow_path = resolve_flow_path(ref, self.flows_dir)
             sub_flow = parse_flow_file(flow_path)
@@ -381,16 +343,17 @@ class FlowRunner:
         w0 = time.time()
         since_seq = self._recorder.seq if self._recorder is not None else 0
         try:
-            resolved = _resolve_env_placeholders(action)
+            resolved = resolve_env_placeholders(action)
         except RuntimeError as exc:
             sr = _fail(action, str(exc), 0, {L1: "not attempted (placeholder unresolved)"})
             sr.started_at, sr.ended_at = w0, time.time()
             return self.attach_evidence(sr, page, runner, since_seq)
 
         t0 = time.monotonic()
+        self._step_seq = since_seq
         sr = self._run_step(resolved, page, runner, ctx)
         if sr.success:
-            self._oracle(sr, page, since_seq)
+            self._verify(sr, page, runner, since_seq)
         sr.duration = round(time.monotonic() - t0, 3)
         sr.started_at = w0
         sr.ended_at = time.time()
@@ -403,11 +366,37 @@ class FlowRunner:
         ctx.record(action, sr, sr.url)
         return sr
 
-    def _oracle(self, sr: StepResult, page: Page, since_seq: int) -> None:
-        """Automatic checks after a navigation-class step (ORACLE=warn|strict)."""
-        if settings.oracle == "off" or sr.action.type not in oracle.ORACLE_AFTER:
+    def _verify(self, sr: StepResult, page: Page, runner: DeterministicRunner, since_seq: int) -> None:
+        """Verify stage (ORACLE=warn|strict): execution success is not test success.
+        After a navigation-class step one probe gives ``sr.after`` and the oracle
+        checks, and a press is compared with the state before it (``effect_check``);
+        after an input step the control is read back (``readback_check``). Those are
+        warnings; only an oracle ``error`` check fails the step, in strict mode."""
+        if settings.oracle == "off":
             return
-        sr.checks = [*sr.checks, *oracle.run_checks(page, self._recorder, since_seq, self._ignore)]
+        t = sr.action.type
+        if t in oracle.ORACLE_AFTER:
+            if t in oracle.EFFECT_AFTER and self._last_state:      # a re-render may still be on its way
+                oracle.wait_for_change(page, self._last_state)
+            after, checks = oracle.observe_after(page, self._recorder, since_seq, self._ignore)
+            sr.after = after
+            requests = self._recorder.requests_since(since_seq) if self._recorder is not None else 0
+            if effect := oracle.effect_check(sr.action, self._last_state, after, requests):
+                checks.append(effect)
+            # A press that changed nothing is what the next failure most often
+            # traces back to; keep it as a note for that step's diagnosis.
+            self._last_effect = f"the step before, {sr.action.raw}, changed nothing visible on the page" \
+                if effect is not None and not effect.passed else ""
+            if after:
+                self._last_state = after
+            sr.checks = [*sr.checks, *checks]
+        elif t in oracle.READBACK and sr.layer_used == 1 and runner is not None:   # L1 found it: read it back
+            loc = runner.locate(sr.action)
+            if loc is not None and (check := oracle.readback_check(sr.action, loc)):
+                sr.checks = [*sr.checks, check]
+            return
+        else:
+            return
         errors = oracle.failed(sr.checks)
         if errors and settings.oracle == "strict":
             sr.success = False
@@ -442,28 +431,69 @@ class FlowRunner:
             return _fail(action, f"AI action failed: {action.type.value}", 3,
                          {L3: "failed"}, error="AI resolver returned no result")
 
+        # ── Layer 1 ──
         try:
-            return runner.execute(action)   # Layer 1 → Layer 2 internally
+            return runner.layer1(action)
         except Exception as exc:
             error_msg = str(exc)
-            logger.warning("[L1+L2] Step %s (%s %s) failed: %s",
-                           action.step_num, action.type.value, action.args, _first_line(error_msg))
-            layers = {L1: "failed", L2: "failed"}
+        logger.debug("[L1] Step %s failed: %s", action.step_num, _first_line(error_msg))
+        layers = {L1: "failed"}
 
-            # Layer 3 — AI fallback, only for actions L3 can actually perform
-            # (element interactions). Assertions/waits/keys have no L3 path:
-            # an LLM call could not change their outcome. One call: the prompt
-            # already carries the URL, title, error and every control on the page.
-            if self._ai.available and self._ai.supports(action.type):
-                ai_result = self._ai.resolve(action, page, error_msg, ctx)
-                if ai_result is not None:
-                    return ai_result
-                layers[L3] = "failed"
-                return _fail(action, f"All layers failed: {error_msg}", 3, layers, error=error_msg)
+        # ── Triage, then the one recovery that fits (diagnosis.triage): a page
+        # still loading gets one bounded wait and a second L1 attempt; a locator
+        # problem goes down the chain; a broken page, a sign-in redirect or a
+        # covered control gets no retry that could hide it.
+        prev_url = ctx.history[-1]["url"] if ctx.history else ""
+        cause = diagnosis.triage(error_msg, action, page, self._recorder, self._step_seq,
+                                 self._section_seq, self._ignore, prev_url)
+        if cause in diagnosis.RETRY_AFTER_SETTLE:
+            t0 = time.monotonic()
+            unsettled = stability.wait_stable(page, self._recorder, tuple(self._ignore.network), _SETTLE_MS)
+            waited = round((time.monotonic() - t0) * 1000)
+            layers["recovery"] = f"waited {waited} ms for the page to settle" + (
+                f" — it did not settle: {unsettled}" if unsettled else ", then retried L1")
+            if not unsettled:
+                try:
+                    sr = runner.layer1(action)
+                    sr.checks.append(Check(SETTLED_CHECK, False, "warn",
+                                           f"the step passed only after waiting {waited} ms for the page to settle"))
+                    return sr
+                except Exception as exc:
+                    error_msg = str(exc)
+                cause = diagnosis.triage(error_msg, action, page, self._recorder, self._step_seq,
+                                         self._section_seq, self._ignore, prev_url)
+                cause = f"loading, then {cause}" if cause != "loading" else cause
+        layers["triage"] = cause
+        final = cause.rsplit(" ", 1)[-1]
+        logger.warning("[L1] Step %s (%s %s) failed — %s: %s",
+                       action.step_num, action.type.value, action.args, final, _first_line(error_msg))
 
-            # L3 skipped — report as L2 failure
-            why = "provider not configured" if not self._ai.available else "no L3 path for this action"
-            logger.info("[L3] Skipped — %s", why)
-            layers[L3] = f"skipped: {why}"
-            return _fail(action, f"L1+L2 failed (L3 skipped: {why}): {error_msg}", 2, layers,
-                         error=error_msg)
+        # ── Layer 2 ──
+        if final not in diagnosis.FULL_CHAIN | diagnosis.L2_ONLY:
+            layers[L2] = layers[L3] = f"skipped: {final}"
+            return _fail(action, f"L1 failed ({final}): {error_msg}", 1, layers, error=error_msg)
+        try:
+            return runner.layer2(action, original_error=error_msg)
+        except Exception as exc:
+            error_msg = str(exc)
+        layers[L2] = "failed"
+
+        # ── Layer 3 — AI fallback, only for element interactions (assertions,
+        # waits and keys have no L3 path) and only for a locator problem. One
+        # call: the prompt carries the URL, title, error and every control.
+        if final in diagnosis.L2_ONLY:
+            why = f"{final} error on the page"
+        elif not self._ai.available:
+            why = "provider not configured"
+        elif not self._ai.supports(action.type):
+            why = "no L3 path for this action"
+        else:
+            ai_result = self._ai.resolve(action, page, error_msg, ctx, cause=final)
+            if ai_result is not None:
+                return ai_result
+            layers[L3] = "failed"
+            return _fail(action, f"All layers failed: {error_msg}", 3, layers, error=error_msg)
+        logger.info("[L3] Skipped — %s", why)
+        layers[L3] = f"skipped: {why}"
+        return _fail(action, f"L1+L2 failed (L3 skipped: {why}): {error_msg}", 2, layers,
+                     error=error_msg)

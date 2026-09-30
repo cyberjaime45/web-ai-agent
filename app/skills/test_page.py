@@ -40,7 +40,7 @@ import re
 from app.agent.observer import Observation
 from app.flow.writer import steps_to_markdown, suggested_assertions
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill, skipped
+from app.skills.base import SkillContext, inconclusive, info, skill, skipped
 from app.utils.urls import same_page
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ def _listy_checks(sc: SkillContext, ob: Observation, start_url: str, plan: list[
         pressed = sc.run(ActionType.CLICK, nxt.name, kind="probe")
         if not pressed.success:
             checks.append(skipped("pagination works", pressed.message) if pressed.skipped else
-                          Check("pagination works", False, "warn", f"could not press '{nxt.name}'"))
+                          inconclusive("pagination works", f"the agent could not press '{nxt.name}'"))
             return checks
         after = sc.observe(fresh=True)
         checks.append(Check("pagination works", after.fingerprint() != before, "warn",
@@ -126,8 +126,6 @@ def test_page(sc: SkillContext) -> list[Check]:
     checks: list[Check] = [
         info("page type", f"{kind} ({source})"),
         info("components", "; ".join(components) or "nothing interactive found"),
-        Check("page has a heading", bool(ob.headings), "warn",
-              "" if ob.headings else "no heading role in the accessibility tree"),
     ]
     if sc.option("profiles"):
         checks.append(info("profiles", "this step ran under the current profile; "
@@ -189,7 +187,7 @@ def test_page(sc: SkillContext) -> list[Check]:
             failed = [f"{r.action.raw}: {(r.message or '').splitlines()[0][:100]}"
                       for _, r in ran if not r.success]           # a planned skill that failed counts too
             if failed:
-                checks.append(Check.listing("AI-planned steps completed", failed, "warn"))
+                checks.append(Check.listing("AI-planned steps completed", failed, "inconclusive"))
 
     held_back = [*sc.blocked, *(s for st in sc.steps if st.agent for s in st.agent.get("skipped", []))]
     sc.agent.update({

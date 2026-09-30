@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from app.agent.safety import DESTRUCTIVE_PATHS
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, skill, skipped
+from app.skills.base import SkillContext, inconclusive, info, skill, skipped
 from app.utils.urls import LOGIN_RE, LOGOUT_RE
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ def _status(api, url: str) -> tuple[int | None, str, str]:
 def check_links(sc: SkillContext) -> list[Check]:
     found = sc.evaluate(_COLLECT_JS)
     if found is None:
-        return [Check("links collected", False, "warn", "the page could not be evaluated")]
+        return [inconclusive("links collected", "the page could not be evaluated")]
     origin = urlparse(sc.page.url).netloc
     external = sc.flag("external")
     max_links = sc.count("max_links", DEFAULT_MAX_LINKS)

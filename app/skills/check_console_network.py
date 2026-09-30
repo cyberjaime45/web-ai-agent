@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from app.execution import oracle
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, skill
+from app.skills.base import SkillContext, inconclusive, skill
 
 _MARK_KEY = "_check_console_network_seq"
 
@@ -24,10 +24,10 @@ _MARK_KEY = "_check_console_network_seq"
 @skill(ActionType.CHECK_CONSOLE_NETWORK)
 def check_console_network(sc: SkillContext) -> list[Check]:
     if sc.recorder is None:
-        return [Check("browser diagnostics available", False, "warn",
-                      "no PageRecorder attached to this run, so console and network were not captured")]
+        return [inconclusive("browser diagnostics available",
+                             "no PageRecorder attached to this run, so console and network were not captured")]
     since = int(sc.ctx.data.get(_MARK_KEY, "0"))
-    checks = oracle.diagnostics_checks(sc.recorder, since, sc.ignore)
+    checks = oracle.diagnostics_checks(sc.recorder, since, sc.ignore, explicit=True)
     if sc.option("console") == "strict":
         for c in checks:
             if c.name == "no console errors":

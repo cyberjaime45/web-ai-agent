@@ -543,11 +543,17 @@ within a call budget.
 | Outcome | Severity | Meaning |
 |---------|----------|---------|
 | passed | `error` / `warn` | Verified |
-| failed | `error` | A defect the skill verified with a deterministic signal |
-| warning | `warn` | Worth a look: a heuristic, an uncertain observation, a control that could not be operated, or something that could not be observed at all |
-| info | `info` | An observation, never judged |
+| failed | `error` | A required behaviour or explicit expectation failed, with the expected result, what happened and the evidence |
+| warning | `warn` | A confirmed issue that degrades the experience or accessibility while the flow stays usable, with the affected element |
+| info | `info` | An observation, never judged — not in the warning totals |
+| inconclusive | `inconclusive` | The agent could not judge: it could not press, type into or read something, a press had no result it could explain, or a time limit stopped it. Coverage, not a defect: listed under *Not verified* in the report, never as a warning |
 | skipped | `skipped` | Not done, with the reason: nothing to exercise on the page, or a limit reached |
 | blocked | `blocked` | The safety policy withheld an action (the `blocked by safety` check lists each one with its reason) |
+
+Severity and confidence stay separate: a finding the agent cannot confirm is
+`inconclusive`, not a weaker warning. The same finding on several viewports
+is one check naming each viewport; on several steps it is one report entry
+linking each step.
 
 A skill that finds nothing to test (no table for `test_table`) reports that
 check as skipped — unless the flow named the target (`form=`, `table=`,
@@ -604,12 +610,24 @@ observation is kept in the run context for later skills.
 JavaScript page errors, console errors, failed requests and 4xx/5xx
 responses of the site under test (prefetches and other sites are never
 recorded — see [REPORTS.md](REPORTS.md)) since the previous `check_console_network` step (or the
-start of the flow). Page errors, 5xx, requests that failed to connect and 401/403 fail the
-step; console errors and other 4xx are warnings. Cancelled requests
-(`net::ERR_ABORTED` — telemetry beacons, requests cut off by leaving the page)
-are listed as an observation, never a failure; the automatic checks after each
-step apply the same rules. `console=strict` makes console errors fail it too. Noise is excluded with `ignore_console` /
-`ignore_network` in `## Config`.
+start of the flow). A request is judged by what it was for:
+
+| Finding | Here | Automatic checks after a step |
+|---------|------|-------------------------------|
+| JavaScript page error | failed | failed |
+| page, script or stylesheet that failed; API call with 5xx or no connection (`no failed requests`) | failed | failed |
+| console error from the site's own scripts | warning | info |
+| API 401 / 403 (`no 401/403 responses`) — often "not signed in" | warning | info |
+| other API 4xx (`no 4xx responses`) — often an expected "not found" | warning | info |
+| image, font or media that failed (`no failed resources`) | warning | info |
+| console error from another site's script | info | info |
+| cancelled request (`net::ERR_ABORTED` — beacons, requests cut off by leaving the page) | info | info |
+
+Here the flow asked for the check, so the lesser rows are warnings; after
+every other step a log level or a status code alone is no demonstrated
+impact, so they are information, and rows that found nothing are left out.
+`console=strict` makes console errors fail it. Noise is excluded with
+`ignore_console` / `ignore_network` in `## Config`.
 
 ```markdown
 1. goto: "https://example.com/dashboard"
@@ -623,12 +641,25 @@ Layout checks at several viewport widths — the current one plus `390x664`
 and `768x1024` by default, or `viewports=…`. Per viewport: no horizontal
 overflow (the page scrolls sideways; content the viewport clips with
 `overflow-x: hidden` / `clip` does not count), controls on screen, form fields
-fit, dialog fits; on narrow widths
-also tap targets ≥ 24px and text ≥ 12px (warnings). When a navigation
-landmark hides its links on a narrow width, the menu toggle is clicked to
-check the mobile menu opens (a toggle that cannot be pressed is a warning).
-A screenshot per viewport is kept on the step and the original viewport is
-restored — failing to restore it is a `page restored after the skill` warning.
+fit, dialog fits. Controls inside an off-canvas panel or carousel, and skip
+links, are not "off screen". On narrow widths also tap targets ≥ 24px and
+text ≥ 12px (warnings). Tap targets follow WCAG 2.5.8: the area includes the
+control's content, and a smaller target passes when it sits inline in a
+sentence or has 24px of room around it; a finding lists each target with its
+size (`"Help" 16×16`).
+
+The mobile menu is checked only where navigation is expected: a navigation
+landmark with links to other pages that a wide viewport shows and a narrow
+one hides. A sign-in page whose navigation holds only a phone number is not
+checked. The toggle — a button, anything with `aria-expanded` /
+`aria-controls`, or an element named or classed like a menu — is clicked to
+check the menu opens (a failure when it does not). A toggle that is not a
+button (a `div` with no role) is a `menu toggle is a button` warning:
+keyboard and screen-reader users cannot open the menu. A toggle the agent
+could not press is inconclusive. The same result at several widths is one
+check (`[440x763, 390x664] tap targets ≥ 24px`). A screenshot per viewport
+is kept on the step and the original viewport is restored — failing to
+restore it is an inconclusive `page restored after the skill`.
 
 ```markdown
 1. goto: "https://example.com/members"
@@ -669,12 +700,20 @@ Bounded, safe exploration from the current page. Every control the observer
 reports — links on the same site, buttons, tabs, menu items — is pressed once
 as a `click` child step and the outcome recorded: navigates to a page (queued
 for the next depth), opens a dialog (closed with Escape), changes the page in
-place, or nothing observable. The result is a page/action graph on the step,
-plus checks: `no broken pages` (4xx/5xx documents, error pages, error checks
-after a click — a failure), `controls respond`, `controls pressable` and
-`linked pages open` (warnings: a control can be covered for a moment), the
-controls `blocked by safety`, the external links found, and — skipped — the
-form buttons left alone and the pages still queued when a limit was reached.
+place, or nothing observable. A press with no visible change is looked at
+before it is reported: a new tab (closed again), a `tel:` / `mailto:` link
+handing off to another app, a link to the page already open, or a state
+change the accessibility tree does not show (an input's type,
+`aria-expanded` / `pressed` / `checked`) is an outcome, listed under
+`outcomes found on a closer look`. The result is a page/action graph on the
+step, plus checks: `no broken pages` (4xx/5xx documents, error pages, error
+checks after a click — a failure), `linked pages open` (a warning),
+`controls respond` (inconclusive for presses nothing explains — the agent
+cannot tell a broken control from one that needs data or a signed-in user),
+`controls pressable` (inconclusive, with the cause: covered by another
+element, not visible, timed out), the controls `blocked by safety`, the
+external links found, and — skipped — the form buttons left alone and the
+pages still queued when a limit was reached.
 Buttons that submit or confirm a form (inside a form, or named `Save`,
 `Submit`, `Apply`, `OK`…) are never pressed here: that is `test_form`'s job,
 and pressing them while exploring could change data. Going back (`back`,
@@ -791,11 +830,12 @@ rule is a check with a count and the offending elements (`img src=…`,
 
 | Check | Flags |
 |-------|-------|
-| `images have alt text` | visible images with no `alt` attribute (`alt=""` marks a decorative image and is fine) |
-| `fields have labels` | inputs, selects and textareas with no label, `aria-label`, `aria-labelledby` or `title` — a placeholder is not a label |
+| `images have alt text` | content images with no `alt` attribute (`alt=""` marks a decorative image and is fine). Images that look decorative — positioned behind the content, spacer-sized, not interactive — are an info check, `decorative images without alt=""`; images hidden from assistive tech are not listed; an image inside a link or button is judged by `controls have names` |
+| `fields have labels` | inputs, selects and textareas with no accessible name — label, `aria-label`, `aria-labelledby` or `title`; a placeholder is not a label. Each field shows the text next to it (`input[name=email] (shows "Email", not linked as its label)`) |
 | `controls have names` | buttons and links with no text, `aria-label`, `title` or image alt |
 | `page language set` | `<html>` without `lang` |
-| `page has an h1` / `heading levels in order` | no visible `<h1>`; a skipped level such as `h2 → h4` |
+| `visual headings marked up` | on a page with no heading at all, text styled as one (large, own text): `"Welcome!" (div, 36px)`. A page with headings but no `<h1>` is an info `page has an h1`; a page with neither is an info note |
+| `heading levels in order` | a skipped level such as `h2 → h4` (`role="heading"` counts) |
 | `referenced ids are unique` | an id used twice that a label or ARIA reference points to |
 | `no positive tabindex` | `tabindex` above 0 |
 | `dialog holds focus` | an open modal dialog that does not contain keyboard focus |

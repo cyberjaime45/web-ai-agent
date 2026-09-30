@@ -234,6 +234,8 @@ def execution_summary(
     rows.append(("Skipped", str(totals["skipped"])))
     if totals.get("warnings"):
         rows.append(("Warnings", f"{totals['warnings']} passed with warnings — see the report"))
+    if totals.get("unverified"):
+        rows.append(("Not verified", f"{totals['unverified']} with checks the agent could not judge (coverage, not defects)"))
     if retries := len(stats.get("rerun", [])):
         rows.append(("Retries", str(retries)))
     if on_retry:

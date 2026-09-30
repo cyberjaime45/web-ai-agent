@@ -2,8 +2,11 @@
 AI Resolver (Layer 3) — last-resort LLM invocation.
 
 Only called when both deterministic (L1) and fallback (L2) strategies
-fail. Sends a minimal page snapshot to an LLM and asks for an
-alternative locator strategy.
+fail and the engine's triage says the cause is a locator problem. Sends
+the observation (refs, roles, names — never HTML) to an LLM and asks which
+observed control the step meant. The answer is grounded before it runs: a
+ref or a role / label / placeholder / text that names an observed control;
+a CSS or XPath selector from the model is never executed.
 
 Also handles AI-native actions (ai_click, ai_extract, ai_assert,
 ai_summarize) that bypass L1/L2 entirely.
@@ -19,7 +22,7 @@ import logging
 
 from playwright.sync_api import Locator, Page
 
-from app.agent.observer import observe
+from app.agent.observer import Observation, observe
 from app.agent.prompts.resolver import (
     SYSTEM as _SYSTEM,
     USER_TEMPLATE as _USER_TMPL,
@@ -46,15 +49,21 @@ def _get_page_text(page: Page) -> str:
 _MAX_ELEMENTS = 120
 
 
-def _elements_block(page: Page) -> str:
+def _observe(page: Page) -> Observation:
+    try:
+        return observe(page)
+    except Exception:
+        return Observation()
+
+
+def _elements_block(ob: Observation) -> str:
     """The page's interactive controls from the observer — refs, roles, names —
     so a locator suggestion is grounded in what is actually there."""
-    try:
-        ob = observe(page)
-    except Exception:
-        return "(unavailable)"
-    lines = [f'- {n.role} "{n.name}"' + (f" in {n.container}" if n.container else "")
+    lines = [f'- [ref={n.ref}] {n.role} "{n.name}"' + (f" in {n.container}" if n.container else "")
              for n in ob.nodes[:_MAX_ELEMENTS]]
+    for form in ob.forms:
+        lines += [f'- field "{f.label}" ({f.type})' + (f' placeholder "{f.placeholder}"' if f.placeholder else "")
+                  for f in form.fields]
     return "\n".join(lines) or "(none found)"
 
 
@@ -108,18 +117,22 @@ class AIResolver:
         page: Page,
         error: str,
         ctx: RunContext | None = None,
+        cause: str = "not_found",
     ) -> StepResult | None:
+        """*cause* is the engine's triage of the L1 failure, for the prompt."""
         if self._provider is None:
             return None
 
         try:
+            ob = _observe(page)
             user_msg = _USER_TMPL.format(
                 url=page.url,
                 title=page.title(),
                 action_type=action.type.value,
                 args=action.args,
-                error=error,
-                elements=_elements_block(page),
+                error=_first_line(error),
+                cause=cause.replace("_", " "),
+                elements=_elements_block(ob),
             ) + _history_block(ctx)
 
             raw = self._provider.complete(
@@ -128,7 +141,7 @@ class AIResolver:
             ).strip() or "{}"
 
             suggestion = json.loads(raw)
-            loc = self._build_locator(page, suggestion)
+            loc = self._build_locator(page, suggestion, ob)
             if loc is None:
                 logger.warning(f"[L3] Suggestion yielded no match: {suggestion}")
                 return None
@@ -163,12 +176,13 @@ class AIResolver:
         try:
             target = action.args[0] if action.args else ""
             page_text = _get_page_text(page)
+            ob = _observe(page) if action.type == ActionType.AI_CLICK else Observation()
             user_msg = prompts["user"].format(
                 url=page.url,
                 title=page.title(),
                 page_text=page_text,
                 target=target,
-                elements=_elements_block(page) if action.type == ActionType.AI_CLICK else "",
+                elements=_elements_block(ob) if action.type == ActionType.AI_CLICK else "",
             ) + _history_block(ctx)
 
             raw_response = self._provider.complete(
@@ -177,7 +191,7 @@ class AIResolver:
             ).strip()
 
             if action.type == ActionType.AI_CLICK:
-                return self._handle_ai_click(action, page, raw_response)
+                return self._handle_ai_click(action, page, raw_response, ob)
             if action.type == ActionType.AI_EXTRACT:
                 if ctx is not None:
                     ctx.store("last_extract", raw_response)
@@ -201,11 +215,11 @@ class AIResolver:
         return None
 
     def _handle_ai_click(
-        self, action: FlowAction, page: Page, raw: str
+        self, action: FlowAction, page: Page, raw: str, ob: Observation
     ) -> StepResult | None:
         try:
             suggestion = json.loads(raw)
-            loc = self._build_locator(page, suggestion)
+            loc = self._build_locator(page, suggestion, ob)
             if loc is None:
                 return None
             loc.click()
@@ -244,24 +258,38 @@ class AIResolver:
         perform(loc, action.args[1] if len(action.args) > 1 else "")
 
     @staticmethod
-    def _build_locator(page: Page, s: dict):
-        strategy = s.get("strategy", "css")
-        value    = s.get("value", "")
-        role     = s.get("role", "")
+    def _build_locator(page: Page, s: dict, ob: Observation):
+        """A locator grounded in the observation the model was shown: a ``ref``,
+        or a role / text value that names an observed control, or a label /
+        placeholder that names an observed form field. Anything else — a CSS
+        or XPath selector in particular — is refused and logged."""
+        strategy = str(s.get("strategy", "") or "").lower()
+        value = str(s.get("value", "") or "").strip()
+        role = str(s.get("role", "") or "").lower()
+        ref = str(s.get("ref", "") or "").strip()
+        wanted = value.lower()
         try:
-            if strategy == "css":
-                loc = page.locator(value)
-            elif strategy == "text":
-                loc = page.get_by_text(value)
-            elif strategy == "role" and role:
-                loc = page.get_by_role(role, name=value)
-            elif strategy == "label":
-                loc = page.get_by_label(value)
-            elif strategy == "placeholder":
-                loc = page.get_by_placeholder(value)
-            else:
-                loc = page.locator(value)
-
-            return loc.first if loc.count() > 0 else None
+            node = next((n for n in ob.nodes if n.ref == ref), None) if ref else None
+            if node is None and value and strategy in ("role", "text", ""):
+                node = next((n for n in ob.nodes if n.name.lower() == wanted and (not role or n.role == role)), None)
+            if node is not None:
+                loc = node.locator(page)
+                return loc if loc.count() > 0 else None
+            if value and strategy in ("label", "placeholder"):
+                fields = [f for form in ob.forms for f in form.fields]
+                if strategy == "label" and any(f.label.lower() == wanted for f in fields):
+                    loc = page.get_by_label(value, exact=True)
+                elif strategy == "placeholder" and any(f.placeholder.lower() == wanted for f in fields):
+                    loc = page.get_by_placeholder(value, exact=True)
+                else:
+                    loc = None
+                if loc is not None:
+                    return loc.first if loc.count() > 0 else None
         except Exception:
             return None
+        logger.info("[L3] suggestion not grounded in the observation, refused: %s", s)
+        return None
+
+
+def _first_line(text: str) -> str:
+    return (text or "").split("\nCall log:", 1)[0].splitlines()[0] if text else ""

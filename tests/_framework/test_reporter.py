@@ -32,13 +32,14 @@ def _json_report(report_dir):
 def make_result(nodeid="flows/login/sso.md::SSO Login", outcome="passed",
                 duration=2.5, longrepr="", error="", started_at="2026-07-28T10:00:00",
                 flow_steps=None, console=None, network=None, flow_title=None,
-                flow_markers=None, section_markers=None):
+                flow_markers=None, section_markers=None, flow_expected=None):
     return {
         "nodeid": nodeid,
         "name": nodeid.split("::")[-1],
         "flow_title": flow_title,
         "flow_markers": flow_markers or [],
         "section_markers": section_markers or {},
+        "flow_expected": flow_expected or [],
         "outcome": outcome,
         "duration": duration,
         "longrepr": longrepr,
@@ -252,6 +253,16 @@ def test_split_produces_one_test_per_section():
     # timing window per section
     assert tests[0]["t0"] == round(BASE * 1000)
     assert tests[0]["duration_ms"] == pytest.approx(2000.0)
+
+
+def test_retried_sections_carry_the_first_attempts_verdict():
+    r = make_result(flow_steps=sectioned([("One", 'goto: "/"'), ("Two", 'goto: "/"')]))
+    r["retried"], r["retried_verdicts"] = {"1": "Two failed"}, {"1": "application"}
+    one, two = _build_tests(r)
+    assert "retry_verdict" not in one and (two["retry_error"], two["retry_verdict"]) == ("Two failed", "application")
+    single = make_result(flow_steps=sectioned([("Steps", 'goto: "/"')]))
+    single["retried"] = {"0": "boom"}
+    assert _build_tests(single)[0]["retry_verdict"] == ""
 
 
 def test_retried_sections_carry_retries_and_the_first_error():
@@ -580,6 +591,14 @@ def test_single_named_section_becomes_the_test_and_the_h1_the_suite():
     assert t["id"] == "flows/login.md::Login"   # nodeid unchanged — one pytest item
 
 
+def test_expected_outcome_reaches_every_test_of_the_file():
+    r = make_result(flow_expected=["Profile saved"],
+                    flow_steps=sectioned([("One", 'goto: "/"'), ("Two", 'goto: "/"')]))
+    assert [t["expected"] for t in _build_tests(r)] == [["Profile saved"], ["Profile saved"]]
+    (single,) = _build_tests(make_result(flow_steps=sectioned([("Steps", 'goto: "/"')])))
+    assert single["expected"] == []
+
+
 def test_generic_steps_section_keeps_the_flow_name_as_the_test_title():
     r = make_result(nodeid="flows/login.md::Login", flow_title="Login",
                     flow_markers=["smoke"],
@@ -815,6 +834,24 @@ def test_an_oracle_error_on_a_passing_step_is_a_test_warning():
     (t,) = _build_tests(make_result(flow_steps=[step]))
     assert t["steps"][0]["status"] == "passed" and t["status"] == "passed"
     assert [w["check"] for w in t["warnings"]] == ["no page errors"]
+
+
+def test_one_finding_on_several_steps_is_one_warning_with_each_step():
+    steps = [make_step(label=f'goto: "{u}"', action="goto") for u in "abc"]
+    for st in steps:
+        st["checks"] = [{"name": "no horizontal overflow", "passed": False, "severity": "warn", "detail": "12px"}]
+    (t,) = _build_tests(make_result(flow_steps=steps))
+    (w,) = t["warnings"]
+    assert (w["step"], w["also"]) == ("1", ["2", "3"])
+
+
+def test_inconclusive_checks_are_not_verified_never_warnings(tmp_path):
+    gap = {"name": "controls pressable", "passed": True, "severity": "inconclusive", "detail": "Logo (covered)"}
+    result = make_result(flow_steps=_skill_run(marker_checks=[gap]))
+    (t,) = _build_tests(result)
+    assert t["warnings"] == [] and [u["check"] for u in t["unverified"]] == ["controls pressable"]
+    _, summary = _totals(tmp_path, [result], exit_status=0)
+    assert (summary["status"], summary["totals"]["warnings"], summary["totals"]["unverified"]) == ("passed", 0, 1)
 
 
 def _totals(tmp_path, results, exit_status=None):

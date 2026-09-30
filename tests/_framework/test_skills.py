@@ -138,8 +138,8 @@ def test_engine_dispatches_skills_like_run_flow(monkeypatch, runner):
 
 def test_oracle_runs_after_navigation_steps(monkeypatch, runner):
     _patch_run_step(monkeypatch)
-    monkeypatch.setattr(oracle, "run_checks",
-                        lambda page, rec, since, ignore: [Check("page rendered", False, "error", "blank")])
+    monkeypatch.setattr(oracle, "observe_after",
+                        lambda page, rec, since, ignore: ({}, [Check("page rendered", False, "error", "blank")]))
     flow = parse_flow_markdown('# T\n\n## S\n- goto: "https://x"\n- assert_text: "hi"\n')
     monkeypatch.setattr("app.execution.engine.settings", SimpleNamespace(oracle="warn", images_dir=None, allow_destructive=False))
     result = runner.run(flow, FakePage())
@@ -211,7 +211,7 @@ def test_a_failed_action_fails_the_skill_and_stops_the_section(monkeypatch, runn
     assert not result.success and result.failed == 2               # the marker and its action
 
 
-def test_a_failed_cleanup_is_one_warning(monkeypatch, runner):
+def test_a_failed_cleanup_is_not_verified_never_a_warning(monkeypatch, runner):
     _patch_run_step(monkeypatch, fail_raws=("back",))
 
     def with_cleanup(sc: SkillContext):
@@ -223,7 +223,8 @@ def test_a_failed_cleanup_is_one_warning(monkeypatch, runner):
         marker, *_ = run_skill(runner, FlowAction(type=ActionType.TEST_TABLE, args=[], raw="test_table"),
                                FakePage(), None, __import__("app.schemas.actions", fromlist=["RunContext"]).RunContext())
     restored = {c.name: c for c in marker.checks}["page restored after the skill"]
-    assert marker.success and restored.outcome == "warning" and restored.detail.startswith("back: boom")
+    assert marker.success and restored.outcome == "inconclusive" and restored.detail.startswith("back: boom")
+    assert marker.message.endswith("1 check passed, 1 not verified")      # the agent's housekeeping, not the app
 
 
 def test_a_nested_skill_failure_fails_the_caller(monkeypatch, runner):
@@ -270,7 +271,7 @@ def test_the_press_budget_is_shared_with_nested_skills_and_spares_cleanup(monkey
     assert outer_marker.success and result.success           # a configured limit is not a failure
 
 
-def test_the_time_budget_stops_a_skill_with_a_warning(monkeypatch, runner):
+def test_the_time_budget_leaves_a_skill_not_verified(monkeypatch, runner):
     _patch_run_step(monkeypatch)
 
     def slow(sc: SkillContext):
@@ -281,7 +282,7 @@ def test_the_time_budget_stops_a_skill_with_a_warning(monkeypatch, runner):
         result = _flow(runner, '# T\n\n## S\n- test_widgets: "timeout=0"\n')
     (marker,) = result.steps                                  # nothing ran
     limit = {c.name: c for c in marker.checks}["finished within limits"]
-    assert limit.outcome == "warning" and "time budget" in limit.detail
+    assert limit.outcome == "inconclusive" and "time budget" in limit.detail
     assert marker.success
 
 
@@ -340,9 +341,9 @@ def test_bad_options_are_an_error_check_not_a_crash(monkeypatch, runner):
 
 def test_a_probe_drops_the_oracles_dialog_check_but_keeps_the_rest(monkeypatch, runner):
     _patch_run_step(monkeypatch)
-    monkeypatch.setattr(oracle, "run_checks", lambda page, rec, since, ignore: [
+    monkeypatch.setattr(oracle, "observe_after", lambda page, rec, since, ignore: ({}, [
         Check(oracle.DIALOG_CHECK, False, "warn", "modal dialog open: Edit"),
-        Check("no console errors", False, "warn", "boom")])
+        Check("no console errors", False, "warn", "boom")]))
 
     def opens(sc: SkillContext):
         sc.run(ActionType.CLICK, "Edit", kind="probe")
@@ -378,3 +379,20 @@ def test_budgets_live_in_the_call_not_in_shared_state(monkeypatch, runner):
     second = next(s for s in result.steps if s.action.type == ActionType.TEST_TABLE)
     assert {c.name: c.detail for c in first.checks}["two"].startswith("not run — action limit")
     assert {c.name: c.detail for c in second.checks}["pressed"] == "3"    # nothing left over from A
+
+
+def test_a_skill_run_twice_keeps_each_steps_own_screenshots(monkeypatch, runner):
+    """Screenshots are numbered per run: the second test_responsive never
+    overwrites the first one's files, so each step shows what it saw."""
+    from pathlib import Path
+    _patch_run_step(monkeypatch)
+
+    def shoots(sc: SkillContext):
+        sc.screenshot("390x664")
+        return []
+
+    with _Skill(ActionType.TEST_RESPONSIVE, shoots):
+        result = _flow(runner, '# T\n\n## A\n- test_responsive\n\n## B\n- test_responsive\n')
+    first, second = (s.evidence.screenshots["390x664"] for s in result.steps)
+    assert first != second and Path(first).exists() and Path(second).exists()
+    assert "test_responsive__390x664" in Path(first).name

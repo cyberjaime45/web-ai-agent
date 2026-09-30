@@ -13,39 +13,57 @@ const imgLink = (path, caption, size) => `<a class="drawer-image-link ${size}" h
   title="Open full size in a new tab"><img src="${esc(path)}" alt="${esc(caption)}" loading="lazy">${caption ? `<span>${esc(caption)}</span>` : ''}</a>`;
 
 /* ── what went wrong ── */
-const VERDICT = {application: ['Likely application defect', 'danger'], test: ['Likely test issue', 'warning'],
-  environment: ['Likely environment or session', 'neutral'], unclassified: ['Cause unclear', 'neutral']};
+const VERDICT = {application: ['Likely application defect', 'danger'], timing: ['Likely timing: page still loading', 'warning'],
+  test: ['Likely test issue', 'warning'], environment: ['Likely environment or session', 'neutral'],
+  framework: ['Flow or setup problem', 'neutral'], unclassified: ['Cause unclear', 'neutral']};
 function diagnosisHtml(s){
   // The engine's likely cause for the failed step, with the signals behind it.
   const d = s && s.evidence && s.evidence.diagnosis;
   if (!d || !d.verdict) return '';
   const [label, kind] = VERDICT[d.verdict] || VERDICT.unclassified;
   const signals = (d.signals || []).map(x => `<li>${esc(x)}</li>`).join('');
-  return `<div class="drawer-diagnosis"><p>${badge(label, kind)} <span>${esc(d.summary || '')}</span></p>
-    ${signals ? `<ul>${signals}</ul>` : ''}</div>`;
+  // Expected (from the step) against Observed (from the page), then the verdict.
+  const seen = [d.expected ? ['Expected', esc(d.expected)] : null, d.observed ? ['Observed', esc(d.observed)] : null].filter(Boolean);
+  return `<div class="drawer-diagnosis">${seen.length ? facts(seen, 'diagnosis-facts') : ''}
+    <p>${badge(label, kind)} <span>${esc(d.summary || '')}</span></p>
+    ${signals ? `<ul>${signals}</ul>` : ''}${aiHtml(d.ai)}</div>`;
+}
+// The explainer's answer when the deterministic verdict was unclear: a model's
+// reading of the same evidence, labelled as such and never a result.
+function aiHtml(ai){
+  if (!ai || !ai.explanation) return '';
+  const [label] = VERDICT[ai.cause] || VERDICT.unclassified;
+  return `<p class="ai-diagnosis">${badge('AI diagnosis · unverified', 'neutral')} <span>${esc(label)}: ${esc(ai.explanation)}${ai.next_step ? ` <em>${esc(ai.next_step)}</em>` : ''}</span></p>`;
 }
 // "Step 3.5 · Test responsive layout" and the chain of groups it ran in.
 const stepTitle = s => `${s.id ? `Step ${esc(s.id)} · ` : ''}${stepText(s)}`;
-const warnFinding = w => checkFinding({name: w.check, detail: w.detail});
+const asCheck = w => ({name: w.check, detail: w.detail, severity: w.severity});
+// A finding merged across steps links each one: "Step 3.2 · 4.1 · 5".
+const findingLinks = w => [w.step, ...(w.also || [])].map(id =>
+  `<button class="link-btn" data-show-step="${esc(id)}">${id === w.step ? 'Step ' : ''}${esc(id)}</button>`).join('');
+// A finding as a scannable block: severity icon · headline and one row per affected
+// element (selector in monospace, then what the evidence shows) · the step link in
+// its own column, so it never reads as part of the sentence.
+function findingBlock(c, kind, links){
+  const f = describeFinding(c);
+  const rows = f.rows.map(r => `<li>${r.code ? badge(esc(r.code), 'info') : ''}${r.text ? `<span>${esc(r.text)}</span>` : ''}</li>`).join('')
+    + (f.more ? `<li class="fmore">+${f.more} more</li>` : '');
+  return `<div class="finding ${kind}">${icon(kind === 'error' ? 'x' : kind === 'info' ? 'info' : 'warn', 'ficon')}
+    <div class="fbody"><p class="ftitle">${esc(f.title)}</p>${rows ? `<ul class="frows">${rows}</ul>` : ''}</div>
+    ${links ? `<div class="flink">${links}</div>` : ''}</div>`;
+}
 function stepPath(t, s){
   const by = (t._byId ||= Object.fromEntries((t.steps || []).map(x => [x.id, x]))), names = [];   // steps never change
   for (let p = by[s.parent]; p; p = by[p.parent]) names.unshift(p.action ? actionLabel(p.action) : p.name);
   return names.join(' › ');
 }
-function findingHtml(c){
-  // A check that counted several findings ("; "-joined, maybe "(+N more)") lists them.
-  const parts = c.count > 1 ? String(c.detail || '').split('; ') : [];
-  const shown = Math.min(c.count, 5);
-  if (parts.length !== shown) return esc(checkFinding(c));
-  return `Expected ${esc(c.name)} — found ${c.count}:<ul>${parts.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
-}
 function reasonHtml(t, s){
-  // What happened, in plain words: each failed check as expected / found, else
+  // What happened, in plain words: each failed check as a finding block, else
   // the step's own error explained. Never reworded to hide a failure.
   const checks = failedChecks(s);
   if (!checks.length) return `<p class="drawer-why">${esc(explain(t, s))}</p>`;
-  return `<ul class="fail-checks">${checks.slice(0, 5).map(c => `<li>${findingHtml(c)}</li>`).join('')}
-    ${checks.length > 5 ? `<li class="note">+${checks.length - 5} more in Technical details</li>` : ''}</ul>`;
+  return `<div class="fail-checks">${checks.slice(0, 5).map(c => findingBlock(c, 'error', '')).join('')}
+    ${checks.length > 5 ? `<p class="note">+${checks.length - 5} more under Diagnostics</p>` : ''}</div>`;
 }
 // A step's screenshots as [kind, path]: evidence shots, else the step's attachment.
 const shotList = s => { const e = Object.entries((s.evidence || {}).screenshots || {}).filter(([, p]) => p);
@@ -67,7 +85,7 @@ function wentWrongHtml(t){
       <p class="fail-where">${icon('x')}<span>${stepTitle(s)}${path ? `<span class="fail-path">in ${esc(path)}</span>` : ''}</span></p>
       ${reasonHtml(t, s)}${diagnosisHtml(s)}${shotsHtml(s)}
       ${s.id ? `<p class="fail-links"><button class="link-btn" data-show-step="${esc(s.id)}">Show in steps</button>
-        <button class="link-btn" data-show-tech="${esc(s.id)}">Technical details</button></p>` : ''}</div>`;
+        <button class="link-btn" data-show-tech="${esc(s.id)}">Error details</button></p>` : ''}</div>`;
   }).join(''), sites.length > 1 ? sites.length : null, 'bad');
 }
 function warningsHtml(t){
@@ -77,11 +95,19 @@ function warningsHtml(t){
   // closest thing to a failure; the rest are amber.
   const ws = t.warnings || [];
   if (!ws.length) return '';
-  return section('Warnings', `<ul class="warn-list">${ws.map(w => {
-    const err = w.severity === 'error';
-    return `<li class="${err ? 'err' : ''}">${icon(err ? 'x' : 'warn')}<span>${esc(warnFinding(w))}
-      <button class="link-btn" data-show-step="${esc(w.step)}">Step ${esc(w.step)}</button></span></li>`;
-  }).join('')}</ul>`, ws.length, 'warn');
+  return section('Warnings', `<div class="warn-list">${ws.map(w =>
+    findingBlock(asCheck(w), w.severity === 'error' ? 'error' : 'warn', findingLinks(w))).join('')}</div>`, ws.length, 'warn');
+}
+function unverifiedHtml(t){
+  // Checks the agent could not judge (a control it could not press, a page it
+  // could not read, a time limit): coverage gaps, not application defects.
+  const us = t.unverified || [];
+  if (!us.length) return '';
+  return `<div><h4 class="sub-title">Not verified</h4>
+    <p class="note">The agent could not judge these — gaps in coverage, not defects in the application.</p>
+    <div class="warn-list unverified">${us.map(u => `<div class="finding skip">${icon('skip', 'ficon')}
+      <div class="fbody"><p class="ftitle">Could not verify ${esc(u.check)}</p>${u.detail ? `<ul class="frows"><li><span>${esc(u.detail)}</span></li></ul>` : ''}</div>
+      <div class="flink">${findingLinks(u)}</div></div>`).join('')}</div></div>`;
 }
 function factsHtml(t){   // the result is the header badge; the device leads with its profile icon
   const p = t.profile || {}, rest = String(p.label || '').split(' · ').filter(x => x && x !== p.name).join(' · ');
@@ -91,23 +117,47 @@ function factsHtml(t){   // the result is the header badge; the device leads wit
     ['Started', t.started_at ? esc(new Date(t.started_at).toLocaleTimeString()) : ''],
     ['Suite', esc(suiteTitle(t))], ['Area', esc(areaLabel(areaOf(t)))],
     ['Device', device], ['Reruns', t.retries ? String(t.retries) : ''],
-    ['First attempt', t.retry_error ? `<span class="tech-hint">${esc(t.retry_error)}</span>` : ''],
+    ['Not verified', (t.unverified || []).length ? `${(t.unverified || []).length} <span class="tech-hint">see Diagnostics</span>` : ''],
+    ['First attempt', t.retry_error ? `${t.retry_verdict ? badge((VERDICT[t.retry_verdict] || VERDICT.unclassified)[0], (VERDICT[t.retry_verdict] || VERDICT.unclassified)[1]) + ' ' : ''}<span class="tech-hint">${esc(t.retry_error)}</span>` : ''],
     ['Tags', (t.markers||[]).map(m => badge(esc(m))).join(' ')],
-  ])}</section>`;
+  ])}${goalHtml(t)}</section>`;
+}
+// The flow's `## Expected Outcome`: what the test is meant to prove, read before the steps.
+function goalHtml(t){
+  const lines = t.expected || [];
+  if (!lines.length) return '';
+  return `<dl class="case-facts goal-facts"><dt>Expected outcome</dt><dd><ul>${lines.map(x => `<li>${esc(x)}</li>`).join('')}</ul></dd></dl>`;
 }
 function agentHtml(t){
   // Autonomous run facts (test_page / explore_page): what the agent saw,
-  // planned, skipped, and left behind. Lists are data from the run.
+  // planned, skipped, and left behind. Same label-and-value layout as the
+  // rest of the drawer; each value is compact rows — a name, a count, the
+  // controls or steps in monospace — instead of a paragraph. Lists are data
+  // from the run.
   const a = t.agent;
   if (!a) return '';
-  const list = (items, cls) => items && items.length ? `<ul class="${cls || ''}">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+  const codes = xs => xs.map(x => badge(esc(x), 'info')).join('');
+  const rows = (items, row, cls = '') => items && items.length ? `<ul class="arows ${cls}">${items.map(row).join('')}</ul>` : '';
+  // "buttons: 3 (Request Info, LOG IN)" / "form 'Contact': 3 fields" / "tables: 1"
+  const component = x => {
+    let m;
+    if ((m = x.match(/^form '(.*)': (\d+) fields?$/))) return `<li><span class="akey">form</span>${badge(esc(m[1]), 'info')}<span class="anum">${esc(m[2])} fields</span></li>`;
+    if ((m = x.match(/^([\w ]+?): (\d+)(?: \((.*)\))?$/))) return `<li><span class="akey">${esc(m[1])}</span><span class="anum">${esc(m[2])}</span>${m[3] ? codes(m[3].split(', ')) : ''}</li>`;
+    return `<li><span>${esc(x)}</span></li>`;
+  };
+  const planStep = x => { const ai = /^\[ai\]\s*/.test(x); return `<li>${ai ? badge('AI', 'neutral', 'A step the planner added') : ''}<span>${esc(x.replace(/^\[ai\]\s*/, ''))}</span></li>`; };
+  // "Delete member — name contains 'delete'" → the control, then the policy's reason
+  const heldBack = x => { const m = x.match(/^(.*?) — (.*)$/s); return `<li>${icon('skip', 'aicon')}${m ? `${badge(esc(m[1]), 'info')}<span>${esc(m[2])}</span>` : `<span>${esc(x)}</span>`}</li>`; };
+  const rejected = x => { const m = x.match(/^(\w+): (.*)$/s); return `<li>${icon('x', 'aicon')}${m ? `${badge(esc(m[1]), 'info')}<span>${esc(m[2])}</span>` : `<span>${esc(x)}</span>`}</li>`; };
+  const actions = a.actions || [], shown = actions.slice(0, 8);
   return section('Autonomous run', facts([
-    ['Page type', a.page_type ? esc(a.page_type) + (a.classification ? ` <span class="tech-hint">(${esc(a.classification)})</span>` : '') : ''],
-    ['Components', list(a.components)],
-    ['Plan', a.plan && a.plan.length ? `<ol>${a.plan.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''],
-    ['Rejected plan steps', list(a.plan_rejected, 'bad')], ['Skipped for safety', list(a.skipped, 'warn')],
-    ['Suggested assertions', list(a.assertions)],
-    ['Actions executed', a.actions && a.actions.length ? `${a.actions.length} — ` + esc(a.actions.slice(0, 8).join(' · ')) + (a.actions.length > 8 ? ' …' : '') : ''],
+    ['Page type', a.page_type ? badge(esc(a.page_type)) + (a.classification ? ` <span class="tech-hint">${esc(a.classification)}</span>` : '') : ''],
+    ['Components', rows(a.components, component)],
+    ['Plan', rows(a.plan, planStep, 'plan')],
+    ['Rejected plan steps', rows(a.plan_rejected, rejected, 'bad')],
+    ['Skipped for safety', rows(a.skipped, heldBack, 'warn')],
+    ['Suggested assertions', rows(a.assertions, x => `<li>${badge(esc(x), 'info')}</li>`)],
+    ['Actions executed', actions.length ? `<div class="arows"><span class="anum">${actions.length}</span>${codes(shown)}${actions.length > shown.length ? `<span class="amore">+${actions.length - shown.length} more</span>` : ''}</div>` : ''],
     ['AI calls', a.ai_calls != null ? String(a.ai_calls) : ''],
     ['Generated flow', a.generated ? `<a href="${esc(a.generated)}" target="_blank" rel="noopener">${esc(a.generated)}</a> <span class="tech-hint">— review it, then add it to the suite</span>` : ''],
   ], 'agent-facts'));
@@ -137,8 +187,15 @@ function stepLine(s, kids){
     ? iconBadge('zap', 'warning', `Self-healed: found by the ${s.layer === 3 ? 'AI' : 'fuzzy-match'} fallback (layer ${s.layer})`) : '';
   const what = s.action ? `<span class="sverb" title="${esc(s.action)}">${esc(actionLabel(s.action))}</span>${s.args ? `<span class="sargs">${esc(s.args)}</span>` : ''}`
     : `<span class="sverb">${esc(s.name)}</span>`;
-  return `<div class="sline"><span class="slabel">Step ${esc(s.id || '')}</span>${what}${heal}
-    ${kids ? `<span class="skids">${plural(kids, 'step')}</span>` : ''}<span class="sdur">${fmtMs(s.duration_ms)}</span></div>`;
+  return `<div class="sline">${what}${heal}${kids ? `<span class="skids">${plural(kids, 'step')}</span>` : ''}</div>`;
+}
+// Every step row shares one grid: expand control · status · step number · action
+// and details · duration. A leaf keeps an empty expand cell so the columns line
+// up whether or not the step can open; children indent under the row, not in it.
+function stepRow(s, st, site, body, expandable){
+  const ico = icon(st === 'failed' ? 'x' : st === 'skipped' ? 'skip' : st === 'warned' ? 'warn' : 'check', `sicon ${st}`);
+  const toggle = expandable ? icon('chev', 'toggle-icon stoggle') : '<span class="stoggle"></span>';
+  return `${toggle}${ico}<span class="slabel">Step ${esc(s.id || '')}</span><div class="smain">${body}</div><span class="sdur">${fmtMs(s.duration_ms)}</span>`;
 }
 function stepNode(t, n, look){
   const s = n.step, site = look.sites.has(s);
@@ -146,30 +203,29 @@ function stepNode(t, n, look){
   // Warnings section); its status stays passed.
   const warns = look.warns.get(s.id) || [];
   const st = s.status === 'passed' && warns.length ? 'warned' : s.status;
-  const ico = icon(st === 'failed' ? 'x' : st === 'skipped' ? 'skip' : st === 'warned' ? 'warn' : 'check', `sicon ${st}`);
   const at = s.id ? ` data-step="${esc(s.id)}"` : '';
   // The failure site says why in one line; its parents are failed only because of it.
   const reason = site ? explain(t, s) : '';
   const why = (site ? `<div class="serr" title="${esc(reason)}">${esc(reason)}</div>` : '')
-    + warns.map(w => { const f = warnFinding(w);
-        return `<div class="swarn${w.severity === 'error' ? ' err' : ''}" title="${esc(f)}">${esc(f)}</div>`; }).join('');
+    + warns.map(w => { const f = findingLine(asCheck(w));
+        return `<div class="swarn${w.severity === 'error' ? ' err' : ''}" title="${esc(findingText(asCheck(w)))}">${esc(f)}</div>`; }).join('');
   if (n.children.length){
     // Open on the way to a failure or a warning inside; everything else folds.
     const open = (st === 'failed' && !site) || look.under.has(s.id);
-    return `<details class="sgroup ${st}${site ? ' site' : ''}"${at}${open ? ' open' : ''}><summary class="srow">${icon('chev', 'toggle-icon')}${ico}
-      <div class="smain">${stepLine(s, n.children.length)}${why}</div></summary>
+    return `<details class="sgroup ${st}${site ? ' site' : ''}"${at}${open ? ' open' : ''}>
+      <summary class="srow">${stepRow(s, st, site, stepLine(s, n.children.length) + why, true)}</summary>
       <div class="sgroup-body">${stepShots(s)}<div class="steps">${n.children.map(c => stepNode(t, c, look)).join('')}</div></div></details>`;
   }
-  return `<div class="srow ${st}${site ? ' site' : ''}"${at}>${ico}<div class="smain">${stepLine(s, 0)}${why}${stepShots(s)}</div></div>`;
+  return `<div class="srow ${st}${site ? ' site' : ''}"${at}>${stepRow(s, st, site, stepLine(s, 0) + why + stepShots(s), false)}</div>`;
 }
 function stepsHtml(t){
   if (!(t.steps||[]).length) return '<p class="empty-inline">No steps recorded for this test.</p>';
   // Lookups built once per drawer: failure sites, warnings by step, and the
   // groups a warning sits under (they open) — O(1) per step afterwards.
   const look = {sites: new Set(failureSites(t)), warns: new Map(), under: new Set()};
-  for (const w of t.warnings || []){
-    look.warns.set(w.step, [...(look.warns.get(w.step) || []), w]);
-    const parts = String(w.step).split('.');
+  for (const w of t.warnings || []) for (const id of [w.step, ...(w.also || [])]){
+    look.warns.set(id, [...(look.warns.get(id) || []), w]);
+    const parts = String(id).split('.');
     for (let i = 1; i < parts.length; i++) look.under.add(parts.slice(0, i).join('.'));
   }
   return `<div class="steps">${stepTree(t.steps).map(n => stepNode(t, n, look)).join('')}</div>`;
@@ -181,7 +237,7 @@ function failureTechHtml(t){
   // browser showed — headed with the same "Step 3.5" as its card and row.
   return failureSites(t).map(s => `<div class="tech-step" data-tech="${esc(s.id)}">
     <h4 class="sub-title">${stepTitle(s)}</h4>
-    ${(text => text ? `<pre class="drawer-error">${esc(text)}</pre>` : '')([s.error || '', ...failedChecks(s).map(checkFinding)].filter(Boolean).join('\n'))}
+    ${(text => text ? `<pre class="drawer-error">${esc(text)}</pre>` : '')([s.error || '', ...failedChecks(s).map(findingText)].filter(Boolean).join('\n'))}
     ${evidenceHtml(s.evidence)}</div>`).join('');
 }
 function outputHtml(t){
@@ -226,7 +282,7 @@ function healHtml(t){
     ${facts(h.map(e => [`Layer ${e.layer}`, `${esc(e.description)}<br><span class="tech-hint">${esc(e.healed_by)} → ${esc(e.resolved)}</span>`]))}</div>`;
 }
 
-let lastDtab = 'd-con', techOpen = false, lastFocus = null;
+let lastFocus = null;
 let drawerSeq = 0;   // ignore shard arrivals for a test the user has left
 function openTest(i){
   const seq = ++drawerSeq;   // a shard still loading for the previous test must not land here
@@ -247,28 +303,21 @@ function openTest(i){
       ${warningsHtml(t)}
       ${agentHtml(t)}
       ${section('Steps', stepsHtml(t), (t.steps || []).filter(s => !s.depth).length || null)}
-      <section class="drawer-section"><details class="tech"${techOpen ? ' open' : ''}>
-        <summary>${icon('chev', 'toggle-icon')}<h3 class="drawer-section-title">Technical details</h3>
-          <span class="tech-hint">For engineers: each failed step's error and locator attempts, console and network</span></summary>
-        <div class="tech-body">
-          ${fail ? failureTechHtml(t) + outputHtml(t) : ''}
-          <div id="d-rel">${hasDetail(t) ? relatedHtml(t) : ''}</div>
-          ${healHtml(t)}
-          <div><div class="subtabs" role="tablist">
-            <button class="qa-tab-btn" role="tab" data-t="d-con">Console<span class="count">${(t.counts || {}).console || 0}</span></button>
-            <button class="qa-tab-btn" role="tab" data-t="d-net">Network<span class="count">${(t.counts || {}).network || 0}</span></button></div>
-            <div class="dpane" id="d-con">${hasDetail(t) ? consolePaneHtml(t) : loading}</div>
-            <div class="dpane" id="d-net">${hasDetail(t) ? netPaneHtml(t) : loading}</div></div>
-        </div></details></section>
+      ${section('Diagnostics', [fail ? failureTechHtml(t) + outputHtml(t) : '', unverifiedHtml(t),
+        fail ? `<div id="d-rel">${hasDetail(t) ? relatedHtml(t) : ''}</div>` : '', healHtml(t)].filter(Boolean).join(''), null, 'tech')}
+      <section class="drawer-section"><div class="subtabs" role="tablist">
+          <button class="qa-tab-btn" role="tab" data-t="d-con">Console<span class="count">${(t.counts || {}).console || 0}</span></button>
+          <button class="qa-tab-btn" role="tab" data-t="d-net">Network<span class="count">${(t.counts || {}).network || 0}</span></button></div>
+        <div class="dpane" id="d-con">${hasDetail(t) ? consolePaneHtml(t) : loading}</div>
+        <div class="dpane" id="d-net">${hasDetail(t) ? netPaneHtml(t) : loading}</div></section>
     </div>`;
-  drawer.querySelector('.tech').addEventListener('toggle', e => { techOpen = e.target.open; });
+  // Console shows first; Network on its tab. Both are there as soon as the drawer opens.
   const tabs = [...drawer.querySelectorAll('[data-t]')];
   const activate = tab => {
     tabs.forEach(x => { x.classList.toggle('active', x === tab); x.setAttribute('aria-selected', x === tab); });
     drawer.querySelectorAll('.dpane').forEach(x => x.classList.toggle('active', x.id === tab.dataset.t));
-    lastDtab = tab.dataset.t;   // keep the selected tab across tests
   };
-  activate(tabs.find(x => x.dataset.t === lastDtab) || tabs[0]);
+  activate(tabs[0]);
   tabs.forEach(tab => tab.onclick = () => activate(tab));
   drawer.querySelector('.side-drawer-close').onclick = closeDrawer;
   drawer.querySelectorAll('[data-show-step]').forEach(b => b.onclick = () => focusIn(drawer, `[data-step="${CSS.escape(b.dataset.showStep)}"]`));
@@ -277,7 +326,7 @@ function openTest(i){
   else {
     loadDetail(i).then(() => {
       if (seq !== drawerSeq) return;
-      $('d-rel').innerHTML = relatedHtml(t);
+      if ($('d-rel')) $('d-rel').innerHTML = relatedHtml(t);
       $('d-con').innerHTML = consolePaneHtml(t);
       $('d-net').innerHTML = netPaneHtml(t);
       wireDrawerPanes(t);

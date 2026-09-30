@@ -68,8 +68,17 @@ class DeterministicRunner(L2Handlers):
     # ── Public entry point ────────────────────────────────────────
 
     def execute(self, action: FlowAction) -> StepResult:
+        """Layer 1 then Layer 2, back to back. The engine calls the two halves
+        itself (``layer1`` / ``layer2``) so it can triage the L1 failure in
+        between; this is the plain chain for other callers."""
+        try:
+            return self.layer1(action)
+        except Exception as exc:
+            return self.layer2(action, original_error=str(exc))
+
+    def layer1(self, action: FlowAction) -> StepResult:
         """Layer 1 (one attempt: Playwright already polls for the whole _L1_TIMEOUT),
-        blocker recovery for interactions, then Layer 2."""
+        then blocker recovery for interactions. Raises when both fail."""
         try:
             if settings.dismiss_blockers:
                 dismiss_blockers(self.page)
@@ -90,7 +99,11 @@ class DeterministicRunner(L2Handlers):
                     return result
                 except Exception as exc:
                     last_exc = exc
-        return self._layer2(action, original_error=str(last_exc))
+        raise last_exc
+
+    def layer2(self, action: FlowAction, original_error: str) -> StepResult:
+        """Layer 2 fuzzy fallback; ``RuntimeError`` when it finds nothing either."""
+        return self._layer2(action, original_error=original_error)
 
     # ── Layer 1 — dispatch ────────────────────────────────────────
 

@@ -282,17 +282,23 @@ def summarize(items: list[str], limit: int = 5) -> str:
     return "; ".join(shown) + (f" (+{more} more)" if more > 0 else "")
 
 
+# Severities that record something without judging the application.
+NOT_JUDGED = ("info", "skipped", "blocked", "inconclusive")
+
+
 @dataclass
 class Check:
     """One automatic QA check — from the oracle after a step, or a skill's finding.
 
     ``severity`` says what a failed check means: ``error`` (a defect —
     fails the step in strict mode, always fails an explicit skill step),
-    ``warn`` (worth a look, never fails), ``info`` (an observation). Two more
-    record work that did not happen, with the reason in ``detail``:
-    ``skipped`` (nothing to exercise, a limit reached) and ``blocked`` (the
-    safety policy withheld an action). ``info`` / ``skipped`` / ``blocked``
-    checks are always ``passed``. ``outcome`` names the result in one word.
+    ``warn`` (a confirmed issue that degrades use or accessibility, never
+    fails), ``info`` (a recommendation or harmless observation). Three more
+    record what the agent could not judge, with the reason in ``detail``:
+    ``skipped`` (not applicable, or a limit reached), ``blocked`` (the safety
+    policy withheld an action) and ``inconclusive`` (not enough evidence: the
+    agent could not act or observe — never an application defect).
+    Those four are always ``passed``. ``outcome`` names the result in one word.
     """
     name:     str
     passed:   bool = True
@@ -302,8 +308,8 @@ class Check:
 
     @property
     def outcome(self) -> str:
-        """``passed`` / ``failed`` / ``warning`` / ``info`` / ``skipped`` / ``blocked``."""
-        if self.severity in ("info", "skipped", "blocked"):
+        """``passed`` / ``failed`` / ``warning`` / ``info`` / ``skipped`` / ``blocked`` / ``inconclusive``."""
+        if self.severity in NOT_JUDGED:
             return self.severity
         if self.passed:
             return "passed"
@@ -314,7 +320,8 @@ class Check:
                 limit: int = 5, ok: str = "") -> Check:
         """Passes when *items* is empty; otherwise lists them (``summarize``) and counts them.
         *ok* is the detail shown when it passes."""
-        return cls(name, not items, severity, summarize(items, limit) if items else ok, len(items))
+        passed = not items or severity in NOT_JUDGED       # an observation lists items without failing
+        return cls(name, passed, severity, summarize(items, limit) if items else ok, len(items))
 
 
 @dataclass

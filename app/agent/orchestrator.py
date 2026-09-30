@@ -18,8 +18,9 @@ from pathlib import Path
 
 from app.browser import profiles
 from app.browser.session import BrowserSession
-from app.execution.engine import FlowRunner, flow_site_domain
+from app.execution.engine import FlowRunner
 from app.flow.parser import FlowDefinition, parse_flow_file, parse_flow_markdown
+from app.flow.placeholders import flow_site_domain
 from app.observability.recorder import PageRecorder
 from app.schemas.actions import FlowResult
 

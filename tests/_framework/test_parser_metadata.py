@@ -88,3 +88,17 @@ def test_config_rerun_opt_out():
     flow = parse_flow_markdown('# T\n\n## Config\n- rerun: false\n\n## Steps\n- wait_load\n')
     assert flow.rerun is False
     assert parse_flow_markdown("## Steps\n- wait_load\n").rerun is None
+
+
+def test_expected_outcome_is_kept_as_intent_not_steps():
+    flow = parse_flow_markdown(
+        '# Profile\n\n## Update\n- goto: "https://example.com"\n\n'
+        '## Expected Outcome\n- Profile saved\n- Page shows "Updated"\n')
+    assert flow.expected == ["Profile saved", 'Page shows "Updated"']
+    assert [a.raw for a in flow.actions] == ['goto: "https://example.com"']
+
+
+def test_expected_outcome_plain_lines_and_absence():
+    flow = parse_flow_markdown('## Steps\n- wait_load\n\n## Expected Outcome\nUser lands on the dashboard\n')
+    assert flow.expected == ["User lands on the dashboard"]
+    assert parse_flow_markdown('## Steps\n- wait_load\n').expected == []

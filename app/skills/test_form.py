@@ -34,7 +34,7 @@ import time
 
 from app.agent.observer import Field, Form, Observation
 from app.schemas.actions import ActionType, Check
-from app.skills.base import SkillContext, info, missing, skill, skipped
+from app.skills.base import SkillContext, inconclusive, info, missing, skill, skipped
 
 logger = logging.getLogger(__name__)
 
@@ -171,13 +171,13 @@ def _submit_and_check(sc: SkillContext, form: Form, submit: str, name: str, mark
     if sr.skipped:
         return skipped(name, sr.message)
     if not sr.success:
-        return Check(name, False, "warn", f"could not press '{submit}'")
+        return inconclusive(name, f"the agent could not press '{submit}'")
     state = _state(sc, form)
     if _signal(state):
         return Check(name, True, "error", _why(state))
     if state["present"] and state["url"] == url_before:
-        return Check(name, False, "warn", "no invalid field or message shown and the form stayed on the page: "
-                                          "cannot tell whether the input was rejected")
+        return inconclusive(name, "no invalid field or message shown and the form stayed on the page: "
+                                  "cannot tell whether the input was rejected")
     return Check(name, False, "error", _why(state) or f"the form was submitted, now at {state['url']}")
 
 
@@ -247,7 +247,7 @@ def test_form(sc: SkillContext) -> list[Check]:
     _fill_all(sc, fields)
     if why := _not_filled(sc, mark):
         checks.append(skipped("valid input accepted", why) if sc.stopped
-                      else Check("valid input accepted", False, "warn", why))
+                      else inconclusive("valid input accepted", why))
         return checks
     state = _state(sc, form)
     checks.append(Check("valid input accepted", not state["native"], "error",
@@ -263,8 +263,8 @@ def test_form(sc: SkillContext) -> list[Check]:
         since, url_before = sc.mark(), sc.page.url
         pressed = sc.run(ActionType.CLICK, submit, kind="probe")
         if not pressed.success:
-            checks.append(Check("submission accepted", False, "warn", pressed.message if pressed.skipped
-                                else f"could not press '{submit}'"))
+            checks.append(skipped("submission accepted", pressed.message) if pressed.skipped
+                          else inconclusive("submission accepted", f"the agent could not press '{submit}'"))
             return checks
         sc.run(ActionType.WAIT_LOAD, kind="probe")
         after = _state(sc, form)

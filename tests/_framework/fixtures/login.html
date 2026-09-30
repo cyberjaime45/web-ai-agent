@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — QA fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; font-size: 16px; position: relative; }
+  .clouds { position: absolute; top: 0; left: 0; width: 100%; height: 200px; z-index: -1; }
+  .welcome { font-size: 36px; font-weight: 700; }
+  .icons a { display: inline-block; width: 16px; height: 16px; margin-right: 2px; background: #ccc; }
+  @media (max-width: 767px) { nav { display: none; } }
+</style>
+</head>
+<body>
+<!-- Mirrors a real sign-in page: what must NOT be reported next to what must. -->
+<nav aria-label="Contact"><a href="tel:+18553598760">855-FLY-8760</a></nav>
+<a href="login.html" aria-label="Home"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" alt="Logo" width="80" height="30"></a>
+<img class="clouds" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+<div class="welcome">Welcome!</div>
+<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" width="60" height="40">
+<p>New here? Read our <a href="members.html">membership guide</a> before you sign in to your account.</p>
+<form aria-label="Sign in" novalidate>
+  <span id="email-label">Email address</span>
+  <input type="email" name="email" aria-labelledby="email-label">
+  <input type="password" id="pw" name="password" placeholder="Password">
+  <button type="submit">Sign in</button>
+</form>
+<button type="button" id="show">Show password</button>
+<p><a href="members.html#forgot">Forgot Password</a></p>
+<div class="icons"><a href="members.html#a" aria-label="Help"></a><a href="members.html#b" aria-label="Chat"></a></div>
+<p><a href="members.html" target="_blank">Request Info</a></p>
+<script>
+  document.getElementById('show').addEventListener('click', () => {
+    const pw = document.getElementById('pw');
+    pw.type = pw.type === 'password' ? 'text' : 'password';
+  });
+</script>
+</body>
+</html>

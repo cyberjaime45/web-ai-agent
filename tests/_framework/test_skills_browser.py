@@ -137,7 +137,7 @@ def test_test_responsive_opens_the_mobile_menu_and_restores_the_viewport(page, f
     assert marker.success, marker.message
     checks = _checks(marker)
     assert checks["viewports"].detail == "1280x800, 390x664"
-    assert checks["[1280x800] no horizontal overflow"].passed
+    assert checks["[1280x800, 390x664] no horizontal overflow"].passed      # one check for both widths
     assert checks["[390x664] mobile menu opens"].passed
     assert [c.action.raw for c in children] == ['click: "Open menu"', 'press: "Escape"']
     assert set(marker.evidence.screenshots) == {"1280x800", "390x664"}
@@ -148,7 +148,7 @@ def test_oracle_records_checks_after_goto(page, fixture_url, tmp_path):
     result = _run(page, tmp_path, f'- goto: "{fixture_url}"\n- assert_text: "Members"\n')
     goto, assertion = result.steps
     names = {c.name for c in goto.checks}
-    assert {"page rendered", "no page errors", "no blocking dialog", "no horizontal overflow"} <= names
+    assert {"page rendered", "no page errors", "no failed requests", "no horizontal overflow"} <= names
     assert _checks(goto)["page rendered"].passed
     assert assertion.checks == [] and result.success          # warn mode never fails
 
@@ -279,13 +279,57 @@ def test_check_accessibility_lists_the_fixture_problems(page, fixture_url, tmp_p
     assert checks["images have alt text"].count == 1
     assert checks["fields have labels"].count == 1 and 'placeholder "Email" only' in checks["fields have labels"].detail
     assert checks["controls have names"].count == 2               # empty button + empty link; "×" has aria-label
-    assert not checks["page language set"].passed and not checks["page has an h1"].passed
+    assert not checks["page language set"].passed
+    assert checks["page has an h1"].outcome == "info"            # headings exist; a missing h1 is not a defect
     assert "h2 → h4" in checks["heading levels in order"].detail
     assert checks["referenced ids are unique"].detail == "#dup"
     assert checks["no positive tabindex"].count == 1
     assert checks["dialog holds focus"].passed
     strict = _run(page, tmp_path, f'- goto: "{url}"\n- check_accessibility: "level=strict"\n')
     assert not strict.steps[1].success
+
+
+def test_check_accessibility_judges_images_names_and_headings_in_context(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "login.html")
+    checks = _checks(_run(page, tmp_path, f'- goto: "{url}"\n- check_accessibility\n').steps[1])
+    # genuine: a content image without alt, a field named only by its placeholder, a visual heading
+    assert checks["images have alt text"].count == 1 and checks["images have alt text"].outcome == "warning"
+    assert checks["fields have labels"].count == 1 and "#pw" in checks["fields have labels"].detail
+    assert checks["visual headings marked up"].outcome == "warning"
+    assert '"Welcome!" (div, 36px)' in checks["visual headings marked up"].detail
+    # not defects: the background image, the aria-labelledby email field, the logo link's image alt
+    assert checks['decorative images without alt=""'].outcome == "info"
+    assert "positioned behind the content" in checks['decorative images without alt=""'].detail
+    assert checks["controls have names"].passed and "page has an h1" not in checks
+
+
+def test_test_responsive_judges_tap_targets_and_menus_only_where_they_apply(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "login.html")
+    marker = _run(page, tmp_path, f'- goto: "{url}"\n- test_responsive: "viewports=390x664"\n').steps[1]
+    checks = _checks(marker)
+    tap = checks["[390x664] tap targets ≥ 24px"]
+    assert tap.outcome == "warning" and '"Help" 16×16' in tap.detail and '"Chat" 16×16' in tap.detail
+    assert "Forgot Password" not in tap.detail                  # small, but 24px of room around it
+    assert "membership guide" not in tap.detail                 # inline in a sentence
+    assert not any("mobile menu" in n for n in checks)          # the hidden nav holds a phone number only
+
+    url = fixture_url.replace("form_page.html", "div_menu.html")
+    checks = _checks(_run(page, tmp_path, f'- goto: "{url}"\n- test_responsive: "viewports=390x664"\n').steps[1])
+    assert checks["[390x664] mobile menu opens"].passed         # the div opens it for a mouse…
+    assert checks["[390x664] menu toggle is a button"].outcome == "warning"   # …not for a keyboard
+
+
+def test_explore_page_explains_presses_before_calling_them_no_result(page, fixture_url, tmp_path):
+    url = fixture_url.replace("form_page.html", "login.html")
+    marker = _run(page, tmp_path, f'- goto: "{url}"\n- explore_page: "depth=0" | "max_actions=10"\n').steps[1]
+    checks = _checks(marker)
+    graph = checks["graph"].detail
+    assert "855-FLY-8760 [hands off" in graph
+    assert "Home [links to this page" in graph
+    assert "Request Info [opens new tab" in graph
+    assert "Show password [changes page" in graph
+    assert checks["controls respond"].outcome == "info"         # every press explained
+    assert len(page.context.pages) == 1                         # the new tab was closed
 
 
 def test_check_accessibility_passes_the_form_fixture(page, fixture_url, tmp_path):
@@ -415,12 +459,20 @@ def test_the_drawer_gives_each_failed_step_a_card_linked_to_its_row(page, tmp_pa
     where = [w.split("\n")[0] for w in page.locator("#drawer .fail-where").all_inner_texts()]
     assert where == ['Step 1 · Click "Go"', "Step 2.1 · Explore page"]
     assert "in Test page" in page.locator("#drawer .fail-card").nth(1).inner_text()
-    assert page.locator("#drawer .fail-card").nth(1).locator("li li").all_inner_texts() == [
-        "after 'A': GET /a → 503", "after 'B': GET /b → 503"]
-    assert page.locator('#drawer [data-step="2.1"] .serr').inner_text() == "Expected no broken pages — found 2"
+    card = page.locator("#drawer .fail-card").nth(1).locator(".finding")
+    assert card.locator(".ftitle").inner_text() == "Pages that broke after a press"
+    assert card.locator(".frows .qa-badge").all_inner_texts() == ["GET /a → 503", "GET /b → 503"]
+    assert card.locator(".frows span:not(.qa-badge)").all_inner_texts() == ["After pressing “A”.", "After pressing “B”."]
+    assert page.locator('#drawer [data-step="2.1"] .serr').inner_text() == "Pages that broke after a press (2)"
     assert page.locator("#drawer .steps .site").count() == 2 and page.locator("#drawer [data-tech]").count() == 2
-    page.locator('#drawer [data-show-tech="2.1"]').click()
+    # Diagnostics, Console and Network are open by default: no fold to click first.
     assert page.locator('#drawer [data-tech="2.1"]').is_visible()
+    assert page.locator("#drawer #d-con").is_visible() and not page.locator("#drawer #d-net").is_visible()
+    page.locator('#drawer [data-t="d-net"]').click()                          # the Network tab shows its pane
+    assert page.locator("#drawer #d-net").is_visible() and not page.locator("#drawer #d-con").is_visible()
+    assert page.locator("#drawer details.tech").count() == 0
+    page.locator('#drawer [data-show-tech="2.1"]').click()
+    assert page.locator('#drawer [data-tech="2.1"].step-focus').count() == 1
 
 
 def test_a_real_prefetch_is_left_out_and_a_navigation_to_it_is_kept(page, fixture_url, tmp_path):
@@ -477,10 +529,14 @@ def test_a_step_with_warnings_shows_them_under_a_warning_icon(page, tmp_path):
         return {"name": name, "action": action, "passed": True, "skipped": False, "msg": "", "duration": 0.2,
                 "sub_flow": sub, "section": "S", "screenshot": "", "layer": 1, "ts_start": 1e9 + i,
                 "ts_end": 1e9 + i + 0.2, "evidence": None, "group": group, "checks": checks or []}
-    warn = {"name": "fields have labels", "passed": False, "severity": "warn", "detail": "input[name=email]"}
+    warn = {"name": "fields have labels", "passed": False, "severity": "warn", "count": 2,
+            "detail": 'input[name=email] (shows "Email", not linked as its label); '
+                      'input.MuiInputBase-input (shows "Password", not linked as its label)'}
+    heading = {"name": "visual headings marked up", "passed": False, "severity": "warn", "count": 1,
+               "detail": '"Welcome!" (div, 36px)'}
     steps = [step('goto: "https://x"', "goto"),
              step("test_page", "test_page", group=True, i=1),
-             step("check_accessibility", "check_accessibility", sub="test_page", group=True, checks=[warn], i=2),
+             step("check_accessibility", "check_accessibility", sub="test_page", group=True, checks=[warn, heading], i=2),
              step('click: "A"', "click", sub="test_page", i=3)]
     result = {"nodeid": "tests/x/w.md::W", "name": "W", "outcome": "passed", "duration": 1, "longrepr": "",
               "error": "", "started_at": "", "flow_steps": steps, "console": [], "network": []}
@@ -489,10 +545,28 @@ def test_a_step_with_warnings_shows_them_under_a_warning_icon(page, tmp_path):
     page.evaluate("openTest(0)")
     warned = page.locator("#drawer .steps .sicon.warned")
     assert warned.evaluate_all("els => els.map(e => e.closest('[data-step]').dataset.step)") == ["2.1"]
-    assert page.locator('#drawer [data-step="2.1"] .swarn').inner_text() == \
-        "Expected fields have labels — found: input[name=email]"
+    assert page.locator('#drawer [data-step="2.1"] .swarn').all_inner_texts() == [
+        "Form labels are not associated with their inputs (2)",
+        "“Welcome!” appears as a heading but uses a <div>."]
     assert page.locator('#drawer details[data-step="2"]').get_attribute("open") is not None
     assert page.locator('#drawer [data-step="2.2"] .sicon.passed').count() == 1
+    # The Warnings section: headline, one row per affected element, the step link in its own column.
+    labels, heading_w = page.locator("#drawer .warn-list .finding").nth(0), page.locator("#drawer .warn-list .finding").nth(1)
+    assert labels.locator(".ftitle").inner_text() == "Form labels are not associated with their inputs"
+    assert labels.locator(".frows .qa-badge").all_inner_texts() == ["input[name=email]", "input.MuiInputBase-input"]
+    assert labels.locator(".frows span:not(.qa-badge)").first.inner_text() == "The Email input's visible label is not associated with the field."
+    assert labels.locator(".flink").inner_text() == "Step 2.1" and heading_w.locator(".flink").inner_text() == "Step 2.1"
+    assert heading_w.locator(".ftitle").inner_text() == "“Welcome!” appears as a heading but uses a <div>."
+    assert heading_w.locator(".frows").count() == 0
+    assert page.locator("#drawer .drawer-section-warn .count").inner_text() == "2"   # rows never add findings
+    # Every step row shares the grid: the step number starts at the same x on plain and expandable rows.
+    x_of = "els => els.map(e => Math.round(e.getBoundingClientRect().x))"
+    top = page.locator('#drawer [data-step="1"] > .slabel, #drawer details[data-step="2"] > summary > .slabel')
+    assert len(set(top.evaluate_all(x_of))) == 1 and top.count() == 2          # plain and expandable rows agree
+    kids = page.locator('#drawer [data-step="2.1"] > .slabel, #drawer [data-step="2.2"] > .slabel')
+    assert len(set(kids.evaluate_all(x_of))) == 1 and kids.count() == 2         # children indent, together
+    assert page.locator("#drawer .srow .stoggle").count() == page.locator("#drawer .srow").count()
+    assert page.locator('#drawer details[data-step="2"] > summary .skids').inner_text() == "2 steps"
 
 
 def test_the_hero_parts_add_up_to_the_total(page, tmp_path):
@@ -546,3 +620,37 @@ def test_the_test_list_pairs_profiles_and_shows_the_device_icon(page, tmp_path):
     assert page.locator("#tests .trow-tags", has_text="Desktop").count() == 0    # the icon replaces the badge
     page.locator("#tests .trow").nth(1).click()                                 # still opens the right test
     assert page.locator("#drawer .fact-device .dev-ico").get_attribute("aria-label") == "Mobile"
+
+
+def test_the_autonomous_run_panel_shows_compact_rows(page, tmp_path):
+    """Components, plan, held-back controls and actions read as rows — a name,
+    a count and the controls in monospace — not a paragraph."""
+    from app.observability.reporter import generate_report
+    agent = {"page_type": "LOGIN", "classification": "deterministic",
+             "components": ["buttons: 3 (Request Info, LOG IN)", "form 'Sign in': 2 fields", "links: 4"],
+             "plan": ["check console and network", "[ai] click \"Forgot password?\""],
+             "plan_rejected": ["click: target 'e9' is not on the page"],
+             "skipped": ["Delete account — name contains 'delete'"],
+             "assertions": ['assert_text: "Welcome"'],
+             "actions": [f'click: "B{i}"' for i in range(10)], "ai_calls": 1}
+    steps = [{"name": "test_page", "action": "test_page", "passed": True, "skipped": False, "msg": "", "duration": 1,
+              "sub_flow": "", "section": "S", "screenshot": "", "layer": 1, "ts_start": 1e9, "ts_end": 1e9 + 1,
+              "evidence": None, "group": True, "checks": [], "agent": agent}]
+    result = {"nodeid": "tests/x/a.md::A", "name": "A", "outcome": "passed", "duration": 1, "longrepr": "",
+              "error": "", "started_at": "", "flow_steps": steps, "console": [], "network": []}
+    generate_report([result], 1e9, tmp_path / "report.html", "qa", exit_status=0)
+    page.goto((tmp_path / "report.html").as_uri())
+    page.evaluate("openTest(0)")
+    panel = page.locator("#drawer .agent-facts")
+    comps = panel.locator("dd").nth(1).locator("li")
+    assert comps.nth(0).locator(".akey").inner_text() == "buttons" and comps.nth(0).locator(".anum").inner_text() == "3"
+    assert comps.nth(0).locator(".qa-badge").all_inner_texts() == ["Request Info", "LOG IN"]
+    assert comps.nth(1).locator(".qa-badge").inner_text() == "Sign in" and comps.nth(1).locator(".anum").inner_text() == "2 fields"
+    plan = panel.locator(".arows.plan li")
+    assert plan.count() == 2 and plan.nth(1).locator(".qa-badge-neutral").inner_text() == "AI"
+    assert plan.nth(1).locator("span").last.inner_text() == 'click "Forgot password?"'
+    held = panel.locator(".arows.warn li").first
+    assert held.locator(".qa-badge").inner_text() == "Delete account" and held.locator("span:not(.qa-badge)").inner_text() == "name contains 'delete'"
+    assert panel.locator(".arows.bad li .qa-badge").inner_text() == "click"
+    acts = panel.locator("div.arows")
+    assert acts.locator(".anum").inner_text() == "10" and acts.locator(".qa-badge").count() == 8 and acts.locator(".amore").inner_text() == "+2 more"

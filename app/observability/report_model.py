@@ -252,19 +252,33 @@ def _number(steps: list[dict]) -> None:
         s["parent"] = ".".join(map(str, path[:depth])) or None
 
 
-def _warnings(steps: list[dict]) -> list[dict]:
-    """Findings that did not fail the test: warn checks, and error checks on a
-    step that still passed (the oracle in warn mode). One entry per check;
-    a skill reports its failed probes and cleanup as checks, so steps add none."""
-    out = []
+def _findings(steps: list[dict]) -> tuple[list[dict], list[dict]]:
+    """``(warnings, unverified)`` in one pass. Warnings: findings that did not
+    fail the test (warn checks; error checks on a passed step, ORACLE=warn).
+    Unverified: inconclusive checks — coverage, not application findings.
+    The same check and detail on several steps is one entry: ``step`` plus
+    the others in ``also``."""
+    warnings: list[dict] = []
+    unverified: list[dict] = []
+    seen: dict[tuple, dict] = {}
     for s in steps:
         for c in s.get("checks") or []:
             kind = _outcome(c)
             if kind == "warning" or (kind == "failed" and s["status"] != "failed"):
-                out.append({"step": s["id"], "step_name": s["name"],
-                            "check": c.get("name", ""), "detail": c.get("detail", ""),
-                            "severity": c.get("severity", "warn")})
-    return out
+                into = warnings
+            elif kind == "inconclusive":
+                into = unverified
+            else:
+                continue
+            key = (id(into), c.get("name", ""), c.get("detail", ""), c.get("severity", "warn"))
+            if (entry := seen.get(key)) is not None:
+                if s["id"] != entry["step"] and s["id"] not in entry.setdefault("also", []):
+                    entry["also"].append(s["id"])
+                continue
+            seen[key] = entry = {"step": s["id"], "step_name": s["name"], "check": c.get("name", ""),
+                                 "detail": c.get("detail", ""), "severity": c.get("severity", "warn")}
+            into.append(entry)
+    return warnings, unverified
 
 
 # ── Section splitting & event routing ────────────────────────────────────────
@@ -361,14 +375,14 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
         "title": name,
         "file": file,
         "file_title": r.get("flow_title") or None,
-        "markers": _markers(r, section),
+        "markers": _markers(r, section), "expected": list(r.get("flow_expected") or []),
         "profile": r.get("profile") or None,
         "status": status,
         "started_at": started_at,
         "duration_ms": round((r.get("duration") or 0.0) * 1000, 1),
         "retries": 1 if r.get("retried") else 0,
         "steps": (steps := _build_steps(flow_steps, started_at, runs)),
-        "warnings": _warnings(steps),
+        **dict(zip(("warnings", "unverified"), _findings(steps))),
         "console": r.get("console") or [],
         "network": r.get("network") or [],
         "artifacts": _artifacts(flow_steps),
@@ -390,6 +404,7 @@ def _build_test(r: dict, runs: list[tuple[str, list[dict]]] | None = None) -> di
 
     if r.get("retried"):
         test["retry_error"] = next(iter(r["retried"].values()))
+        test["retry_verdict"] = next(iter((r.get("retried_verdicts") or {}).values()), "")
     if status in ("failed", "error"):
         message = r.get("error") or (r.get("longrepr") or "").split("\n")[0] or "Flow failed"
         test["error"] = {
@@ -423,7 +438,7 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "title": name,
         "file": file,
         "file_title": r.get("flow_title") or None,
-        "markers": _markers(r, name),
+        "markers": _markers(r, name), "expected": list(r.get("flow_expected") or []),
         "profile": r.get("profile") or None,
         "status": status,
         "started_at": started_iso,
@@ -431,17 +446,16 @@ def _build_section_test(r: dict, idx: int, name: str, steps: list[dict]) -> dict
         "duration_ms": float(t_end - t0) if t0 is not None else 0.0,
         "retries": 1 if str(idx - 1) in (r.get("retried") or {}) else 0,
         "steps": (records := _nest_sub_flows(steps, started_iso, 0)),
-        "warnings": [],
-        "console": [],
-        "network": [],
+        "warnings": [], "unverified": [], "console": [], "network": [],
         "artifacts": {"screenshot": None, "screenshots": [], "trace": None},
         "healings": _healings(steps),
         "agent": _agent(steps),
     }
     _number(records)
-    test["warnings"] = _warnings(records)
+    test["warnings"], test["unverified"] = _findings(records)
     if test["retries"]:
         test["retry_error"] = r["retried"][str(idx - 1)]
+        test["retry_verdict"] = (r.get("retried_verdicts") or {}).get(str(idx - 1), "")
     if failed:
         test["error"] = {
             "message": failed[-1].get("msg") or r.get("error") or "Section failed",

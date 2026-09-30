@@ -7,8 +7,9 @@ execution logic.
 """
 
 SYSTEM = (
-    "You are a web automation expert. A Playwright action failed. "
-    "Given the page context and failed action, suggest a locator strategy. "
+    "You are a web automation expert. A Playwright action could not find its target. "
+    "Given the page's controls, say which one the step meant — by its ref. "
+    "Never invent selectors or code; if no listed control fits, answer {\"ref\": \"\"}. "
     "Respond ONLY with valid JSON — no markdown fences."
 )
 
@@ -17,15 +18,16 @@ Page URL:   {url}
 Page title: {title}
 Action:     {action_type} {args}
 Error:      {error}
+Why it failed (triage): {cause}
 
-Interactive elements on the page (role "accessible name"):
+Controls on the page ([ref] role "accessible name", form fields by label):
 {elements}
 
-Suggest a Playwright locator for one of the elements above. Respond with JSON only:
+Which control above did the step mean? Respond with JSON only:
 {{
-  "strategy": "css" | "text" | "role" | "label" | "placeholder",
-  "value": "<selector or text value>",
-  "role": "<aria role — required when strategy is role>",
+  "ref": "<ref of the control, e.g. e12 — preferred>",
+  "strategy": "label" | "placeholder",
+  "value": "<a form field's exact label or placeholder — only when there is no ref>",
   "reason": "<one-line explanation>"
 }}"""
 
@@ -34,25 +36,23 @@ Suggest a Playwright locator for one of the elements above. Respond with JSON on
 PROMPTS: dict[str, dict[str, str]] = {
     "ai_click": {
         "system": (
-            "You are a web automation expert. Given a page's visible text "
-            "and a natural-language target description, return a Playwright "
-            "locator strategy to click the described element. "
+            "You are a web automation expert. Given a page's controls and a "
+            "natural-language target description, name the control to click by "
+            "its ref. Never invent selectors or code. "
             "Respond ONLY with valid JSON — no markdown fences."
         ),
         "user": """\
 Page URL:   {url}
 Page title: {title}
-Interactive elements (role "accessible name"):
+Controls on the page ([ref] role "accessible name"):
 {elements}
 Visible text (truncated): {page_text}
 
 Target to click: {target}
 
-Return JSON:
+Return JSON naming one of the controls above by its ref:
 {{
-  "strategy": "css" | "text" | "role",
-  "value": "<selector or text>",
-  "role": "<aria role if strategy is role>",
+  "ref": "<ref, e.g. e12>",
   "reason": "<one-line explanation>"
 }}""",
     },
