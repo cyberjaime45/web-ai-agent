@@ -1,16 +1,24 @@
-# MCP adapter
+# Web Agent MCP
 
-The Web Agent can be driven by an MCP client — Janus (the QA
-orchestrator), or any other — through `mcp_server/`. It is an additional interface: running flows
+The Web Agent MCP (`mcp_server/`) is the standardized interface that exposes
+the Web Agent's capabilities to JANUS, the QA Orchestrator Agent, and to any
+other MCP client. It is an interface, not an agent: the Web Agent is the
+specialized autonomous testing agent and does all the testing. Running flows
 with `pytest` or `main.py` needs none of it, and nothing in `app/` imports it.
 
 ```
-MCP client ──stdio──► mcp_server (5 tools) ──► pytest <flow.md>  ──► Playwright
-                          │                     (one process per execution)
-                          └── reads reports/_executions/<id>/report/{summary,test_cases}.json
+JANUS — QA Orchestrator Agent      (or any MCP client)
+        ↓  MCP (stdio)
+Web Agent MCP                      mcp_server: 5 tools; validates and delegates
+        ↓  pytest <flow.md>        one process per execution
+Web Agent                          the existing runtime, unchanged
+        ↓
+Playwright
+
+The Web Agent MCP reads results from reports/_executions/<id>/report/{summary,test_cases}.json
 ```
 
-The adapter adds no testing behaviour. An execution is the same
+The Web Agent MCP adds no testing behaviour. An execution is the same
 `pytest <flow.md>` run a developer or the pipeline starts, in its own process,
 writing the usual report into a folder of its own. Results are read from that
 report's JSON, never from console output.
@@ -70,7 +78,7 @@ the run has collected its flows. Steps inside a flow are not counted.
 
 ## Environments
 
-`mcp_server/environments.toml` lists the environments the adapter may run
+`mcp_server/environments.toml` lists the environments the Web Agent MCP may run
 against and the hosts that belong to each. A flow may run against an
 environment only when that environment owns **every** site the flow opens
 (its `goto` steps and those of its `run_flow` components), so asking for a
@@ -96,7 +104,7 @@ hosts.
 
 ## Configuration
 
-Read by the adapter only; the Web Agent's own settings are unchanged.
+Read by the Web Agent MCP only; the Web Agent's own settings are unchanged.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|

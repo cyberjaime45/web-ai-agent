@@ -239,7 +239,7 @@ web-agent/
 │   ├── _framework/                 # The runtime's own tests (fake pages + local fixture pages)
 │   └── <app>/flows/                # One suite per application, shared sub-flows in components/
 │
-├── mcp_server/                     # Optional MCP adapter (docs/MCP.md): runs flows through pytest, reads the report
+├── mcp_server/                     # Web Agent MCP (docs/MCP.md): optional interface for JANUS; runs flows through pytest, reads the report
 │
 ├── docs/                           # These guides
 └── reports/<ENVIRONMENT>/          # report.html, JSON, assets/, images/, traces/, generated/, baselines/

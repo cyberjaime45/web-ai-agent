@@ -1,4 +1,4 @@
-"""The Web Agent's MCP server: five tools over the existing runtime.
+"""The Web Agent MCP: five tools over the existing Web Agent runtime.
 
     list_flows        what can be run, and against which environments
     run_flow          start one flow against one environment → execution id
@@ -43,7 +43,7 @@ from mcp_server.models import (
 logger = logging.getLogger("web_agent.mcp")
 
 _INSTRUCTIONS = (
-    "Runs the Web Agent's Markdown test flows in a real browser. Call list_flows to see the flows "
+    "The Web Agent MCP: the interface to the Web Agent, which runs Markdown test flows in a real browser. Call list_flows to see the flows "
     "and the environments each may run against, run_flow to start one, get_status until the status "
     "is COMPLETED, FAILED, CANCELLED or TIMED_OUT, then get_result. A COMPLETED execution may still "
     "contain failed tests: read the result. FAILED means the Web Agent itself could not run the flow."
@@ -92,7 +92,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
         finally:
             await manager.shutdown()
 
-    server = FastMCP("web-agent", instructions=_INSTRUCTIONS, lifespan=lifespan)
+    server = FastMCP("web-agent-mcp", instructions=_INSTRUCTIONS, lifespan=lifespan)
 
     @server.tool()
     async def list_flows(environment: str | None = None) -> FlowCatalog:
@@ -217,7 +217,7 @@ def main() -> None:
     try:
         server = build_server(load_config())
     except ConfigError as exc:
-        print(f"web-agent MCP server cannot start: {exc}", file=sys.stderr)
+        print(f"Web Agent MCP cannot start: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
     server.run()        # stdio
 

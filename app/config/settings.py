@@ -91,7 +91,7 @@ class Settings:
     # report network headers/payloads, on top of the built-in list.
     report_redact: str  = field(default_factory=lambda: _str("REPORT_REDACT"))
     # Where this run writes its report, instead of reports/<ENVIRONMENT>/ —
-    # for callers that need one folder per run (the MCP adapter). A relative
+    # for callers that need one folder per run (the Web Agent MCP). A relative
     # path is taken from the project root. Empty = the default.
     report_dir_override: str = field(default_factory=lambda: _str("REPORT_DIR"))
 

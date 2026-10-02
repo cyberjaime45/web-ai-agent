@@ -83,7 +83,7 @@ uv run pytest --agent-test https://example.com/members     # one page, no flow f
 | [docs/REPORTS.md](docs/REPORTS.md) | Console output, the HTML/JSON report, multi-environment and LambdaTest runs |
 | [docs/CLI.md](docs/CLI.md) | `main.py run`, exit codes, the `--json` contract for other agents |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The three layers, parser pipeline, browser lifecycle, project structure |
-| [docs/MCP.md](docs/MCP.md) | Optional MCP adapter: tools, environments, executions, for Janus (the QA orchestrator) and other MCP clients |
+| [docs/MCP.md](docs/MCP.md) | Web Agent MCP: the optional interface that exposes the Web Agent to JANUS (the QA Orchestrator Agent) and other MCP clients |
 
 ## Configuration
 

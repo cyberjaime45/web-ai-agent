@@ -195,13 +195,13 @@ class ExecutionManager:
             else:
                 self._finish(execution, ExecutionState.FAILED, ErrorInfo(
                     code=ErrorCode.WEB_AGENT_ERROR,
-                    message="The MCP server stopped while the execution was in progress."))
-        except Exception as exc:        # the adapter's own fault: report it, never hang as RUNNING
-            logger.exception("execution_id=%s adapter error", execution.execution_id)
+                    message="The Web Agent MCP stopped while the execution was in progress."))
+        except Exception as exc:        # the Web Agent MCP's own fault: report it, never hang as RUNNING
+            logger.exception("execution_id=%s Web Agent MCP error", execution.execution_id)
             if process is not None and process.returncode is None:
                 await self._stop(process)
             self._finish(execution, ExecutionState.FAILED, ErrorInfo(
-                code=ErrorCode.WEB_AGENT_ERROR, message=f"The MCP adapter failed: {exc}"))
+                code=ErrorCode.WEB_AGENT_ERROR, message=f"The Web Agent MCP failed: {exc}"))
         finally:
             self._processes.pop(execution.execution_id, None)
 
@@ -276,7 +276,7 @@ class ExecutionManager:
             execution.state = ExecutionState.FAILED
             execution.error = ErrorInfo(
                 code=ErrorCode.WEB_AGENT_ERROR,
-                message="The execution was lost: the MCP server that started it has stopped.",
+                message="The execution was lost: the Web Agent MCP process that started it has stopped.",
             ).model_dump(mode="json")
         return execution
 

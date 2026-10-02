@@ -1,4 +1,4 @@
-# Environments the MCP adapter may run flows against, and the hosts that
+# Environments the Web Agent MCP may run flows against, and the hosts that
 # belong to each. A flow can only be started against an environment that owns
 # every host the flow opens, so "run X against qa2" can never reach another
 # environment's site by accident.

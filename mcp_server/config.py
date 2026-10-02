@@ -1,6 +1,6 @@
-"""Adapter configuration — every ``WEB_AGENT_MCP_*`` variable, read once.
+"""Web Agent MCP configuration — every ``WEB_AGENT_MCP_*`` variable, read once.
 
-Only the adapter reads these; the Web Agent's own configuration stays in
+Only the Web Agent MCP reads these; the Web Agent's own configuration stays in
 ``app/config/settings.py``.
 """
 
@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigError(ValueError):
-    """The adapter cannot start with this configuration."""
+    """The Web Agent MCP cannot start with this configuration."""
 
 
 def _path(key: str, default: str) -> Path:

@@ -1,4 +1,4 @@
-"""The MCP server end to end: a real MCP client over stdio → the server →
+"""The Web Agent MCP end to end: a real MCP client over stdio → the Web Agent MCP →
 a real Web Agent run (pytest subprocess, Chromium) on a local fixture page.
 
 The temporary flows live under the gitignored ``reports/`` tree — inside the
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("mcp", reason="the MCP adapter needs the `mcp` extra (uv sync --extra mcp)")
+pytest.importorskip("mcp", reason="the Web Agent MCP needs the `mcp` extra (uv sync --extra mcp)")
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client

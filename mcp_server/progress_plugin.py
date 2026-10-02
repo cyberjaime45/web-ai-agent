@@ -1,4 +1,4 @@
-"""pytest plugin the adapter loads into a flow run (``-p mcp_server.progress_plugin``).
+"""pytest plugin the Web Agent MCP loads into a flow run (``-p mcp_server.progress_plugin``).
 
 Writes how many flows pytest collected and how many have finished to the file
 named by ``WEB_AGENT_MCP_PROGRESS_FILE``, so ``get_status`` reports progress

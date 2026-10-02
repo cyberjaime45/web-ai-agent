@@ -1,4 +1,4 @@
-"""The MCP adapter's own logic — catalog, environment allow-list, outcome and
+"""The Web Agent MCP's own logic — catalog, environment allow-list, outcome and
 result mapping — without a server, a subprocess or a browser."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("mcp", reason="the MCP adapter needs the `mcp` extra (uv sync --extra mcp)")
+pytest.importorskip("mcp", reason="the Web Agent MCP needs the `mcp` extra (uv sync --extra mcp)")
 
 from mcp_server import results
 from mcp_server.catalog import (
