@@ -90,6 +90,10 @@ class Settings:
     # Extra sensitive key substrings (comma-separated) redacted from
     # report network headers/payloads, on top of the built-in list.
     report_redact: str  = field(default_factory=lambda: _str("REPORT_REDACT"))
+    # Where this run writes its report, instead of reports/<ENVIRONMENT>/ —
+    # for callers that need one folder per run (the Web Agent MCP). A relative
+    # path is taken from the project root. Empty = the default.
+    report_dir_override: str = field(default_factory=lambda: _str("REPORT_DIR"))
 
     @property
     def remote(self) -> bool:
@@ -101,7 +105,10 @@ class Settings:
 
     @property
     def report_dir(self) -> Path:
-        """reports/<environment>/ — anchored to the project root, not the cwd."""
+        """reports/<environment>/ — anchored to the project root, not the cwd —
+        unless REPORT_DIR names another folder for this run."""
+        if self.report_dir_override:
+            return (PROJECT_ROOT / Path(self.report_dir_override).expanduser()).resolve()
         return PROJECT_ROOT / "reports" / self.environment
 
     @property
