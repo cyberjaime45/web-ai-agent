@@ -1,0 +1,30 @@
+# Environments the MCP adapter may run flows against, and the hosts that
+# belong to each. A flow can only be started against an environment that owns
+# every host the flow opens, so "run X against qa2" can never reach another
+# environment's site by accident.
+#
+# hosts            exact host names; "*.example.com" matches any subdomain
+# production       true blocks the environment unless WEB_AGENT_MCP_ALLOW_PRODUCTION=true
+# allow_file_urls  true lets flows open file:// pages (local fixtures)
+#
+# Point WEB_AGENT_MCP_ENVIRONMENTS_FILE at another file to replace this list.
+
+[environments.staging]
+description = "Staging"
+hosts = ["memberssitestaging.wheelsup.com"]
+
+[environments.production]
+description = "Production (live sites)"
+production = true
+hosts = ["one.wheelsup.com", "wheelsup.com", "www.wheelsup.com"]
+
+[environments.local]
+description = "Pages served from this machine (fixtures)"
+hosts = ["localhost", "127.0.0.1"]
+allow_file_urls = true
+
+# Add the QA environments with their real hosts, for example:
+#
+# [environments.qa2]
+# description = "QA2"
+# hosts = ["<qa2 host>"]

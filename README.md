@@ -83,6 +83,7 @@ uv run pytest --agent-test https://example.com/members     # one page, no flow f
 | [docs/REPORTS.md](docs/REPORTS.md) | Console output, the HTML/JSON report, multi-environment and LambdaTest runs |
 | [docs/CLI.md](docs/CLI.md) | `main.py run`, exit codes, the `--json` contract for other agents |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The three layers, parser pipeline, browser lifecycle, project structure |
+| [docs/MCP.md](docs/MCP.md) | Optional MCP adapter: tools, environments, executions, for Janus (the QA orchestrator) and other MCP clients |
 
 ## Configuration
 
@@ -109,6 +110,7 @@ Copy `.env.example` to `.env`. Every variable is read once by
 | `LLM_KEY` | — | API key for the selected provider |
 | `LLM_MODEL` | — | Model id for the selected provider |
 | `REPORT_REDACT` | — | Extra sensitive key substrings (comma-separated) masked in report network data |
+| `REPORT_DIR` | — | Write this run's report to this folder instead of `reports/<ENVIRONMENT>/` (a relative path is taken from the project root) |
 
 Layer 3 is optional: it is enabled only when `AI_PROVIDER` is set, and then `LLM_KEY` and `LLM_MODEL` are required. An empty or missing `AI_PROVIDER` disables it.
 Setting only some is a startup error. Flow secrets never go in the flow file —
