@@ -1,0 +1,65 @@
+# JANUS extension manifest — lets JANUS (the QA Orchestrator Agent) install,
+# configure, start, update and remove this agent. See JANUS docs/MASTER_PROMPT.md §46.
+schema = 1
+
+[extension]
+type = "agent"
+name = "web-agent"
+display_name = "Web Agent"
+description = "Autonomous web testing in a real browser: Markdown flows, Playwright, self-healing locators"
+version = "1.2.0"
+homepage = "https://github.com/wheelsup/qa_web_agent"
+
+[source]
+repository = "https://github.com/wheelsup/qa_web_agent"
+ref = "staging"
+
+[runtime]
+language = "python"
+platforms = ["darwin", "linux"]
+tools = ["uv"]
+
+[install]
+steps = [
+    "uv sync --extra mcp --locked",
+    "uv run playwright install chromium",
+]
+
+[start]
+transport = "stdio"
+command = "uv"
+args = ["run", "--extra", "mcp", "python", "-m", "mcp_server"]
+cwd = "."
+
+[capabilities]
+provides = ["web.testing", "web.validation"]
+tools = ["list_flows", "run_flow", "get_status", "get_result", "cancel_execution"]
+
+[config]
+[[config.settings]]
+key = "flows_dir"
+description = "Folder of flows the MCP may run (inside this project); default tests"
+env = "WEB_AGENT_MCP_FLOWS_DIR"
+
+[[config.settings]]
+key = "executions_dir"
+description = "Where each execution's report folder goes; default reports/_executions"
+env = "WEB_AGENT_MCP_EXECUTIONS_DIR"
+
+[[config.settings]]
+key = "environments_file"
+description = "Environments allow-list (hosts per environment); default mcp_server/environments.toml"
+env = "WEB_AGENT_MCP_ENVIRONMENTS_FILE"
+
+[[config.settings]]
+key = "allow_production"
+description = "Allow runs against environments marked production (true/false)"
+env = "WEB_AGENT_MCP_ALLOW_PRODUCTION"
+default = "false"
+
+[compatibility]
+janus = ">=0.1"
+contract = "execution/1"
+
+[remove]
+preserve = ["reports"]
