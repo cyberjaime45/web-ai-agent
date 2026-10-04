@@ -1,7 +1,7 @@
 # SSO Login Page
 
 ## Login
-- goto: "https://one.wheelsup.com/"
+- goto: "<FMS_URL>"
 - fill: "input[type='email']" | "<FMS_EMAIL>"
 - click: "Next"
 - fill: "Password" | "<FMS_PASSWORD>"

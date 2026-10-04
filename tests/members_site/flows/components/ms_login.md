@@ -1,7 +1,7 @@
 # Members Site Login
 
 ## Steps
-- goto: "https://memberssitestaging.wheelsup.com/"
+- goto: "<MEMBERS_SITE_URL>"
 - wait_load
 <!-- - click: "Accept All Cookies" -->
 - fill: "[data-testid='email-login-input']" | "core@test.com"
