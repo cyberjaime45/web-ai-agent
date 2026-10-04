@@ -21,11 +21,31 @@ def _names(ob: Observation, *roles: str) -> str:
     return f"{len(nodes)}: " + ", ".join(names) + (f", +{more} more" if more > 0 else "") if nodes else "0"
 
 
+def structured(ob: Observation, max_names: int = 40) -> dict:
+    """The observation as plain data, for the report and for clients that build
+    flows from it (the Web Agent MCP's ``exploration``): controls by role, and
+    every form with its fields' labels, types and targets a step can use."""
+    def names(*roles: str) -> list[str]:
+        return [n.name or f"({n.role})" for n in ob.by_role(*roles)[:max_names]]
+    return {
+        "url": ob.url, "title": ob.title, "page_type": ob.page_type,
+        "headings": names("heading"), "buttons": names("button"), "links": names("link"),
+        "inputs": names("textbox", "searchbox", "combobox", "checkbox", "radio", "switch"),
+        "forms": [{
+            "name": form.name, "submits": list(form.submits),
+            "fields": [{"label": f.label, "type": f.type, "target": f.target, "required": f.required,
+                        "placeholder": f.placeholder} for f in form.fields[:max_names]],
+        } for form in ob.forms],
+        "tables": ob.tables, "dialogs": ob.dialogs, "truncated": ob.truncated,
+    }
+
+
 @skill(ActionType.INSPECT_PAGE)
 def inspect_page(sc: SkillContext) -> list[Check]:
     ob = sc.observe()
     sc.ctx.store("page_type", ob.page_type)
     sc.ctx.store("observation", ob.to_prompt())
+    sc.agent["observation"] = structured(ob)
 
     checks = [
         info("page type", ob.page_type),

@@ -115,6 +115,19 @@ own the site the input points at, like any other site the flow opens. Inputs
 are upper-case names; a name that looks like a credential (`PASSWORD`,
 `SECRET`, `KEY`, `TOKEN`) is refused — secrets stay in the Web Agent's `.env`.
 
+## Writing flows through the MCP
+
+Five tools let an orchestrator author flows with what the Web Agent knows,
+not a copy of it:
+
+| Tool | Does |
+|------|------|
+| `describe_capabilities` | Every action keyword with its argument counts, group and meaning, every QA skill with its options, the flow file format, the names (never values) of the `<PLACEHOLDER>`s this Web Agent can fill, and the tool list — read from `ActionType`, `ACTION_ARG_SPEC`, the skill registry and `docs/ACTIONS.md` |
+| `get_flow(flow)` | A flow's Markdown and its catalog entry |
+| `validate_flow(content, flow?)` | Parse and lint the text as the `lint` command does; `valid` is false on a blocking finding (`parse-error`, `no-steps`, `unknown-step`, `literal-secret`, `missing-component`); the rest is advice (`fixed-wait`, `no-assertion`…). `info` is what `list_flows` would show |
+| `save_flow(flow, content, overwrite=false)` | Validate, then write under the flows folder as `flow` (`atlas/login.md`): lower-case ids, no reserved folders, never outside the folder, never over an existing flow unless `overwrite`. The flow is listed at once |
+| `explore_page(url, environment, depth=1, max_actions=12)` | An execution like any other (`get_status`, `cancel_execution`, `get_result`) that opens the page, runs `inspect_page` and `test_page` with `submit=false` — nothing is submitted, no credentials typed — and drafts a flow. `get_result.exploration` carries the observation (title, page type, headings, buttons, links, inputs, forms with each field's label, type and target), the assertions `test_page` suggests, the steps it ran and the generated draft. The environment must own the page's site |
+
 ## Configuration
 
 Read by the Web Agent MCP only; the Web Agent's own settings are unchanged.

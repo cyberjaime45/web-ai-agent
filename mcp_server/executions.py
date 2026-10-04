@@ -96,13 +96,18 @@ class ExecutionManager:
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def start(self, *, flow_id: str, flow_path: Path, environment: str, hosts: list[str],
+    def start(self, *, flow_id: str, flow_path: Path | None, environment: str, hosts: list[str],
               profile: str | None, label: str, metadata: dict[str, str],
-              inputs: dict[str, str] | None = None) -> Execution:
-        """Register an execution and schedule its run. Returns at once, QUEUED."""
+              inputs: dict[str, str] | None = None, flow_text: str | None = None) -> Execution:
+        """Register an execution and schedule its run. Returns at once, QUEUED.
+        With *flow_text* instead of *flow_path*, the flow is written into the
+        execution's folder (an exploration, which is not a catalog flow)."""
         execution_id = f"web-{uuid.uuid4().hex[:12]}"
         directory = self._config.executions_dir / execution_id
         directory.mkdir(parents=True, exist_ok=False)
+        if flow_path is None:
+            flow_path = directory / "flow.md"
+            flow_path.write_text(flow_text or "", encoding="utf-8")
         execution = Execution(
             execution_id=execution_id, flow_id=flow_id,
             flow_path=flow_path.relative_to(self._config.project_root).as_posix(),

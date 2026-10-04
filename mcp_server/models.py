@@ -68,6 +68,59 @@ class FlowInfo(BaseModel):
     steps: int = 0
 
 
+class FlowDocument(BaseModel):
+    """A flow's content and what the catalog knows about it (get_flow)."""
+    info: FlowInfo | None = None
+    content: str = ""
+    path: str = ""
+    error: ErrorInfo | None = None
+
+
+class LintFinding(BaseModel):
+    line: int
+    rule: str
+    message: str
+    blocking: bool = False      # a flow with a blocking finding is not saved
+
+
+class ValidationResult(BaseModel):
+    """validate_flow / save_flow: parse and lint outcome, plus the flow as it
+    would be listed. ``saved`` is the id when save_flow wrote it."""
+    valid: bool = False
+    findings: list[LintFinding] = Field(default_factory=list)
+    info: FlowInfo | None = None
+    saved: str | None = None
+    path: str | None = None
+    error: ErrorInfo | None = None
+
+
+class ActionSpec(BaseModel):
+    keyword: str
+    group: str = ""
+    min_args: int = 0
+    max_args: int = 0
+    description: str = ""
+
+
+class SkillSpec(BaseModel):
+    keyword: str
+    description: str = ""
+    options: dict[str, str] = Field(default_factory=dict)    # option → meaning (with its default)
+
+
+class Capabilities(BaseModel):
+    """describe_capabilities: what flows may contain, from the Web Agent's own
+    registries and documentation — never a copy kept elsewhere."""
+    web_agent_version: str = ""
+    contract: str = "execution/1"
+    actions: list[ActionSpec] = Field(default_factory=list)
+    skills: list[SkillSpec] = Field(default_factory=list)
+    flow_format: dict[str, Any] = Field(default_factory=dict)
+    configured_placeholders: list[str] = Field(default_factory=list)   # <NAME>s the environment can fill (names only)
+    tools: list[str] = Field(default_factory=list)
+    error: ErrorInfo | None = None
+
+
 class UnavailableFlow(BaseModel):
     id: str
     reason: str
@@ -161,6 +214,24 @@ class ReportFiles(BaseModel):
     junit: str | None = None
 
 
+class GeneratedFlow(BaseModel):
+    path: str
+    content: str = ""
+
+
+class Exploration(BaseModel):
+    """What an explore_page execution learned: the page as inspect_page saw it,
+    the assertions test_page suggests, and the draft flow it generated."""
+    url: str = ""
+    title: str = ""
+    page_type: str = ""
+    observation: dict[str, Any] = Field(default_factory=dict)
+    components: list[str] = Field(default_factory=list)
+    assertions: list[str] = Field(default_factory=list)       # step lines test_page would assert
+    actions: list[str] = Field(default_factory=list)          # leaf steps the agent ran
+    generated_flow: GeneratedFlow | None = None
+
+
 class ExecutionResult(BaseModel):
     execution_id: str | None = None
     status: ExecutionState | None = None
@@ -168,6 +239,7 @@ class ExecutionResult(BaseModel):
     environment: str | None = None
     hosts: list[str] = Field(default_factory=list)
     verdict: str | None = None          # the Web Agent's own run status (passed, failed, …)
+    exploration: Exploration | None = None   # present for explore_page executions
     summary: Totals | None = None
     tests: list[CaseOutcome] = Field(default_factory=list)
     failures: list[Failure] = Field(default_factory=list)

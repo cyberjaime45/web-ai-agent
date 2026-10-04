@@ -27,6 +27,7 @@ from app.flow.parser import (
     FlowDefinition,
     FlowParseError,
     parse_flow_file,
+    parse_flow_markdown,
     resolve_flow_path,
 )
 from app.schemas.actions import ActionType
@@ -170,8 +171,14 @@ class Catalog:
         except (FlowParseError, OSError, UnicodeDecodeError):
             return None
 
-    def _entry(self, flow_id: str, path: Path, inputs: dict[str, str] | None = None) -> FlowEntry:
-        flow = parse_flow_file(path)
+    def describe_text(self, flow_id: str, text: str) -> FlowEntry:
+        """What a flow would be if *text* were saved as *flow_id* (sites, environments,
+        inputs); raises FlowParseError when it cannot be read as a flow."""
+        return self._entry(flow_id, (self._config.flows_dir / flow_id).resolve(), text=text)
+
+    def _entry(self, flow_id: str, path: Path, inputs: dict[str, str] | None = None,
+               text: str | None = None) -> FlowEntry:
+        flow = parse_flow_markdown(text, name=path.stem) if text is not None else parse_flow_file(path)
         if not flow.actions:
             raise FlowParseError("no steps found (a flow needs a ## section with list items)")
         targets, names, problems = _targets(flow, path.parent, inputs or {})

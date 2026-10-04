@@ -185,6 +185,27 @@ def _repeated_steps(flows: list[_Flow], rel) -> list[Finding]:
     return out
 
 
+def lint_markdown(text: str, path: Path, root: Path | None = None) -> list[Finding]:
+    """Findings for flow text that would live at *path* (components resolve from
+    its folder); nothing is read from or written to disk for the flow itself."""
+    root = (root or Path.cwd()).resolve()
+    try:
+        rel = str(path.resolve().relative_to(root))
+    except ValueError:
+        rel = str(path)
+    try:
+        parsed = parse_flow_markdown(text, name=path.stem)
+    except FlowParseError as exc:
+        line = next((n for n, ln in enumerate(text.splitlines(), 1) if exc.raw and exc.raw in ln), 1)
+        return [Finding(rel, line, "parse-error", str(exc))]
+    if not parsed.actions:
+        return [Finding(rel, 1, "no-steps", "no steps found (a flow needs a ## section with list items)")]
+    flow = _Flow(path, parsed.actions, _source_lines(text, parsed.actions))
+    findings = _step_rules(flow, rel)
+    findings += _run_flow_refs(flow, rel)[1]
+    return sorted(findings, key=lambda f: (f.path, f.line, f.rule))
+
+
 def lint(paths: list[Path], root: Path | None = None) -> list[Finding]:
     """Findings for every flow file under *paths*, paths shown relative to *root*."""
     root = (root or Path.cwd()).resolve()

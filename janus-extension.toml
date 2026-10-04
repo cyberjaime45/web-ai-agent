@@ -7,7 +7,7 @@ type = "agent"
 name = "web-agent"
 display_name = "Web Agent"
 description = "Autonomous web testing in a real browser: Markdown flows, Playwright, self-healing locators"
-version = "1.3.0"
+version = "1.4.0"
 homepage = "https://github.com/wheelsup/qa_web_agent"
 
 [source]
@@ -33,7 +33,8 @@ cwd = "."
 
 [capabilities]
 provides = ["web.testing", "web.validation"]
-tools = ["list_flows", "run_flow", "get_status", "get_result", "cancel_execution"]
+tools = ["list_flows", "run_flow", "get_status", "get_result", "cancel_execution",
+         "describe_capabilities", "get_flow", "validate_flow", "save_flow", "explore_page"]
 
 [config]
 [[config.settings]]

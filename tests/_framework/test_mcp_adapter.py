@@ -296,3 +296,81 @@ def test_a_crashed_test_is_reported_as_an_execution_error(tmp_path: Path):
 
 def test_no_report_means_no_result(tmp_path: Path):
     assert results.build_result(tmp_path / "report") is None
+
+
+# ── Authoring: describe, validate, save ──────────────────────────────────────
+
+def test_capabilities_come_from_the_web_agents_own_registries(tmp_path: Path, monkeypatch):
+    from app.schemas.actions import ACTION_ARG_SPEC, SKILL_ACTIONS
+    from app.skills.base import SKILLS
+    from mcp_server import authoring
+    monkeypatch.setenv("MCP_TEST_APP_URL", "https://x/")
+    monkeypatch.setenv("MCP_TEST_APP_PASSWORD", "s3cret")
+    monkeypatch.setenv("MCP_TEST_OTHER", "no")
+    caps = authoring.describe(_config(tmp_path, project_root=Path(__file__).resolve().parents[2]), ["run_flow"])
+    assert {a.keyword for a in caps.actions} == {a.value for a in ACTION_ARG_SPEC if a not in SKILL_ACTIONS}
+    assert {s.keyword for s in caps.skills} == {a.value for a in SKILLS}
+    fill = next(a for a in caps.actions if a.keyword == "fill")
+    assert (fill.min_args, fill.max_args) == (1, 2) and fill.group == "Input" and fill.description
+    test_page = next(s for s in caps.skills if s.keyword == "test_page")
+    assert "depth" in test_page.options and test_page.description
+    assert "MCP_TEST_APP_URL" in caps.configured_placeholders and "MCP_TEST_APP_PASSWORD" in caps.configured_placeholders
+    assert "MCP_TEST_OTHER" not in caps.configured_placeholders
+    assert "s3cret" not in caps.model_dump_json()                              # names only, never values
+    assert caps.flow_format["placeholders"] and caps.tools == ["run_flow"]
+
+
+def test_validate_reports_findings_and_what_the_flow_would_be(tmp_path: Path, catalog: Catalog):
+    from mcp_server import authoring
+    config = _config(tmp_path)
+    good = ('# Atlas login\n\n## Sign in\n- goto: "<ATLAS_URL>"\n- fill: "Email" | "<ATLAS_EMAIL>"\n'
+            '- fill: "Password" | "<ATLAS_PASSWORD>"\n- click: "Sign in"\n- assert_hidden: "Password"\n')
+    result = authoring.validate(catalog, config, good, "atlas/login.md")
+    assert result.valid and result.findings == [] and result.error is None
+    assert result.info.inputs == ["ATLAS_URL"] and result.info.tests == ["Sign in"] and result.info.environments == []
+
+    advice = authoring.validate(catalog, config, '# X\n\n## Open\n- goto: "https://staging.example.com/"\n- wait: 2000\n',
+                                "app/x.md")
+    assert advice.valid and {f.rule for f in advice.findings} == {"fixed-wait", "no-assertion"}
+    assert advice.info.environments == ["staging"]
+
+    bad = authoring.validate(catalog, config, '# X\n\n## Open\n- goto: "https://a/"\n- fill: "Password" | "hunter2"\n'
+                                             '- frobnicate: "x"\n', "app/bad.md")
+    assert not bad.valid and {f.rule for f in bad.findings if f.blocking} == {"literal-secret", "unknown-step"}
+
+    assert "Invalid flow id" in authoring.validate(catalog, config, good, "../x.md").error.message
+    assert "reserved" in authoring.validate(catalog, config, good, "generated/x.md").error.message
+    assert "Invalid flow id" in authoring.validate(catalog, config, good, "_framework/x.md").error.message
+    assert authoring.validate(catalog, config, "   ", "app/e.md").error is not None
+    assert not authoring.validate(catalog, config, "# Empty\n\nno steps\n", "app/e.md").valid
+
+
+def test_save_writes_a_valid_flow_under_the_flows_folder_and_never_over_one(tmp_path: Path, catalog: Catalog):
+    from mcp_server import authoring
+    config = _config(tmp_path)
+    text = '# Fixture\n\n## Page\n- goto: "file:///tmp/page.html"\n- assert_text: "Hi"'
+    saved = authoring.save(catalog, config, "new_app/page.md", text, overwrite=False)
+    assert saved.error is None and saved.saved == "new_app/page.md"
+    assert Path(saved.path) == tmp_path / "flows" / "new_app" / "page.md"
+    assert Path(saved.path).read_text().endswith("\n") and saved.info.environments == ["local"]
+    assert catalog.get("new_app/page.md") is not None                           # listed at once
+
+    again = authoring.save(catalog, config, "new_app/page.md", text + "\n- wait_load\n", overwrite=False)
+    assert again.error is not None and "already exists" in again.error.message
+    assert "wait_load" not in Path(saved.path).read_text()
+    replaced = authoring.save(catalog, config, "new_app/page.md", text + "\n- wait_load\n", overwrite=True)
+    assert replaced.error is None and "wait_load" in Path(saved.path).read_text()
+
+    refused = authoring.save(catalog, config, "new_app/bad.md", '# B\n\n## S\n- nope: "x"\n', overwrite=False)
+    assert refused.error is not None and "not valid" in refused.error.message
+    assert not (tmp_path / "flows" / "new_app" / "bad.md").exists()
+    assert authoring.save(catalog, config, "components/../x.md", text, overwrite=False).error is not None
+
+
+def test_the_exploration_flow_inspects_and_tests_without_submitting():
+    from mcp_server import authoring
+    text = authoring.explore_markdown("https://a.example.com/login", 1, 12)
+    assert '- goto: "https://a.example.com/login"' in text and "- inspect_page" in text
+    assert '- test_page: "depth=1" | "max_actions=12" | "submit=false"' in text
+    assert authoring.bad_exploration("ftp://x", 1, 12) and authoring.bad_exploration("https://x/", 9, 12)
+    assert authoring.bad_exploration("https://x/", 1, 12) is None

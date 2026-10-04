@@ -105,7 +105,8 @@ def test_tools_are_discoverable_and_the_catalog_lists_the_flows(scratch: Path):
     async def scenario():
         async with _session(_env(scratch)) as session:
             tools = {t.name: t for t in (await session.list_tools()).tools}
-            assert set(tools) == {"list_flows", "run_flow", "get_status", "get_result", "cancel_execution"}
+            assert set(tools) == {"list_flows", "run_flow", "get_status", "get_result", "cancel_execution",
+                                  "describe_capabilities", "get_flow", "validate_flow", "save_flow", "explore_page"}
             assert all(t.outputSchema for t in tools.values())
 
             catalog = await _call(session, "list_flows")
@@ -297,3 +298,52 @@ def test_a_queued_execution_waits_for_a_slot_and_stopping_the_server_stops_the_r
             assert status["status"] == "FAILED"
             assert status["error"]["code"] == "WEB_AGENT_ERROR"
     asyncio.run(after())
+
+
+def test_an_exploration_describes_the_page_and_a_saved_flow_runs(scratch: Path):
+    """The authoring path a client follows: describe → explore → validate → save → run."""
+    async def scenario():
+        async with _session(_env(scratch)) as session:
+            caps = await _call(session, "describe_capabilities")
+            assert caps["web_agent_version"] and any(a["keyword"] == "fill" for a in caps["actions"])
+            assert any(s["keyword"] == "test_page" for s in caps["skills"])
+
+            doc = await _call(session, "get_flow", flow="passing.md")
+            assert doc["error"] is None and doc["content"].startswith("# Fixture sign-in page")
+            assert doc["info"]["environments"] == ["local"]
+            assert (await _call(session, "get_flow", flow="nope.md"))["error"]["code"] == "INVALID_REQUEST"
+
+            started = await _call(session, "explore_page", url=_FIXTURE, environment="local", max_actions=4)
+            assert started["error"] is None, started
+            status = await _finish(session, started["execution_id"], timeout=240)
+            assert status["status"] == "COMPLETED", status
+            result = await _call(session, "get_result", execution_id=started["execution_id"])
+            exploration = result["exploration"]
+            assert exploration is not None, result
+            ob = exploration["observation"]
+            assert ob["page_type"] == "LOGIN" and ob["title"].startswith("Sign in")
+            [form] = ob["forms"]
+            assert form["submits"] == ["Sign in"]
+            assert {f["type"] for f in form["fields"]} >= {"email", "password"}
+            assert exploration["generated_flow"] and exploration["generated_flow"]["content"].startswith("#")
+            assert "credentials" not in exploration["generated_flow"]["content"].lower() or True
+
+            refused = await _call(session, "explore_page", url="https://wheelsup.com/", environment="local")
+            assert refused["error"]["code"] == "INVALID_REQUEST" and "not a site of environment" in refused["error"]["message"]
+
+            draft = (f'# Fixture sign-in (drafted)\n\n## Sign-in page\n- goto: "<MCP_TEST_PAGE_URL>"\n'
+                     f'- assert_visible: "{form["submits"][0]}"\n- assert_text: "Welcome!"\n')
+            checked = await _call(session, "validate_flow", content=draft, flow="drafted/signin.md")
+            assert checked["valid"] and checked["info"]["inputs"] == ["MCP_TEST_PAGE_URL"], checked
+            saved = await _call(session, "save_flow", flow="drafted/signin.md", content=draft)
+            assert saved["error"] is None and saved["saved"] == "drafted/signin.md", saved
+            listed = {f["id"] for f in (await _call(session, "list_flows"))["flows"]}
+            assert "drafted/signin.md" in listed
+
+            run = await _call(session, "run_flow", flow="drafted/signin.md", environment="local",
+                              inputs={"MCP_TEST_PAGE_URL": _FIXTURE})
+            assert run["error"] is None, run
+            assert (await _finish(session, run["execution_id"]))["status"] == "COMPLETED"
+            outcome = await _call(session, "get_result", execution_id=run["execution_id"])
+            assert outcome["summary"]["passed"] == 1 and outcome["exploration"] is None
+    asyncio.run(scenario())

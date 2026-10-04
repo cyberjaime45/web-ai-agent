@@ -18,6 +18,7 @@ from mcp_server.models import (
     ErrorCode,
     ErrorInfo,
     ExecutionState,
+    Exploration,
     Failure,
     FailureEvidence,
     Finding,
@@ -149,6 +150,49 @@ def _failure(report_dir: Path, test: dict) -> Failure:
     )
 
 
+_MAX_GENERATED = 60_000
+
+
+def _steps(nodes: list[dict]):
+    """Every step record, nested groups included."""
+    for node in nodes:
+        yield node
+        yield from _steps(node.get("steps") or [])
+
+
+def _exploration(tests: list[dict], report_dir: Path) -> dict[str, Any] | None:
+    """What inspect_page and test_page recorded on their steps: the observation,
+    the facts of the autonomous run, and the generated draft flow."""
+    observation: dict[str, Any] = {}
+    agent: dict[str, Any] = {}
+    generated: str | None = None
+    for test in tests:
+        for step in _steps(test.get("steps") or []):
+            data = step.get("agent") or {}
+            if data.get("observation") and not observation:
+                observation = data["observation"]
+            if "page_type" in data and "actions" in data:
+                agent = data
+            files = (step.get("evidence") or {}).get("files") or {}
+            generated = files.get("generated flow") or data.get("generated") or generated
+    if not observation and not agent:
+        return None
+    draft = None
+    if generated:
+        path = Path(generated) if Path(generated).is_absolute() else report_dir / generated   # report-relative
+        try:
+            draft = {"path": str(path), "content": path.read_text(encoding="utf-8")[:_MAX_GENERATED]}
+        except OSError:
+            draft = {"path": str(path)}
+    return {
+        "url": observation.get("url", ""), "title": observation.get("title", ""),
+        "page_type": observation.get("page_type") or agent.get("page_type", ""),
+        "observation": observation, "components": agent.get("components") or [],
+        "assertions": agent.get("assertions") or [], "actions": agent.get("actions") or [],
+        "generated_flow": draft,
+    }
+
+
 def build_result(report_dir: Path) -> dict[str, Any] | None:
     """What the report says, as contract fields — or None when there is no report."""
     summary = read_json(report_dir / "summary.json")
@@ -165,7 +209,9 @@ def build_result(report_dir: Path) -> dict[str, Any] | None:
     ]
     existing = {name: path for name in ("report.html", "summary.json", "test_cases.json", "junit.xml")
                 if (path := report_dir / name).is_file()}
+    exploration = _exploration(tests, report_dir)
     return {
+        **({"exploration": Exploration(**exploration)} if exploration else {}),
         "verdict": summary.get("status"),
         "summary": Totals(**{k: totals[k] for k in Totals.model_fields if k in totals}),
         "tests": [
