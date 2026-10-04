@@ -100,7 +100,20 @@ URL), runs against none and `list_flows` shows it with no environments.
 `ENVIRONMENT` for the run is set to the environment's name.
 
 To add QA2: add `[environments.qa2]` with its hosts, and flows that open those
-hosts.
+hosts. An orchestrator can supply environments too: `JANUS_ENVIRONMENTS_FILE`
+names a second file in the same format, merged with this one (hosts are
+combined; an environment is production when either file says so). Both files
+are re-read on every call, so a change needs no restart.
+
+### Inputs: one flow, every environment
+
+A `goto` written as `<NAME>` (for example `goto: "<MEMBERS_SITE_URL>"`) takes
+its URL from the run: `run_flow(inputs={"MEMBERS_SITE_URL": "https://..."})`,
+or else from the environment the Web Agent MCP runs in. `list_flows` reports
+such names as the flow's `inputs`. The environment named in `run_flow` must
+own the site the input points at, like any other site the flow opens. Inputs
+are upper-case names; a name that looks like a credential (`PASSWORD`,
+`SECRET`, `KEY`, `TOKEN`) is refused — secrets stay in the Web Agent's `.env`.
 
 ## Configuration
 
@@ -110,6 +123,7 @@ Read by the Web Agent MCP only; the Web Agent's own settings are unchanged.
 |----------|---------|---------|
 | `WEB_AGENT_MCP_FLOWS_DIR` | `tests` | Folder whose flows may be run (inside the project). `_framework`, `components`, `fixtures`, `baselines`, `generated` are skipped |
 | `WEB_AGENT_MCP_ENVIRONMENTS_FILE` | `mcp_server/environments.toml` | The environment allow-list |
+| `JANUS_ENVIRONMENTS_FILE` | — | A second allow-list supplied by the orchestrator, merged with the first |
 | `WEB_AGENT_MCP_EXECUTIONS_DIR` | `reports/_executions` | One folder per execution |
 | `WEB_AGENT_MCP_TIMEOUT_SECONDS` | `1800` | An execution is stopped after this |
 | `WEB_AGENT_MCP_STOP_GRACE_SECONDS` | `20` | Time to finish after the interrupt, before terminate and kill |
@@ -117,8 +131,9 @@ Read by the Web Agent MCP only; the Web Agent's own settings are unchanged.
 | `WEB_AGENT_MCP_HEADLESS` | `true` | Executions run headless whatever `.env` says |
 | `WEB_AGENT_MCP_ALLOW_PRODUCTION` | `false` | Allow environments marked `production = true` |
 
-Each execution runs with `ENVIRONMENT=<name>`, `REPORT_DIR=<its folder>/report`
-and `BUILD_NAME=<flow title · environment>` (or `metadata.build_name`).
+Each execution runs with `ENVIRONMENT=<name>`, `REPORT_DIR=<its folder>/report`,
+`BUILD_NAME=<flow title · environment>` (or `metadata.build_name`) and the
+run's `inputs` as environment variables.
 Everything else — browser, LLM layer, reruns, flow secrets — comes from `.env`
 as in any other run.
 

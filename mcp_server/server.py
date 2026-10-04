@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -26,6 +27,7 @@ from mcp.server.fastmcp import FastMCP
 from app.browser.profiles import (
     BUILTIN as PROFILES,  # also loads .env, as every entry point does
 )
+from app.flow.placeholders import is_sensitive
 from mcp_server import results
 from mcp_server.catalog import Catalog, load_environments
 from mcp_server.config import AdapterConfig, ConfigError, load_config
@@ -49,6 +51,8 @@ _INSTRUCTIONS = (
     "contain failed tests: read the result. FAILED means the Web Agent itself could not run the flow."
 )
 _MAX_METADATA = 20
+_MAX_INPUTS = 20
+_INPUT_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
 def _error(code: ErrorCode, message: str, **details) -> ErrorInfo:
@@ -81,8 +85,26 @@ def _status(execution: Execution) -> ExecutionStatus:
     )
 
 
+def _bad_inputs(inputs: dict[str, str] | None) -> str | None:
+    """Why *inputs* cannot be accepted, or None. Secrets never arrive this way:
+    they stay in the Web Agent's own configuration."""
+    if not inputs:
+        return None
+    if len(inputs) > _MAX_INPUTS:
+        return f"at most {_MAX_INPUTS} inputs"
+    for name, value in inputs.items():
+        if not _INPUT_NAME_RE.match(name):
+            return f"input {name!r}: a name is upper-case letters, digits and underscores"
+        if is_sensitive(name):
+            return f"input {name!r}: credentials are not accepted as inputs; set them in the Web Agent's .env"
+        if not isinstance(value, str) or not value.strip() or len(value) > 2000:
+            return f"input {name!r}: the value must be a non-empty string"
+    return None
+
+
 def build_server(config: AdapterConfig) -> FastMCP:
-    catalog = Catalog(config, load_environments(config.environments_file))
+    load_environments(config.environments_file, config.extra_environments_file)   # fail at start if unreadable
+    catalog = Catalog(config)
     manager = ExecutionManager(config)
 
     @asynccontextmanager
@@ -114,15 +136,22 @@ def build_server(config: AdapterConfig) -> FastMCP:
 
     @server.tool()
     async def run_flow(flow: str, environment: str, profile: str | None = None,
-                       metadata: dict[str, str] | None = None) -> ExecutionStatus:
+                       metadata: dict[str, str] | None = None,
+                       inputs: dict[str, str] | None = None) -> ExecutionStatus:
         """Start one flow against one environment. Returns at once with an execution id.
 
         `flow` is a flow id from list_flows; `environment` must be one the flow
         may run against. `profile` is `desktop` or `mobile` (default: the flow's
         own setting). `metadata` is free-form labels kept with the execution,
-        for example `requested_by` and `task_id`.
+        for example `requested_by` and `task_id`. `inputs` are values for the
+        flow's `<NAME>` placeholders for this run — its `inputs` from list_flows,
+        typically the URL of the application in that environment; the
+        environment must own the sites they point at. Credentials are never
+        accepted as inputs.
         """
-        entry = catalog.get(flow)
+        if problem := _bad_inputs(inputs):
+            return ExecutionStatus(error=_error(ErrorCode.INVALID_REQUEST, f"Invalid inputs: {problem}."))
+        entry = catalog.get(flow, inputs)
         if entry is None:
             return ExecutionStatus(error=_error(
                 ErrorCode.INVALID_REQUEST, f"Unknown flow {flow!r}. Use a flow id from list_flows."))
@@ -136,11 +165,14 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 ErrorCode.ENVIRONMENT_NOT_ALLOWED,
                 f"Environment {env.name!r} is a production environment and is not enabled on this server."))
         if env.name not in entry.info.environments:
+            unset = [n for n in entry.info.inputs if n not in (inputs or {})]
             return ExecutionStatus(flow=entry.info.id, environment=env.name, error=_error(
                 ErrorCode.INVALID_REQUEST,
                 f"Flow {entry.info.id!r} does not run against {env.name!r}: it opens "
-                f"{', '.join(entry.info.hosts) or 'no known site'}.",
-                flow_hosts=entry.info.hosts, flow_environments=entry.info.environments))
+                f"{', '.join(entry.info.hosts) or 'no known site'}"
+                + (f" and needs inputs for {', '.join(unset)}" if unset else "") + ".",
+                flow_hosts=entry.info.hosts, flow_environments=entry.info.environments,
+                flow_inputs=entry.info.inputs))
         if profile is not None and profile not in PROFILES:
             return ExecutionStatus(flow=entry.info.id, environment=env.name, error=_error(
                 ErrorCode.INVALID_REQUEST, f"Unknown profile {profile!r}.", known=list(PROFILES)))
@@ -151,7 +183,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 flow_id=entry.info.id, flow_path=entry.path, environment=env.name,
                 hosts=entry.info.hosts, profile=profile,
                 label=labels.get("build_name") or f"{entry.info.title} · {env.name}",
-                metadata=labels)
+                metadata=labels, inputs=inputs)
         except OSError as exc:
             return ExecutionStatus(flow=entry.info.id, environment=env.name, error=_error(
                 ErrorCode.EXECUTION_START_FAILED, f"The execution could not be created: {exc}"))

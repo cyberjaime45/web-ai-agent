@@ -52,6 +52,7 @@ class Execution:
     label: str                      # the run's BUILD_NAME (report title)
     metadata: dict[str, str]
     directory: str
+    inputs: dict[str, str] = field(default_factory=dict)   # <NAME> values for this run (never secrets)
     state: ExecutionState = ExecutionState.QUEUED
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
@@ -96,7 +97,8 @@ class ExecutionManager:
     # ── Public API ──────────────────────────────────────────────────────────
 
     def start(self, *, flow_id: str, flow_path: Path, environment: str, hosts: list[str],
-              profile: str | None, label: str, metadata: dict[str, str]) -> Execution:
+              profile: str | None, label: str, metadata: dict[str, str],
+              inputs: dict[str, str] | None = None) -> Execution:
         """Register an execution and schedule its run. Returns at once, QUEUED."""
         execution_id = f"web-{uuid.uuid4().hex[:12]}"
         directory = self._config.executions_dir / execution_id
@@ -105,7 +107,7 @@ class ExecutionManager:
             execution_id=execution_id, flow_id=flow_id,
             flow_path=flow_path.relative_to(self._config.project_root).as_posix(),
             environment=environment, hosts=hosts, profile=profile, label=label,
-            metadata=metadata, directory=str(directory),
+            metadata=metadata, directory=str(directory), inputs=dict(inputs or {}),
         )
         self._executions[execution_id] = execution
         self._save(execution)
@@ -212,6 +214,7 @@ class ExecutionManager:
             command += ["--profile", execution.profile]
         env = {
             **os.environ,
+            **execution.inputs,                 # the run's <NAME> values win over .env
             "ENVIRONMENT": execution.environment,
             "REPORT_DIR": str(execution.report_dir),
             "BUILD_NAME": execution.label,

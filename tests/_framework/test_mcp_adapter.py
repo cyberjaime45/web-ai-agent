@@ -30,7 +30,8 @@ _ENVIRONMENTS = {
 def _config(root: Path, **overrides) -> AdapterConfig:
     values = {
         "project_root": root, "flows_dir": root / "flows", "executions_dir": root / "executions",
-        "environments_file": root / "environments.toml", "timeout_seconds": 60, "stop_grace_seconds": 1,
+        "environments_file": root / "environments.toml", "extra_environments_file": None,
+        "timeout_seconds": 60, "stop_grace_seconds": 1,
         "max_concurrent": 1, "headless": True, "allow_production": False, "python": "python"}
     return AdapterConfig(**{**values, **overrides})
 
@@ -92,6 +93,38 @@ def test_component_sites_count_and_components_are_not_runnable_flows(catalog: Ca
 def test_a_flow_whose_site_is_unknown_runs_nowhere(catalog: Catalog):
     assert catalog.get("app/no_site.md").info.environments == []
     assert catalog.get("app/placeholder.md").info.environments == []
+
+
+def test_a_placeholder_site_is_filled_from_the_run_inputs(catalog: Catalog):
+    listed = catalog.get("app/placeholder.md").info
+    assert listed.inputs == ["MCP_TEST_UNSET_URL"] and listed.hosts == [] and listed.environments == []
+    filled = catalog.get("app/placeholder.md", {"MCP_TEST_UNSET_URL": "https://staging.example.com/app/"}).info
+    assert filled.hosts == ["staging.example.com"] and filled.environments == ["staging"]
+    assert filled.inputs == ["MCP_TEST_UNSET_URL"]
+    elsewhere = catalog.get("app/placeholder.md", {"MCP_TEST_UNSET_URL": "https://example.com/"}).info
+    assert elsewhere.environments == ["production"]
+    assert catalog.get("app/login.md").info.inputs == []            # a literal URL declares no input
+
+
+def test_the_environment_files_are_read_on_every_call_and_merged(tmp_path: Path):
+    own = tmp_path / "environments.toml"
+    own.write_text('[environments.staging]\nhosts = ["staging.example.com"]\n'
+                   '[environments.production]\nproduction = true\nhosts = ["example.com"]\n')
+    extra = tmp_path / "janus.toml"
+    extra.write_text('[environments.staging]\nhosts = ["one-staging.example.com"]\n'
+                     '[environments.qa2]\ndescription = "QA2"\nhosts = ["qa2.example.com"]\n')
+    _flow(tmp_path, "app/qa.md", '# QA\n\n## Steps\n- goto: "<APP_URL>"\n')
+    catalog = Catalog(_config(tmp_path, extra_environments_file=extra))
+    assert set(catalog.environments) == {"staging", "production", "qa2"}
+    assert catalog.environments["staging"].hosts == ("staging.example.com", "one-staging.example.com")
+    assert catalog.environments["production"].production
+    assert catalog.get("app/qa.md", {"APP_URL": "https://qa2.example.com/"}).info.environments == ["qa2"]
+
+    extra.write_text(extra.read_text() + '[environments.qa5]\nhosts = ["qa5.example.com"]\n')
+    assert "qa5" in catalog.environments                             # no restart needed
+    extra.write_text("not toml [")
+    assert "qa5" in catalog.environments                             # a broken file keeps the last good list
+    assert load_environments(own)["staging"].hosts == ("staging.example.com",)
 
 
 @pytest.mark.parametrize("flow_id", ["../environments.toml", "/etc/passwd", "app/login", "", "app/missing.md",

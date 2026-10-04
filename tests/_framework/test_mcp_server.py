@@ -32,6 +32,7 @@ _FAILING = (f'# Fixture sign-in page (broken expectation)\n\n## Page loads\n- go
             '- assert_text: "Welcome!"\n\n## Signed in\n- assert_text: "This text is not on the page"\n')
 _SLOW = f'# Slow flow\n\n## Waits\n- goto: "{_FIXTURE}"\n- wait: 120000\n'
 _LIVE = '# Live site\n\n## Home\n- goto: "https://wheelsup.com/"\n'
+_INPUT = '# Page from an input\n\n## Page loads\n- goto: "<MCP_TEST_PAGE_URL>"\n- assert_text: "Welcome!"\n'
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -52,7 +53,7 @@ def scratch():
     flows = root / "flows"
     flows.mkdir(parents=True)
     for name, text in (("passing.md", _PASSING), ("failing.md", _FAILING),
-                       ("slow.md", _SLOW), ("live.md", _LIVE)):
+                       ("slow.md", _SLOW), ("live.md", _LIVE), ("input.md", _INPUT)):
         (flows / name).write_text(text, encoding="utf-8")
     yield root
     shutil.rmtree(root, ignore_errors=True)
@@ -112,6 +113,7 @@ def test_tools_are_discoverable_and_the_catalog_lists_the_flows(scratch: Path):
             assert flows["passing.md"]["environments"] == ["local"]
             assert flows["passing.md"]["tests"] == ["Page loads"]
             assert flows["live.md"]["environments"] == ["production"]
+            assert flows["input.md"]["inputs"] == ["MCP_TEST_PAGE_URL"] and flows["input.md"]["environments"] == []
             environments = {e["name"]: e for e in catalog["environments"]}
             assert environments["production"]["enabled"] is False
 
@@ -177,6 +179,38 @@ def test_failed_tests_are_a_completed_execution_with_evidence(scratch: Path):
             assert failure["evidence"]["url"].startswith("file://")
             assert failure["evidence"]["screenshots"]
             assert all(Path(p).is_file() for p in failure["evidence"]["screenshots"])
+    asyncio.run(scenario())
+
+
+def test_a_flow_takes_its_site_from_the_run_inputs(scratch: Path):
+    """The orchestrator resolves the application's URL and passes it as an input:
+    the same flow runs wherever the environment owns the site it is given."""
+    extra = scratch / "janus-environments.toml"
+    extra.write_text('[environments.qa2]\ndescription = "QA2"\nhosts = ["qa2.example.com"]\n', encoding="utf-8")
+
+    async def scenario():
+        async with _session(_env(scratch, JANUS_ENVIRONMENTS_FILE=str(extra))) as session:
+            catalog = await _call(session, "list_flows")
+            assert "qa2" in {e["name"] for e in catalog["environments"]}      # the orchestrator's environment
+
+            started = await _call(session, "run_flow", flow="input.md", environment="local",
+                                  inputs={"MCP_TEST_PAGE_URL": _FIXTURE})
+            assert started["error"] is None, started
+            status = await _finish(session, started["execution_id"])
+            assert status["status"] == "COMPLETED", status
+            result = await _call(session, "get_result", execution_id=started["execution_id"])
+            assert result["summary"]["passed"] == 1 and result["hosts"] == ["file://"]
+
+            refused = [
+                ({"inputs": None}, "needs inputs for MCP_TEST_PAGE_URL"),          # no input: nowhere to run
+                ({"inputs": {"MCP_TEST_PAGE_URL": "https://qa2.example.com/"}}, "does not run against 'local'"),
+                ({"inputs": {"MCP_TEST_PASSWORD": "x"}}, "credentials are not accepted"),
+                ({"inputs": {"lower": "x"}}, "upper-case"),
+            ]
+            for arguments, text in refused:
+                answer = await _call(session, "run_flow", flow="input.md", environment="local", **arguments)
+                assert answer["execution_id"] is None and answer["error"]["code"] == "INVALID_REQUEST", arguments
+                assert text in answer["error"]["message"], answer["error"]["message"]
     asyncio.run(scenario())
 
 

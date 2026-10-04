@@ -3,7 +3,14 @@
 Flows are read with the Web Agent's own parser; nothing here executes one.
 For each flow the catalog works out every site it opens (its ``goto`` steps
 and those of the components it calls with ``run_flow``) and from that the
-environments it may run against.
+environments it may run against. A ``goto`` written as ``<NAME>`` takes its
+URL from the run's inputs (``run_flow(inputs=...)``) or else from this
+process's environment; the flow lists such names as ``inputs``.
+
+The environment allow-list is the server's own file plus, when the
+orchestrator supplies one (``JANUS_ENVIRONMENTS_FILE``), the environments it
+knows: both files are re-read on every call, so a change applies without a
+restart.
 """
 
 from __future__ import annotations
@@ -47,8 +54,23 @@ class Environment:
         return any(fnmatch.fnmatchcase(target, pattern) for pattern in self.hosts)
 
 
-def load_environments(path: Path) -> dict[str, Environment]:
-    """The allow-list, keyed by lower-case name."""
+def load_environments(path: Path, extra: Path | None = None) -> dict[str, Environment]:
+    """The allow-list, keyed by lower-case name: *path*, plus the environments of
+    *extra* when given. The same name in both merges their hosts; an environment
+    is production when either file says so."""
+    environments = _load_environments(path)
+    if extra is not None and extra.is_file():          # the orchestrator may not have written it yet
+        for name, more in _load_environments(extra).items():
+            own = environments.get(name)
+            environments[name] = more if own is None else Environment(
+                name=name, description=own.description or more.description,
+                hosts=tuple(dict.fromkeys([*own.hosts, *more.hosts])),
+                production=own.production or more.production,
+                allow_file_urls=own.allow_file_urls or more.allow_file_urls)
+    return environments
+
+
+def _load_environments(path: Path) -> dict[str, Environment]:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -84,14 +106,25 @@ class Catalog:
     """The flows under the configured folder. Read from disk on every call, so
     a flow added or edited is visible without restarting the server."""
 
-    def __init__(self, config: AdapterConfig, environments: dict[str, Environment]) -> None:
+    def __init__(self, config: AdapterConfig, environments: dict[str, Environment] | None = None) -> None:
         self._config = config
-        self._environments = environments
+        self._environments = environments      # given once (tests); None: read from the files on every call
 
     # ── environments ────────────────────────────────────────────────────────
 
+    @property
+    def environments(self) -> dict[str, Environment]:
+        if self._environments is not None:
+            return self._environments
+        try:
+            self._last_good = load_environments(self._config.environments_file, self._config.extra_environments_file)
+        except ConfigError:
+            if not hasattr(self, "_last_good"):     # unreadable from the start: let the server say so
+                raise
+        return self._last_good
+
     def environment(self, name: str) -> Environment | None:
-        return self._environments.get((name or "").strip().lower())
+        return self.environments.get((name or "").strip().lower())
 
     def enabled(self, env: Environment) -> bool:
         return self._config.allow_production or not env.production
@@ -100,7 +133,7 @@ class Catalog:
         return [
             EnvironmentInfo(name=e.name, description=e.description, hosts=list(e.hosts),
                             production=e.production, enabled=self.enabled(e))
-            for e in self._environments.values()
+            for e in self.environments.values()
         ]
 
     # ── flows ───────────────────────────────────────────────────────────────
@@ -119,9 +152,10 @@ class Catalog:
                 unavailable.append(UnavailableFlow(id=flow_id, reason=f"cannot be read as a flow: {exc}"))
         return entries, unavailable
 
-    def get(self, flow_id: str) -> FlowEntry | None:
+    def get(self, flow_id: str, inputs: dict[str, str] | None = None) -> FlowEntry | None:
         """The flow with this id, or None — also for anything that is not a
-        catalog flow (a path outside the folder, a component, a non-.md file)."""
+        catalog flow (a path outside the folder, a component, a non-.md file).
+        *inputs* fill the flow's ``<NAME>`` sites for this call."""
         flow_id = (flow_id or "").strip()
         if not flow_id or not flow_id.endswith(".md"):
             return None
@@ -132,19 +166,19 @@ class Catalog:
         if _SKIP_DIRS & set(path.relative_to(root).parts[:-1]):
             return None
         try:
-            return self._entry(path.relative_to(root).as_posix(), path)
+            return self._entry(path.relative_to(root).as_posix(), path, inputs)
         except (FlowParseError, OSError, UnicodeDecodeError):
             return None
 
-    def _entry(self, flow_id: str, path: Path) -> FlowEntry:
+    def _entry(self, flow_id: str, path: Path, inputs: dict[str, str] | None = None) -> FlowEntry:
         flow = parse_flow_file(path)
         if not flow.actions:
             raise FlowParseError("no steps found (a flow needs a ## section with list items)")
-        targets, problems = _targets(flow, path.parent)
+        targets, names, problems = _targets(flow, path.parent, inputs or {})
         if problems or not targets:
             environments: list[str] = []      # where it runs cannot be established
         else:
-            environments = [e.name for e in self._environments.values()
+            environments = [e.name for e in self.environments.values()
                             if all(e.owns(t) for t in targets)]
         tests = list(dict.fromkeys(
             a.section for a in flow.actions if a.section and a.section.lower() not in _GENERIC_SECTIONS))
@@ -157,6 +191,7 @@ class Catalog:
                 expected=list(flow.expected),
                 hosts=sorted(targets),
                 environments=environments,
+                inputs=sorted(names),
                 profiles=list(flow.profiles),
                 steps=len(flow.actions),
             ),
@@ -164,16 +199,20 @@ class Catalog:
         )
 
 
-def _targets(flow: FlowDefinition, flows_dir: Path, depth: int = 0,
-             seen: frozenset[str] = frozenset()) -> tuple[set[str], list[str]]:
-    """``(sites, problems)``: every host the flow opens — components included,
-    resolved from the top flow's folder as the engine does — and why any could
-    not be worked out."""
+def _targets(flow: FlowDefinition, flows_dir: Path, inputs: dict[str, str], depth: int = 0,
+             seen: frozenset[str] = frozenset()) -> tuple[set[str], set[str], list[str]]:
+    """``(sites, placeholders, problems)``: every host the flow opens — components
+    included, resolved from the top flow's folder as the engine does — the
+    ``<NAME>`` placeholders those sites come from, and why any could not be
+    worked out."""
     targets: set[str] = set()
+    names: set[str] = set()
     problems: list[str] = []
     for action in flow.actions:
         if action.type == ActionType.GOTO and action.args:
-            target, problem = _site(action.args[0])
+            target, name, problem = _site(action.args[0], inputs)
+            if name:
+                names.add(name)
             if target:
                 targets.add(target)
             if problem:
@@ -188,23 +227,27 @@ def _targets(flow: FlowDefinition, flows_dir: Path, depth: int = 0,
             except (FlowParseError, OSError) as exc:
                 problems.append(f"run_flow {ref!r}: {exc}")
                 continue
-            sub_targets, sub_problems = _targets(sub, flows_dir, depth + 1, seen | {ref})
+            sub_targets, sub_names, sub_problems = _targets(sub, flows_dir, inputs, depth + 1, seen | {ref})
             targets |= sub_targets
+            names |= sub_names
             problems += sub_problems
-    return targets, problems
+    return targets, names, problems
 
 
-def _site(url: str) -> tuple[str | None, str | None]:
-    """The host of a ``goto`` argument (``<ENV_VAR>`` placeholders resolved), or the problem."""
+def _site(url: str, inputs: dict[str, str]) -> tuple[str | None, str | None, str | None]:
+    """``(host, placeholder, problem)`` of a ``goto`` argument: a ``<NAME>``
+    placeholder is filled from *inputs*, else from the environment."""
     url = url.strip()
+    name = None
     if m := _PLACEHOLDER_RE.match(url):
-        value = os.environ.get(m.group(1))
+        name = m.group(1)
+        value = inputs.get(name) or os.environ.get(name)
         if not value:
-            return None, f"goto {url}: environment variable {m.group(1)} is not set"
+            return None, name, f"goto {url}: {name} is neither a run input nor an environment variable"
         url = value.strip()
     parsed = urlparse(url)
     if parsed.scheme == "file":
-        return FILE_TARGET, None
+        return FILE_TARGET, name, None
     if parsed.scheme in ("http", "https") and parsed.hostname:
-        return parsed.hostname.lower().rstrip("."), None
-    return None, f"goto {url!r}: not an http(s) or file URL"
+        return parsed.hostname.lower().rstrip("."), name, None
+    return None, name, f"goto {url!r}: not an http(s) or file URL"

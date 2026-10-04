@@ -63,6 +63,7 @@ class FlowInfo(BaseModel):
     expected: list[str] = Field(default_factory=list)    # the flow's "## Expected Outcome" lines
     hosts: list[str] = Field(default_factory=list)       # every site the flow opens
     environments: list[str] = Field(default_factory=list)  # environments it may run against
+    inputs: list[str] = Field(default_factory=list)      # <PLACEHOLDER> names its sites come from (run_flow inputs)
     profiles: list[str] = Field(default_factory=list)    # the flow's own device profiles, if it names any
     steps: int = 0
 

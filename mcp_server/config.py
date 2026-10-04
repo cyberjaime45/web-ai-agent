@@ -47,6 +47,7 @@ class AdapterConfig:
     flows_dir: Path             # WEB_AGENT_MCP_FLOWS_DIR — the flows a client may run
     executions_dir: Path        # WEB_AGENT_MCP_EXECUTIONS_DIR — one folder per execution
     environments_file: Path     # WEB_AGENT_MCP_ENVIRONMENTS_FILE — the environment allow-list
+    extra_environments_file: Path | None   # JANUS_ENVIRONMENTS_FILE — more environments, from the orchestrator
     timeout_seconds: float      # WEB_AGENT_MCP_TIMEOUT_SECONDS — an execution is stopped after this
     stop_grace_seconds: float   # WEB_AGENT_MCP_STOP_GRACE_SECONDS — interrupt → terminate → kill
     max_concurrent: int         # WEB_AGENT_MCP_MAX_CONCURRENT — others wait as QUEUED
@@ -61,6 +62,8 @@ def load_config() -> AdapterConfig:
         flows_dir=_path("WEB_AGENT_MCP_FLOWS_DIR", "tests"),
         executions_dir=_path("WEB_AGENT_MCP_EXECUTIONS_DIR", "reports/_executions"),
         environments_file=_path("WEB_AGENT_MCP_ENVIRONMENTS_FILE", "mcp_server/environments.toml"),
+        extra_environments_file=_path("JANUS_ENVIRONMENTS_FILE", "") if os.getenv("JANUS_ENVIRONMENTS_FILE", "").strip()
+        else None,
         timeout_seconds=_positive("WEB_AGENT_MCP_TIMEOUT_SECONDS", 1800),
         stop_grace_seconds=_positive("WEB_AGENT_MCP_STOP_GRACE_SECONDS", 20),
         max_concurrent=int(_positive("WEB_AGENT_MCP_MAX_CONCURRENT", 1)),
