@@ -207,9 +207,12 @@ def _bad_id(flow_id: str) -> str | None:
 
 def explore_markdown(url: str, depth: int, max_actions: int) -> str:
     """Open the page, inspect it, let test_page decide what to try — without
-    submitting any form — and generate a draft. Credentials are never typed."""
+    submitting any form — and generate a draft. Credentials are never typed.
+    When the orchestrator runs without an LLM (JANUS_LLM=off), the skill's own
+    planner is kept off too."""
+    ai = ' | "max_ai_calls=0"' if os.environ.get("JANUS_LLM", "").strip().lower() == "off" else ""
     return (f"# Exploration — {url}\n\n## Explore\n- goto: \"{url}\"\n- wait_load\n- inspect_page\n"
-            f"- test_page: \"depth={depth}\" | \"max_actions={max_actions}\" | \"submit=false\"\n")
+            f"- test_page: \"depth={depth}\" | \"max_actions={max_actions}\" | \"submit=false\"{ai}\n")
 
 
 def bad_exploration(url: str, depth: int, max_actions: int) -> str | None:

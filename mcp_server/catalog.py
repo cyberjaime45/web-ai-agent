@@ -61,7 +61,7 @@ def load_environments(path: Path, extra: Path | None = None) -> dict[str, Enviro
     is production when either file says so."""
     environments = _load_environments(path)
     if extra is not None and extra.is_file():          # the orchestrator may not have written it yet
-        for name, more in _load_environments(extra).items():
+        for name, more in _load_environments(extra, required=False).items():   # or may know none yet
             own = environments.get(name)
             environments[name] = more if own is None else Environment(
                 name=name, description=own.description or more.description,
@@ -71,7 +71,7 @@ def load_environments(path: Path, extra: Path | None = None) -> dict[str, Enviro
     return environments
 
 
-def _load_environments(path: Path) -> dict[str, Environment]:
+def _load_environments(path: Path, *, required: bool = True) -> dict[str, Environment]:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -92,7 +92,7 @@ def _load_environments(path: Path) -> dict[str, Environment]:
             production=bool(spec.get("production", False)),
             allow_file_urls=bool(spec.get("allow_file_urls", False)),
         )
-    if not environments:
+    if not environments and required:
         raise ConfigError(f"no environments defined in {path}")
     return environments
 

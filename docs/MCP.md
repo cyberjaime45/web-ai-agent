@@ -143,6 +143,7 @@ Read by the Web Agent MCP only; the Web Agent's own settings are unchanged.
 | `WEB_AGENT_MCP_FLOWS_DIR` | `tests` | Folder whose flows may be run (inside the project). `_framework`, `components`, `fixtures`, `baselines`, `generated` are skipped |
 | `WEB_AGENT_MCP_ENVIRONMENTS_FILE` | `mcp_server/environments.toml` | The environment allow-list |
 | `JANUS_ENVIRONMENTS_FILE` | — | A second allow-list supplied by the orchestrator, merged with the first |
+| `JANUS_LLM` | — | `off`: the orchestrator runs without an LLM, so executions run with `AI_PROVIDER` empty (no L3, no planner) and explorations with `max_ai_calls=0` |
 | `WEB_AGENT_MCP_EXECUTIONS_DIR` | `reports/_executions` | One folder per execution |
 | `WEB_AGENT_MCP_TIMEOUT_SECONDS` | `1800` | An execution is stopped after this |
 | `WEB_AGENT_MCP_STOP_GRACE_SECONDS` | `20` | Time to finish after the interrupt, before terminate and kill |
