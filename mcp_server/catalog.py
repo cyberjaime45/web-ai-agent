@@ -182,6 +182,7 @@ class Catalog:
         if not flow.actions:
             raise FlowParseError("no steps found (a flow needs a ## section with list items)")
         targets, names, problems = _targets(flow, path.parent, inputs or {})
+        placeholders = _placeholders(flow, path.parent)
         if problems or not targets:
             environments: list[str] = []      # where it runs cannot be established
         else:
@@ -198,7 +199,8 @@ class Catalog:
                 expected=list(flow.expected),
                 hosts=sorted(targets),
                 environments=environments,
-                inputs=sorted(names),
+                inputs=sorted(placeholders | names),
+                site_inputs=sorted(names),
                 profiles=list(flow.profiles),
                 steps=len(flow.actions),
             ),
@@ -239,6 +241,26 @@ def _targets(flow: FlowDefinition, flows_dir: Path, inputs: dict[str, str], dept
             names |= sub_names
             problems += sub_problems
     return targets, names, problems
+
+
+def _placeholders(flow: FlowDefinition, flows_dir: Path, depth: int = 0,
+                  seen: frozenset[str] = frozenset()) -> set[str]:
+    """Every ``<NAME>`` any step argument uses, components included."""
+    names: set[str] = set()
+    for action in flow.actions:
+        for arg in action.args:
+            if m := _PLACEHOLDER_RE.match(arg.strip()):
+                names.add(m.group(1))
+        if action.type == ActionType.RUN_FLOW and action.args:
+            ref = action.args[0]
+            if ref in seen or depth >= _MAX_DEPTH:
+                continue
+            try:
+                sub = parse_flow_file(resolve_flow_path(ref, flows_dir))
+            except (FlowParseError, OSError):
+                continue
+            names |= _placeholders(sub, flows_dir, depth + 1, seen | {ref})
+    return names
 
 
 def _site(url: str, inputs: dict[str, str]) -> tuple[str | None, str | None, str | None]:

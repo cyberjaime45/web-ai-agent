@@ -97,20 +97,21 @@ def _status(execution: Execution) -> ExecutionStatus:
     )
 
 
-def _bad_inputs(inputs: dict[str, str] | None) -> str | None:
-    """Why *inputs* cannot be accepted, or None. Secrets never arrive this way:
-    they stay in the Web Agent's own configuration."""
+def _bad_inputs(inputs: dict[str, str] | None, *, secrets: bool = False) -> str | None:
+    """Why *inputs* cannot be accepted, or None. Credential-like names belong in
+    `secrets`, which reach the run and nothing else; the rest are inputs."""
+    what = "secret" if secrets else "input"
     if not inputs:
         return None
     if len(inputs) > _MAX_INPUTS:
-        return f"at most {_MAX_INPUTS} inputs"
+        return f"at most {_MAX_INPUTS} {what}s"
     for name, value in inputs.items():
         if not _INPUT_NAME_RE.match(name):
-            return f"input {name!r}: a name is upper-case letters, digits and underscores"
-        if is_sensitive(name):
-            return f"input {name!r}: credentials are not accepted as inputs; set them in the Web Agent's .env"
+            return f"{what} {name!r}: a name is upper-case letters, digits and underscores"
+        if is_sensitive(name) and not secrets:
+            return f"input {name!r}: credentials go in `secrets`, not in inputs"
         if not isinstance(value, str) or not value.strip() or len(value) > 2000:
-            return f"input {name!r}: the value must be a non-empty string"
+            return f"{what} {name!r}: the value must be a non-empty string"
     return None
 
 
@@ -149,7 +150,8 @@ def build_server(config: AdapterConfig) -> FastMCP:
     @server.tool()
     async def run_flow(flow: str, environment: str, profile: str | None = None,
                        metadata: dict[str, str] | None = None,
-                       inputs: dict[str, str] | None = None) -> ExecutionStatus:
+                       inputs: dict[str, str] | None = None,
+                       secrets: dict[str, str] | None = None) -> ExecutionStatus:
         """Start one flow against one environment. Returns at once with an execution id.
 
         `flow` is a flow id from list_flows; `environment` must be one the flow
@@ -158,11 +160,15 @@ def build_server(config: AdapterConfig) -> FastMCP:
         for example `requested_by` and `task_id`. `inputs` are values for the
         flow's `<NAME>` placeholders for this run — its `inputs` from list_flows,
         typically the URL of the application in that environment; the
-        environment must own the sites they point at. Credentials are never
-        accepted as inputs.
+        environment must own the sites they point at. `secrets` are values for
+        the flow's credential placeholders (<APP_PASSWORD>…) for this run: they
+        reach the run as environment variables and are never stored or logged;
+        the report masks them as any sensitive placeholder.
         """
         if problem := _bad_inputs(inputs):
             return ExecutionStatus(error=_error(ErrorCode.INVALID_REQUEST, f"Invalid inputs: {problem}."))
+        if problem := _bad_inputs(secrets, secrets=True):
+            return ExecutionStatus(error=_error(ErrorCode.INVALID_REQUEST, f"Invalid secrets: {problem}."))
         entry = catalog.get(flow, inputs)
         if entry is None:
             return ExecutionStatus(error=_error(
@@ -177,7 +183,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 ErrorCode.ENVIRONMENT_NOT_ALLOWED,
                 f"Environment {env.name!r} is a production environment and is not enabled on this server."))
         if env.name not in entry.info.environments:
-            unset = [n for n in entry.info.inputs if n not in (inputs or {})]
+            unset = [n for n in entry.info.site_inputs if n not in (inputs or {})]
             return ExecutionStatus(flow=entry.info.id, environment=env.name, error=_error(
                 ErrorCode.INVALID_REQUEST,
                 f"Flow {entry.info.id!r} does not run against {env.name!r}: it opens "
@@ -195,7 +201,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 flow_id=entry.info.id, flow_path=entry.path, environment=env.name,
                 hosts=entry.info.hosts, profile=profile,
                 label=labels.get("build_name") or f"{entry.info.title} · {env.name}",
-                metadata=labels, inputs=inputs)
+                metadata=labels, inputs=inputs, secrets=secrets)
         except OSError as exc:
             return ExecutionStatus(flow=entry.info.id, environment=env.name, error=_error(
                 ErrorCode.EXECUTION_START_FAILED, f"The execution could not be created: {exc}"))

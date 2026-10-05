@@ -327,7 +327,8 @@ def test_validate_reports_findings_and_what_the_flow_would_be(tmp_path: Path, ca
             '- fill: "Password" | "<ATLAS_PASSWORD>"\n- click: "Sign in"\n- assert_hidden: "Password"\n')
     result = authoring.validate(catalog, config, good, "atlas/login.md")
     assert result.valid and result.findings == [] and result.error is None
-    assert result.info.inputs == ["ATLAS_URL"] and result.info.tests == ["Sign in"] and result.info.environments == []
+    assert result.info.inputs == ["ATLAS_EMAIL", "ATLAS_PASSWORD", "ATLAS_URL"] and result.info.site_inputs == ["ATLAS_URL"]
+    assert result.info.tests == ["Sign in"] and result.info.environments == []
 
     advice = authoring.validate(catalog, config, '# X\n\n## Open\n- goto: "https://staging.example.com/"\n- wait: 2000\n',
                                 "app/x.md")

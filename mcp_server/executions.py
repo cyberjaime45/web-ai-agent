@@ -93,15 +93,18 @@ class ExecutionManager:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         self._slots = asyncio.Semaphore(config.max_concurrent)
+        self._secrets: dict[str, dict[str, str]] = {}      # per execution, in memory only: never saved or logged
 
     # ── Public API ──────────────────────────────────────────────────────────
 
     def start(self, *, flow_id: str, flow_path: Path | None, environment: str, hosts: list[str],
               profile: str | None, label: str, metadata: dict[str, str],
-              inputs: dict[str, str] | None = None, flow_text: str | None = None) -> Execution:
+              inputs: dict[str, str] | None = None, flow_text: str | None = None,
+              secrets: dict[str, str] | None = None) -> Execution:
         """Register an execution and schedule its run. Returns at once, QUEUED.
         With *flow_text* instead of *flow_path*, the flow is written into the
-        execution's folder (an exploration, which is not a catalog flow)."""
+        execution's folder (an exploration, which is not a catalog flow).
+        *secrets* reach the run as environment variables and nothing else."""
         execution_id = f"web-{uuid.uuid4().hex[:12]}"
         directory = self._config.executions_dir / execution_id
         directory.mkdir(parents=True, exist_ok=False)
@@ -115,6 +118,8 @@ class ExecutionManager:
             metadata=metadata, directory=str(directory), inputs=dict(inputs or {}),
         )
         self._executions[execution_id] = execution
+        if secrets:
+            self._secrets[execution_id] = dict(secrets)
         self._save(execution)
         self._log(execution, "queued")
         self._tasks[execution_id] = asyncio.create_task(self._run(execution), name=execution_id)
@@ -211,6 +216,7 @@ class ExecutionManager:
                 code=ErrorCode.WEB_AGENT_ERROR, message=f"The Web Agent MCP failed: {exc}"))
         finally:
             self._processes.pop(execution.execution_id, None)
+            self._secrets.pop(execution.execution_id, None)
 
     async def _spawn(self, execution: Execution) -> asyncio.subprocess.Process:
         command = [self._config.python, "-m", "pytest", execution.flow_path,
@@ -220,6 +226,7 @@ class ExecutionManager:
         env = {
             **os.environ,
             **execution.inputs,                 # the run's <NAME> values win over .env
+            **self._secrets.pop(execution.execution_id, {}),   # handed over once, kept nowhere
             "ENVIRONMENT": execution.environment,
             "REPORT_DIR": str(execution.report_dir),
             "BUILD_NAME": execution.label,

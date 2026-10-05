@@ -110,10 +110,16 @@ are re-read on every call, so a change needs no restart.
 A `goto` written as `<NAME>` (for example `goto: "<MEMBERS_SITE_URL>"`) takes
 its URL from the run: `run_flow(inputs={"MEMBERS_SITE_URL": "https://..."})`,
 or else from the environment the Web Agent MCP runs in. `list_flows` reports
-such names as the flow's `inputs`. The environment named in `run_flow` must
-own the site the input points at, like any other site the flow opens. Inputs
-are upper-case names; a name that looks like a credential (`PASSWORD`,
-`SECRET`, `KEY`, `TOKEN`) is refused — secrets stay in the Web Agent's `.env`.
+every `<NAME>` a flow's steps use as `inputs`, and the ones its sites come
+from as `site_inputs`. The environment named in `run_flow` must own the site
+an input points at, like any other site the flow opens. Inputs are upper-case
+names; a name that looks like a credential (`PASSWORD`, `SECRET`, `KEY`,
+`TOKEN`) is refused as an input and goes in `secrets` instead:
+`run_flow(secrets={"ATLAS_PASSWORD": "…"})`. Secrets reach the run as
+environment variables for that execution only — never written to
+`execution.json`, never logged — and the report masks them like any sensitive
+placeholder. Without `secrets`, a placeholder resolves from the Web Agent's
+own `.env` as before.
 
 ## Writing flows through the MCP
 

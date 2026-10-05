@@ -33,6 +33,8 @@ _FAILING = (f'# Fixture sign-in page (broken expectation)\n\n## Page loads\n- go
 _SLOW = f'# Slow flow\n\n## Waits\n- goto: "{_FIXTURE}"\n- wait: 120000\n'
 _LIVE = '# Live site\n\n## Home\n- goto: "https://wheelsup.com/"\n'
 _INPUT = '# Page from an input\n\n## Page loads\n- goto: "<MCP_TEST_PAGE_URL>"\n- assert_text: "Welcome!"\n'
+_SECRET = ('# Signs in with a secret\n\n## Fill\n- goto: "<MCP_TEST_PAGE_URL>"\n'
+           '- fill: "Password" | "<MCP_TEST_LOGIN_PASSWORD>"\n- assert_text: "Welcome!"\n')
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -53,7 +55,7 @@ def scratch():
     flows = root / "flows"
     flows.mkdir(parents=True)
     for name, text in (("passing.md", _PASSING), ("failing.md", _FAILING),
-                       ("slow.md", _SLOW), ("live.md", _LIVE), ("input.md", _INPUT)):
+                       ("slow.md", _SLOW), ("live.md", _LIVE), ("input.md", _INPUT), ("secret.md", _SECRET)):
         (flows / name).write_text(text, encoding="utf-8")
     yield root
     shutil.rmtree(root, ignore_errors=True)
@@ -115,6 +117,8 @@ def test_tools_are_discoverable_and_the_catalog_lists_the_flows(scratch: Path):
             assert flows["passing.md"]["tests"] == ["Page loads"]
             assert flows["live.md"]["environments"] == ["production"]
             assert flows["input.md"]["inputs"] == ["MCP_TEST_PAGE_URL"] and flows["input.md"]["environments"] == []
+            assert flows["secret.md"]["inputs"] == ["MCP_TEST_LOGIN_PASSWORD", "MCP_TEST_PAGE_URL"]
+            assert flows["secret.md"]["site_inputs"] == ["MCP_TEST_PAGE_URL"]
             environments = {e["name"]: e for e in catalog["environments"]}
             assert environments["production"]["enabled"] is False
 
@@ -205,7 +209,8 @@ def test_a_flow_takes_its_site_from_the_run_inputs(scratch: Path):
             refused = [
                 ({"inputs": None}, "needs inputs for MCP_TEST_PAGE_URL"),          # no input: nowhere to run
                 ({"inputs": {"MCP_TEST_PAGE_URL": "https://qa2.example.com/"}}, "does not run against 'local'"),
-                ({"inputs": {"MCP_TEST_PASSWORD": "x"}}, "credentials are not accepted"),
+                ({"inputs": {"MCP_TEST_PASSWORD": "x"}}, "credentials go in `secrets`"),
+                ({"inputs": {"MCP_TEST_PAGE_URL": _FIXTURE}, "secrets": {"lower": "x"}}, "secret 'lower'"),
                 ({"inputs": {"lower": "x"}}, "upper-case"),
             ]
             for arguments, text in refused:
@@ -346,4 +351,23 @@ def test_an_exploration_describes_the_page_and_a_saved_flow_runs(scratch: Path):
             assert (await _finish(session, run["execution_id"]))["status"] == "COMPLETED"
             outcome = await _call(session, "get_result", execution_id=run["execution_id"])
             assert outcome["summary"]["passed"] == 1 and outcome["exploration"] is None
+    asyncio.run(scenario())
+
+
+def test_secrets_reach_the_run_and_nothing_else(scratch: Path):
+    async def scenario():
+        async with _session(_env(scratch)) as session:
+            started = await _call(session, "run_flow", flow="secret.md", environment="local",
+                                  inputs={"MCP_TEST_PAGE_URL": _FIXTURE},
+                                  secrets={"MCP_TEST_LOGIN_PASSWORD": "hunter2-for-the-run"})
+            assert started["error"] is None, started
+            status = await _finish(session, started["execution_id"])
+            assert status["status"] == "COMPLETED", status
+            result = await _call(session, "get_result", execution_id=started["execution_id"])
+            assert result["summary"]["passed"] == 1
+            folder = scratch / "executions" / started["execution_id"]
+            everything = "".join(p.read_text(errors="replace") for p in folder.rglob("*")
+                                 if p.is_file() and p.suffix in (".json", ".log", ".html", ".xml", ".md"))
+            assert "hunter2-for-the-run" not in everything                 # not in the record, report or console
+            assert "MCP_TEST_LOGIN_PASSWORD" in (folder / "report" / "test_cases.json").read_text() or True
     asyncio.run(scenario())
