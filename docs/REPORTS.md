@@ -29,7 +29,7 @@ Flows:         2 (in 2 files)
 Passed:        8
 Failed:        1
 Skipped:       0
-Healed steps:  3 (resolved by L2/L3)
+Healed steps:  3 (informational: found by a fallback locator, the result is unaffected; update the flow)
 Duration:      3m41s
 Slowest:       production_smoke.md » FMS MVC Smoke Tests  3m00s
                booking_flow.md » One Way Booking  41s
@@ -230,7 +230,8 @@ Selecting a test opens a side drawer, which reads the same way:
   duration — so a plain step and an expandable one line up; only expandable
   rows show a chevron and the step count, and a group's children indent
   beneath it without moving its header. The self-healed lightning icon marks
-  a step L2/L3 found. The failed step is the red row, with its one-line reason; the
+  a step L2/L3 found; its tooltip says which element was actually used and why
+  (`button "Book now" (button) — whole-word match of a control for "book"`). The failed step is the red row, with its one-line reason; the
   groups it ran in keep a red ✕ and stay open, every other group folds. Each
   group's child steps share one background, a different colour per nesting
   level (blue, violet, teal, then again), so the steps of each group read as

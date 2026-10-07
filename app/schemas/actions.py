@@ -344,6 +344,7 @@ class StepResult:
     agent:           dict | None = None   # autonomous-run facts: page type, plan, skipped, ai_calls…
     after:           dict = field(default_factory=dict)   # skill child steps: heading / dialog / alert shown after it
     soft:            bool = False     # a skill probe / cleanup step: its failure is the skill's finding, not the flow's
+    resolved:        str = ""         # L2: the element actually acted on — role, name, selector, why it was chosen
 
     @property
     def fails_flow(self) -> bool:

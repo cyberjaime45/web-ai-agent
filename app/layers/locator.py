@@ -5,13 +5,12 @@ to find an element when the deterministic Layer 1 exact match fails.
 L1 already exhausts exact-match locators, so L2 starts with fuzzy
 (case-insensitive / partial) variants to avoid redundant browser queries.
 
-Resolution order for clickable elements:
-  1. Fuzzy role+name  (button / link)
-  2. get_by_text exact / partial — judged on the element's *visible* text
-     (``innerText``, line by line), not Playwright's ``textContent`` match,
-     where a calendar row's cells 1 | 2 | 3 read "123" and so "contain" 12.
-     Partial: a visible line equal to the target ranks first.
-  3. selectolax fuzzy HTML search (similarity >= 0.6) — once, after the poll
+Clickable elements: ``click_target.resolve`` — controls only, matched by
+exact name, then whole word, then word similarity; one visible, enabled
+candidate or the step fails saying why (ambiguous, hidden, disabled, absent).
+``visible_text_match`` (L1's exact-text guard) judges text on the element's
+*visible* text (``innerText``, line by line), not Playwright's
+``textContent`` match, where a calendar row's cells 1 | 2 | 3 read "123".
 
 Resolution order for inputs:
   1. get_by_label partial
@@ -38,6 +37,9 @@ from difflib import SequenceMatcher
 from typing import Callable
 
 from playwright.sync_api import Locator, Page
+
+from app.layers.click_target import Resolution
+from app.layers.click_target import resolve as resolve_click_target
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +106,13 @@ class FallbackLocator:
     _RESOLVE_TIMEOUT_S = 5.0    # max seconds to poll for element appearance
     _POLL_INTERVAL_MS  = 200    # ms between poll cycles
 
-    def resolve_clickable(self, page: Page, target: str) -> Locator | None:
+    def resolve_clickable(self, page: Page, target: str) -> Resolution | None:
+        """The control *target* names (click_target.resolve: raises when it is
+        ambiguous or absent); a selector from the flow is used as written."""
         if _is_selector(target):
-            return self._try(lambda: page.locator(target))
-        return self._resolve_with_poll(page, [
-            lambda: page.get_by_role("button", name=target),
-            lambda: page.get_by_role("link",   name=target),
-            lambda: visible_text_match(page.get_by_text(target, exact=True), target, exact=True),
-            lambda: visible_text_match(page.get_by_text(target), target),
-        ]) or self._fuzzy_clickable(page, target)
+            loc = self._try(lambda: page.locator(target))
+            return Resolution(loc, "element", target, target, "selector given in the flow") if loc else None
+        return resolve_click_target(page, target, self._RESOLVE_TIMEOUT_S, self._POLL_INTERVAL_MS)
 
     def resolve_input(self, page: Page, target: str) -> Locator | None:
         if _is_selector(target):
@@ -193,17 +193,6 @@ class FallbackLocator:
         if best is not None:
             logger.debug("[L2] Fuzzy match %r -> %r (%.2f)", target, best.text(strip=True), best_score)
         return best
-
-    def _fuzzy_clickable(self, page: Page, target: str) -> Locator | None:
-        try:
-            node = self._best_fuzzy(
-                page, "button, a, [role=button], [role=link], [role=menuitem], [role=tab]", target)
-            if node is not None:
-                best_text = node.text(strip=True)
-                return self._try(lambda: visible_text_match(page.get_by_text(best_text), best_text))
-        except Exception as exc:
-            logger.debug("[L2] fuzzy_clickable error: %s", exc)
-        return None
 
     def _fuzzy_input(self, page: Page, target: str) -> Locator | None:
         try:

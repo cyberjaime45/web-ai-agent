@@ -58,35 +58,30 @@ class L2Handlers:
 
     # ── element actions ───────────────────────────────────────────
 
+    def _l2_press(self, action: FlowAction, verb: str, act) -> StepResult | None:
+        """Click-like actions: act on the one control L2 resolves, and record
+        what it was — the report says what was pressed, not the step's words."""
+        res = self._locator.resolve_clickable(self.page, action.args[0])
+        if res is None:
+            return None
+        act(res.locator)
+        sr = self._ok(action, f'[L2] {verb} {res.role} "{res.name}" for "{action.args[0]}"', 2)
+        sr.resolved = res.summary
+        return sr
+
     def _l2_click(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.click(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f"[L2] Clicked '{action.args[0]}'", 2)
-        return None
+        return self._l2_press(action, "Clicked", lambda loc: loc.click(timeout=self._L1_TIMEOUT))
 
     _l2_click_link_text = _l2_click
 
     def _l2_double_click(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.dblclick(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Double-clicked "{action.args[0]}"', 2)
-        return None
+        return self._l2_press(action, "Double-clicked", lambda loc: loc.dblclick(timeout=self._L1_TIMEOUT))
 
     def _l2_right_click(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.click(button="right", timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Right-clicked "{action.args[0]}"', 2)
-        return None
+        return self._l2_press(action, "Right-clicked", lambda loc: loc.click(button="right", timeout=self._L1_TIMEOUT))
 
     def _l2_hover(self, action: FlowAction) -> StepResult | None:
-        loc = self._locator.resolve_clickable(self.page, action.args[0])
-        if loc:
-            loc.hover(timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Hovered "{action.args[0]}"', 2)
-        return None
+        return self._l2_press(action, "Hovered", lambda loc: loc.hover(timeout=self._L1_TIMEOUT))
 
     def _l2_fill(self, action: FlowAction) -> StepResult | None:
         loc = self._locator.resolve_input(self.page, action.args[0])
@@ -141,8 +136,10 @@ class L2Handlers:
         src = self._locator.resolve_clickable(self.page, action.args[0])
         dst = self._locator.resolve_clickable(self.page, action.args[1])
         if src and dst:
-            src.drag_to(dst, timeout=self._L1_TIMEOUT)
-            return self._ok(action, f'[L2] Dragged "{action.args[0]}" to "{action.args[1]}"', 2)
+            src.locator.drag_to(dst.locator, timeout=self._L1_TIMEOUT)
+            sr = self._ok(action, f'[L2] Dragged {src.role} "{src.name}" to {dst.role} "{dst.name}"', 2)
+            sr.resolved = f"from {src.summary}; to {dst.summary}"
+            return sr
         return None
 
     def _l2_scroll(self, action: FlowAction) -> StepResult | None:

@@ -195,7 +195,8 @@ function stepShots(s){
 }
 function stepLine(s, kids){
   const heal = s.layer > 1 && s.status === 'passed'
-    ? iconBadge('zap', 'info', `Informational — self-healed: found by the ${s.layer === 3 ? 'AI' : 'fuzzy-match'} fallback (layer ${s.layer}); the result is unaffected`) : '';
+    ? iconBadge('zap', 'info', `Informational — self-healed: found by the ${s.layer === 3 ? 'AI' : 'L2'} fallback (layer ${s.layer})`
+        + (s.resolved ? `: ${s.resolved}` : '') + '; the result is unaffected') : '';
   const what = s.action ? `<span class="sverb" title="${esc(s.action)}">${esc(actionLabel(s.action))}</span>${s.args ? `<span class="sargs">${esc(s.args)}</span>` : ''}`
     : `<span class="sverb">${esc(s.name)}</span>`;
   return `<div class="sline">${what}${heal}${kids ? `<span class="skids">${plural(kids, 'step')}</span>` : ''}</div>`;

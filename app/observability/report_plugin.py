@@ -91,6 +91,7 @@ class ProfessionalReportPlugin:
                 "checks": [{**dataclasses.asdict(c), "outcome": c.outcome} for c in s.checks],
                 "group": s.group,
                 "soft": s.soft,
+                "resolved": s.resolved,
                 "url": s.url,
                 "agent": s.agent,
             }

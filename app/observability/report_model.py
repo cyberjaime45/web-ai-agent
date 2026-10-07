@@ -123,6 +123,8 @@ def _leaf(s: dict, started_at: str, depth: int) -> dict:
             rec["args"] = raw[len(action):].lstrip(" :").strip()
     if (layer := s.get("layer")) and rec["status"] != "skipped":
         rec["layer"] = int(layer)
+    if s.get("resolved"):
+        rec["resolved"] = s["resolved"]          # L2: the element actually acted on, and why
     return rec
 
 
@@ -206,8 +208,8 @@ def _healings(steps: list[dict]) -> list[dict]:
         {
             "description": s.get("name") or "",
             "original": None,
-            "healed_by": "L3 (AI)" if s.get("layer") == 3 else "L2 (fuzzy match)",
-            "resolved": s.get("msg") or "resolved at runtime",
+            "healed_by": "L3 (AI)" if s.get("layer") == 3 else "L2 (fallback locator)",
+            "resolved": s.get("resolved") or s.get("msg") or "resolved at runtime",
             "layer": s.get("layer"),
         }
         for s in steps if (s.get("layer") or 1) > 1 and s.get("passed")
