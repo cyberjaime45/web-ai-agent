@@ -107,7 +107,7 @@ URL), runs against none and `list_flows` shows it with no environments.
 `ENVIRONMENT` for the run is set to the environment's name.
 
 To add QA2: add `[environments.qa2]` with its hosts, and flows that open those
-hosts. An orchestrator can supply environments too: `JANUS_ENVIRONMENTS_FILE`
+hosts. An orchestrator can supply environments too: `WEB_AGENT_MCP_EXTRA_ENVIRONMENTS_FILE`
 names a second file in the same format, merged with this one (hosts are
 combined; an environment is production when either file says so). Both files
 are re-read on every call, so a change needs no restart.
@@ -143,6 +143,57 @@ not a copy of it:
 | `save_flow(flow, content, overwrite=false)` | Validate, then write under the flows folder as `flow` (`atlas/login.md`): lower-case ids, no reserved folders, never outside the folder, never over an existing flow unless `overwrite`. The flow is listed at once |
 | `explore_page(url, environment, depth=1, max_actions=12)` | An execution like any other (`get_status`, `cancel_execution`, `get_result`) that opens the page, runs `inspect_page` and `test_page` with `submit=false` — nothing is submitted, no credentials typed — and drafts a flow. `get_result.exploration` carries the observation (title, page type, headings, buttons, links, inputs, forms with each field's label, type and target), the assertions `test_page` suggests, the steps it ran and the generated draft. The environment must own the page's site |
 
+## Compatibility
+
+The interface is the **execution contract `execution/1`**: the tools, their
+inputs, the execution statuses and the result fields above — and what each
+field *means*. It is declared in `janus-extension.toml`
+(`[compatibility] contract`) and returned by `describe_capabilities`
+(`contract`). Everything else is internal and may change at any time without
+a client noticing: locator resolution, the L1/L2/L3 chain, skills, the report's
+HTML, CSS and JS, console output, and the layout of `reports/`. Clients use
+the report files only through the paths a result gives.
+
+**Compatible within `execution/1`** (no client change needed):
+
+- a new tool, a new optional input, a new output field
+- a new value of a free-text field, such as `verdict` (`no_tests` was added
+  this way) — clients treat an unknown value as not a pass
+- internal changes of any size
+
+**Breaking — a new contract version** (`execution/2`):
+
+- removing or renaming a tool, an input or an output field
+- changing a field's type or its meaning (for example, what `markers` or
+  `summary.passed` counts)
+- a new required input, an input that becomes required
+- changing the values of an enum clients switch on: execution `status`,
+  `error.code`
+
+A breaking change ships as `execution/2`, sets `[compatibility] contract` in
+`janus-extension.toml` (JANUS refuses to install an agent whose contract it
+does not implement), and keeps the `execution/1` behaviour available, or is
+released together with the clients, for at least one version. Prefer adding a
+new field over changing an old one, and deprecate before removing: a
+deprecated name keeps working and the docs say which name replaces it
+(`JANUS_LLM` → `WEB_AGENT_MCP_LLM`).
+
+`tests/_framework/test_mcp_contract.py` enforces this. It compares every
+tool's inputs and outputs with the committed snapshot
+`tests/_framework/contract/execution-1.json`, and fails on anything breaking.
+After a compatible change, refresh the snapshot and commit it with the change:
+
+```bash
+WEB_AGENT_UPDATE_CONTRACT=1 pytest tests/_framework/test_mcp_contract.py
+```
+
+**Version numbers.** The Web Agent has one version, `[project] version` in
+`pyproject.toml`; `janus-extension.toml` repeats it (`test_banner` fails when
+they differ) and the banner, the report and `web_agent_version` show it. It
+is the release; the contract version (`execution/1`) is the interface. A
+release changes the version; only a breaking interface change changes the
+contract.
+
 ## Configuration
 
 Read by the Web Agent MCP only; the Web Agent's own settings are unchanged.
@@ -151,8 +202,8 @@ Read by the Web Agent MCP only; the Web Agent's own settings are unchanged.
 |----------|---------|---------|
 | `WEB_AGENT_MCP_FLOWS_DIR` | `tests` | Folder whose flows may be run (inside the project). `_framework`, `components`, `fixtures`, `baselines`, `generated` are skipped |
 | `WEB_AGENT_MCP_ENVIRONMENTS_FILE` | `mcp_server/environments.toml` | The environment allow-list |
-| `JANUS_ENVIRONMENTS_FILE` | — | A second allow-list supplied by the orchestrator, merged with the first |
-| `JANUS_LLM` | — | `off`: the orchestrator runs without an LLM, so executions run with `AI_PROVIDER` empty (no L3, no planner) and explorations with `max_ai_calls=0` |
+| `WEB_AGENT_MCP_EXTRA_ENVIRONMENTS_FILE` | — | A second allow-list supplied by the orchestrator, merged with the first. `JANUS_ENVIRONMENTS_FILE` is read as an alias (deprecated) |
+| `WEB_AGENT_MCP_LLM` | — | `off`: the orchestrator runs without an LLM (`JANUS_LLM` is read as an alias, deprecated; this name wins), so executions run with `AI_PROVIDER` empty (no L3, no planner) and explorations with `max_ai_calls=0` |
 | `WEB_AGENT_MCP_EXECUTIONS_DIR` | `reports/_executions` | One folder per execution |
 | `WEB_AGENT_MCP_TIMEOUT_SECONDS` | `1800` | An execution is stopped after this |
 | `WEB_AGENT_MCP_STOP_GRACE_SECONDS` | `20` | Time to finish after the interrupt, before terminate and kill |

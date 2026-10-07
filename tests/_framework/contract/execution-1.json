@@ -1,0 +1,411 @@
+{
+  "contract": "execution/1",
+  "tools": {
+    "cancel_execution": {
+      "inputs": {
+        "execution_id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "outputs": {
+        "created_at": "null|string",
+        "elapsed_seconds": "null|number",
+        "environment": "null|string",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "execution_id": "null|string",
+        "finished_at": "null|string",
+        "flow": "null|string",
+        "progress": "null|object",
+        "progress.completed": "integer",
+        "progress.current": "null|string",
+        "progress.total": "integer",
+        "progress.unit": "string",
+        "started_at": "null|string",
+        "status": "enum[QUEUED,RUNNING,COMPLETED,FAILED,CANCELLED,TIMED_OUT]|null"
+      }
+    },
+    "describe_capabilities": {
+      "inputs": {},
+      "outputs": {
+        "actions": "array",
+        "actions[].description": "string",
+        "actions[].group": "string",
+        "actions[].keyword": "string",
+        "actions[].max_args": "integer",
+        "actions[].min_args": "integer",
+        "configured_placeholders": "array",
+        "contract": "string",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "flow_format": "object",
+        "markers": "array",
+        "skills": "array",
+        "skills[].description": "string",
+        "skills[].keyword": "string",
+        "skills[].options": "object",
+        "tools": "array",
+        "web_agent_version": "string"
+      }
+    },
+    "explore_page": {
+      "inputs": {
+        "depth": {
+          "type": "integer",
+          "required": false
+        },
+        "environment": {
+          "type": "string",
+          "required": true
+        },
+        "max_actions": {
+          "type": "integer",
+          "required": false
+        },
+        "metadata": {
+          "type": "null|object",
+          "required": false
+        },
+        "profile": {
+          "type": "null|string",
+          "required": false
+        },
+        "url": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "outputs": {
+        "created_at": "null|string",
+        "elapsed_seconds": "null|number",
+        "environment": "null|string",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "execution_id": "null|string",
+        "finished_at": "null|string",
+        "flow": "null|string",
+        "progress": "null|object",
+        "progress.completed": "integer",
+        "progress.current": "null|string",
+        "progress.total": "integer",
+        "progress.unit": "string",
+        "started_at": "null|string",
+        "status": "enum[QUEUED,RUNNING,COMPLETED,FAILED,CANCELLED,TIMED_OUT]|null"
+      }
+    },
+    "get_flow": {
+      "inputs": {
+        "flow": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "outputs": {
+        "content": "string",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "info": "null|object",
+        "info.environments": "array",
+        "info.expected": "array",
+        "info.flow_markers": "array",
+        "info.hosts": "array",
+        "info.id": "string",
+        "info.inputs": "array",
+        "info.markers": "array",
+        "info.profiles": "array",
+        "info.site_inputs": "array",
+        "info.steps": "integer",
+        "info.tests": "array",
+        "info.title": "string",
+        "path": "string"
+      }
+    },
+    "get_result": {
+      "inputs": {
+        "execution_id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "outputs": {
+        "environment": "null|string",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "execution_id": "null|string",
+        "exploration": "null|object",
+        "exploration.actions": "array",
+        "exploration.assertions": "array",
+        "exploration.components": "array",
+        "exploration.generated_flow": "null|object",
+        "exploration.generated_flow.content": "string",
+        "exploration.generated_flow.path": "string",
+        "exploration.observation": "object",
+        "exploration.page_type": "string",
+        "exploration.title": "string",
+        "exploration.url": "string",
+        "failures": "array",
+        "failures[].evidence": "null|object",
+        "failures[].evidence.layers": "object",
+        "failures[].evidence.screenshots": "array",
+        "failures[].evidence.title": "string",
+        "failures[].evidence.trace": "null|string",
+        "failures[].evidence.url": "string",
+        "failures[].file": "string",
+        "failures[].kind": "enum[test_failure,execution_error]",
+        "failures[].likely_cause": "null|object",
+        "failures[].message": "string",
+        "failures[].step": "null|string",
+        "failures[].test": "string",
+        "flow": "null|string",
+        "headline": "null|string",
+        "healed_steps": "integer",
+        "hosts": "array",
+        "metadata": "object",
+        "report": "null|object",
+        "report.html": "null|string",
+        "report.junit": "null|string",
+        "report.summary_json": "null|string",
+        "report.test_cases_json": "null|string",
+        "run": "object",
+        "status": "enum[QUEUED,RUNNING,COMPLETED,FAILED,CANCELLED,TIMED_OUT]|null",
+        "summary": "null|object",
+        "summary.duration_ms": "number",
+        "summary.errors": "integer",
+        "summary.executed": "integer",
+        "summary.failed": "integer",
+        "summary.pass_rate": "number",
+        "summary.passed": "integer",
+        "summary.passed_on_retry": "integer",
+        "summary.passed_with_warnings": "integer",
+        "summary.passed_without_warnings": "integer",
+        "summary.skipped": "integer",
+        "summary.total": "integer",
+        "summary.unverified": "integer",
+        "summary.warning_count": "integer",
+        "summary.warnings": "integer",
+        "tests": "array",
+        "tests[].duration_ms": "number",
+        "tests[].file": "string",
+        "tests[].name": "string",
+        "tests[].profile": "string",
+        "tests[].retried": "boolean",
+        "tests[].status": "string",
+        "verdict": "null|string",
+        "warnings": "array",
+        "warnings[].check": "string",
+        "warnings[].detail": "string",
+        "warnings[].severity": "string",
+        "warnings[].test": "string"
+      }
+    },
+    "get_status": {
+      "inputs": {
+        "execution_id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "outputs": {
+        "created_at": "null|string",
+        "elapsed_seconds": "null|number",
+        "environment": "null|string",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "execution_id": "null|string",
+        "finished_at": "null|string",
+        "flow": "null|string",
+        "progress": "null|object",
+        "progress.completed": "integer",
+        "progress.current": "null|string",
+        "progress.total": "integer",
+        "progress.unit": "string",
+        "started_at": "null|string",
+        "status": "enum[QUEUED,RUNNING,COMPLETED,FAILED,CANCELLED,TIMED_OUT]|null"
+      }
+    },
+    "list_flows": {
+      "inputs": {
+        "environment": {
+          "type": "null|string",
+          "required": false
+        },
+        "markers": {
+          "type": "null|string",
+          "required": false
+        }
+      },
+      "outputs": {
+        "deselected": "array",
+        "environments": "array",
+        "environments[].description": "string",
+        "environments[].enabled": "boolean",
+        "environments[].hosts": "array",
+        "environments[].name": "string",
+        "environments[].production": "boolean",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "flows": "array",
+        "flows[].environments": "array",
+        "flows[].expected": "array",
+        "flows[].flow_markers": "array",
+        "flows[].hosts": "array",
+        "flows[].id": "string",
+        "flows[].inputs": "array",
+        "flows[].markers": "array",
+        "flows[].profiles": "array",
+        "flows[].site_inputs": "array",
+        "flows[].steps": "integer",
+        "flows[].tests": "array",
+        "flows[].title": "string",
+        "selection": "string",
+        "unavailable": "array",
+        "unavailable[].id": "string",
+        "unavailable[].reason": "string"
+      }
+    },
+    "run_flow": {
+      "inputs": {
+        "environment": {
+          "type": "string",
+          "required": true
+        },
+        "flow": {
+          "type": "string",
+          "required": true
+        },
+        "inputs": {
+          "type": "null|object",
+          "required": false
+        },
+        "metadata": {
+          "type": "null|object",
+          "required": false
+        },
+        "profile": {
+          "type": "null|string",
+          "required": false
+        },
+        "secrets": {
+          "type": "null|object",
+          "required": false
+        }
+      },
+      "outputs": {
+        "created_at": "null|string",
+        "elapsed_seconds": "null|number",
+        "environment": "null|string",
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "execution_id": "null|string",
+        "finished_at": "null|string",
+        "flow": "null|string",
+        "progress": "null|object",
+        "progress.completed": "integer",
+        "progress.current": "null|string",
+        "progress.total": "integer",
+        "progress.unit": "string",
+        "started_at": "null|string",
+        "status": "enum[QUEUED,RUNNING,COMPLETED,FAILED,CANCELLED,TIMED_OUT]|null"
+      }
+    },
+    "save_flow": {
+      "inputs": {
+        "content": {
+          "type": "string",
+          "required": true
+        },
+        "flow": {
+          "type": "string",
+          "required": true
+        },
+        "overwrite": {
+          "type": "boolean",
+          "required": false
+        }
+      },
+      "outputs": {
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "findings": "array",
+        "findings[].blocking": "boolean",
+        "findings[].line": "integer",
+        "findings[].message": "string",
+        "findings[].rule": "string",
+        "info": "null|object",
+        "info.environments": "array",
+        "info.expected": "array",
+        "info.flow_markers": "array",
+        "info.hosts": "array",
+        "info.id": "string",
+        "info.inputs": "array",
+        "info.markers": "array",
+        "info.profiles": "array",
+        "info.site_inputs": "array",
+        "info.steps": "integer",
+        "info.tests": "array",
+        "info.title": "string",
+        "path": "null|string",
+        "saved": "null|string",
+        "valid": "boolean"
+      }
+    },
+    "validate_flow": {
+      "inputs": {
+        "content": {
+          "type": "string",
+          "required": true
+        },
+        "flow": {
+          "type": "null|string",
+          "required": false
+        }
+      },
+      "outputs": {
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "findings": "array",
+        "findings[].blocking": "boolean",
+        "findings[].line": "integer",
+        "findings[].message": "string",
+        "findings[].rule": "string",
+        "info": "null|object",
+        "info.environments": "array",
+        "info.expected": "array",
+        "info.flow_markers": "array",
+        "info.hosts": "array",
+        "info.id": "string",
+        "info.inputs": "array",
+        "info.markers": "array",
+        "info.profiles": "array",
+        "info.site_inputs": "array",
+        "info.steps": "integer",
+        "info.tests": "array",
+        "info.title": "string",
+        "path": "null|string",
+        "saved": "null|string",
+        "valid": "boolean"
+      }
+    }
+  }
+}
