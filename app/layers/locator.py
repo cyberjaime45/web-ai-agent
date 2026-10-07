@@ -7,7 +7,10 @@ L1 already exhausts exact-match locators, so L2 starts with fuzzy
 
 Resolution order for clickable elements:
   1. Fuzzy role+name  (button / link)
-  2. get_by_text exact / partial
+  2. get_by_text exact / partial — judged on the element's *visible* text
+     (``innerText``, line by line), not Playwright's ``textContent`` match,
+     where a calendar row's cells 1 | 2 | 3 read "123" and so "contain" 12.
+     Partial: a visible line equal to the target ranks first.
   3. selectolax fuzzy HTML search (similarity >= 0.6) — once, after the poll
 
 Resolution order for inputs:
@@ -66,6 +69,35 @@ def _is_selector(s: str) -> bool:
     return False
 
 
+# Index of the candidate whose rendered text (innerText, line by line) holds *target*.
+# exact: a line or the whole text equals it — else the first hidden candidate (the
+# caller waits for it to show, as before), else -1. Partial: a line equal to it,
+# else a line containing it, else the whole text containing it; -1 when none does.
+# textContent glues cells together ("1 | 2 | 3" reads "123"); innerText does not.
+_VISIBLE_TEXT_JS = """(els, [target, exact]) => {
+  const norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const want = norm(target);
+  let line = -1, whole = -1, hidden = -1;
+  for (let i = 0; i < els.length && i < 50; i++) {
+    const el = els[i];
+    if (!el.getClientRects().length) { if (hidden < 0) hidden = i; continue; }
+    const text = norm(el.innerText);
+    const lines = (el.innerText || '').split('\\n').map(norm);
+    if (lines.includes(want) || (exact && text === want)) return i;
+    if (exact) continue;
+    if (line < 0 && lines.some(l => l.includes(want))) line = i;
+    if (whole < 0 && text.includes(want)) whole = i;
+  }
+  return exact ? hidden : (line >= 0 ? line : whole);
+}"""
+
+
+def visible_text_match(candidates: Locator, target: str, exact: bool = False) -> Locator | None:
+    """The candidate whose rendered text holds *target* (see _VISIBLE_TEXT_JS), or None."""
+    index = candidates.evaluate_all(_VISIBLE_TEXT_JS, [target, exact])
+    return candidates.nth(index) if index >= 0 else None
+
+
 class FallbackLocator:
     """Resolves element locators with progressively looser strategies."""
 
@@ -78,8 +110,8 @@ class FallbackLocator:
         return self._resolve_with_poll(page, [
             lambda: page.get_by_role("button", name=target),
             lambda: page.get_by_role("link",   name=target),
-            lambda: page.get_by_text(target, exact=True),
-            lambda: page.get_by_text(target),
+            lambda: visible_text_match(page.get_by_text(target, exact=True), target, exact=True),
+            lambda: visible_text_match(page.get_by_text(target), target),
         ]) or self._fuzzy_clickable(page, target)
 
     def resolve_input(self, page: Page, target: str) -> Locator | None:
@@ -168,7 +200,7 @@ class FallbackLocator:
                 page, "button, a, [role=button], [role=link], [role=menuitem], [role=tab]", target)
             if node is not None:
                 best_text = node.text(strip=True)
-                return self._try(lambda: page.get_by_text(best_text))
+                return self._try(lambda: visible_text_match(page.get_by_text(best_text), best_text))
         except Exception as exc:
             logger.debug("[L2] fuzzy_clickable error: %s", exc)
         return None

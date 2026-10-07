@@ -18,7 +18,7 @@ from app.config.settings import settings
 from app.layers import stability
 from app.layers.blockers import dismiss_blockers
 from app.layers.deterministic_l2 import L2Handlers
-from app.layers.locator import FallbackLocator, _is_selector
+from app.layers.locator import FallbackLocator, _is_selector, visible_text_match
 from app.schemas.actions import ActionType, Check, FlowAction, RunContext, StepResult
 
 logger = logging.getLogger(__name__)
@@ -201,7 +201,9 @@ class DeterministicRunner(L2Handlers):
     # ── L1 handlers: Click ────────────────────────────────────────
 
     def _resolve_clickable_l1(self, target: str):
-        """Selector, else exact button → link → text (shared by click variants)."""
+        """Selector, else exact button → link → text (shared by click variants).
+        Text must be shown as written: an element whose cells only *read* as the
+        target in textContent (a calendar row "1 | 2 | 3" for "123") is no match."""
         if _is_selector(target):
             return self.page.locator(target)
         loc = self.page.get_by_role("button", name=target, exact=True)
@@ -209,6 +211,10 @@ class DeterministicRunner(L2Handlers):
             loc = self.page.get_by_role("link", name=target, exact=True)
         if loc.count() == 0:
             loc = self.page.get_by_text(target, exact=True)
+            if loc.count() and (shown := visible_text_match(loc, target, exact=True)) is None:
+                raise RuntimeError(f"no element shows the text {target!r} as written "
+                                   f"(it only appears with its cells' text joined together)")
+            loc = shown if loc.count() else loc
         return loc
 
     def _h_click(self, action: FlowAction) -> StepResult:
