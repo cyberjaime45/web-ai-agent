@@ -5,7 +5,7 @@
 - wait_load
 - click_link_text: "Accept All Cookies"
 - assert_text: "WheelsUp"
-- assert_text: "Private aviation. The right way."
+- assert_visible: "Private aviation. The right way."
 - assert_text: "A new day in private aviation is here"
 - assert_text: "One integrated aviation solution"
 - assert_text: "The right aircraft for every trip"
@@ -14,4 +14,4 @@
 - assert_visible: "Privacy Policy"
 - assert_text: "855-FLY-8760"
 - assert_text: "info@wheelsup.com"
-- screenshot
+- screenshot: "results" | "full_page"
