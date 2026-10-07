@@ -31,8 +31,11 @@ def test_banner_wraps_in_green_when_colored():
     assert text.startswith("\033[32m") and text.endswith("\033[0m")
 
 
-def test_the_version_is_the_janus_manifest_version():
-    """One version: what JANUS installs (janus-extension.toml) is what the banner, report and MCP show."""
+def test_the_version_is_one_version():
+    """pyproject.toml is the source; the manifest an orchestrator installs by must repeat it."""
     import tomllib
+    with (banner.PROJECT_ROOT / "pyproject.toml").open("rb") as fh:
+        assert banner.APP_VERSION == tomllib.load(fh)["project"]["version"]
     with (banner.PROJECT_ROOT / "janus-extension.toml").open("rb") as fh:
-        assert banner.APP_VERSION == tomllib.load(fh)["extension"]["version"]
+        assert tomllib.load(fh)["extension"]["version"] == banner.APP_VERSION, \
+            "bump janus-extension.toml [extension] version together with pyproject.toml"

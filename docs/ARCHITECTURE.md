@@ -252,6 +252,7 @@ Displayed once at the start of every pytest session, before pytest's own
 (the `BUILD_NAME` label) and the environment label `env · browser ·
 mode[ · lambda]`, centered and green on a TTY. Change the art or
 `CREATED_BY` in `app/utils/banner.py`. The version has one source:
-`[extension] version` in `janus-extension.toml` — what JANUS installs and
-updates by. `APP_VERSION` reads it, so the banner, the report footer and
-`web_agent_version` in MCP results always match it; bump it there only.
+`[project] version` in `pyproject.toml`. `APP_VERSION` reads it (the banner,
+the report footer, `web_agent_version` in MCP results); `janus-extension.toml`
+repeats it for orchestrators that install by it, and `test_banner` fails when
+the two differ — bump both together.

@@ -17,12 +17,13 @@ from app.utils.build import get_build_name
 
 
 def _release_version() -> str:
-    """The one version of the Web Agent: ``[extension] version`` in
-    janus-extension.toml — what JANUS installs and updates by, and what the
-    banner, the report and the MCP results show. Bump it there only."""
+    """The Web Agent's version: ``[project] version`` in its own pyproject.toml.
+    The banner, the report and the MCP results show it; janus-extension.toml
+    repeats it for the orchestrator (a test keeps the two equal), so the
+    runtime never depends on an orchestrator's file format."""
     try:
-        with (PROJECT_ROOT / "janus-extension.toml").open("rb") as fh:
-            return str(tomllib.load(fh)["extension"]["version"])
+        with (PROJECT_ROOT / "pyproject.toml").open("rb") as fh:
+            return str(tomllib.load(fh)["project"]["version"])
     except (OSError, KeyError, tomllib.TOMLDecodeError):
         return "unknown"
 
