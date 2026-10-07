@@ -31,6 +31,7 @@ from app.flow.parser import (
     parse_flow_markdown,
 )
 from app.flow.placeholders import flow_site_domain
+from app.flow.selection import SelectionError, compile_selection, registered_markers
 from app.layers.providers import ConfigError, get_provider
 from app.observability.console import (
     FLAKY_PROP,
@@ -88,6 +89,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # ── Plugin registration ────────────────────────────────────────
 
 def pytest_configure(config: pytest.Config) -> None:
+    # `-m` names must be registered markers: a typo is an error, not an empty run.
+    if expression := (config.option.markexpr or "").strip():
+        try:
+            compile_selection(expression, registered_markers(config.getini("markers")))
+        except SelectionError as exc:
+            raise pytest.UsageError(str(exc)) from None
     plugin = ProfessionalReportPlugin()
     config.pluginmanager.register(plugin, "professional_report")
 
@@ -138,14 +145,19 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     started = plugin.session_start if plugin else None
     duration = time.time() - started if started else 0.0
     files = plugin.files if plugin else None
+    expression = (config.option.markexpr or "").strip()
     lines = execution_summary(
         terminalreporter.stats, files.totals if files else None,
         duration, settings.run_label(), get_build_name(), files.status if files else None,
+        selection=expression,
     )
     if lines:
         terminalreporter.section("Execution summary")
         for line in lines:
             terminalreporter.write_line(line)
+    if expression and plugin and not plugin.results and not config.option.collectonly:
+        terminalreporter.write_line(
+            f"No test matches -m {expression!r} — nothing ran, no report written (exit code 5).")
     if plugin and not plugin.files and exitstatus == pytest.ExitCode.INTERRUPTED:
         terminalreporter.write_line("Interrupted before any test finished — no report written.")
     if plugin and plugin.files:
@@ -239,14 +251,20 @@ def _profiles_for(config: pytest.Config, flow: FlowDefinition) -> list[str]:
 
 
 def _flow_items(parent, config: pytest.Config, flow: FlowDefinition) -> list[FlowItem]:
-    """The desktop item keeps the flow's plain name; others are ``name[profile]``."""
-    return [
+    """The desktop item keeps the flow's plain name; others are ``name[profile]``.
+    The flow's file-wide ``markers:`` become pytest markers, so ``-m`` selects
+    whole flows (app/flow/selection.py)."""
+    items = [
         FlowItem.from_parent(
             parent, flow=flow, profile=p,
             name=flow.name if p == profiles.DESKTOP else f"{flow.name}[{p}]",
         )
         for p in _profiles_for(config, flow)
     ]
+    for item in items:
+        for name in flow.markers:
+            item.add_marker(name)
+    return items
 
 
 def _keep_trace(page, result: FlowResult | None, flow_name: str, profile: str,

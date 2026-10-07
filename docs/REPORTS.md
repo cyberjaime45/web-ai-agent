@@ -71,7 +71,8 @@ After each run, a full HTML report is generated at `reports/<ENVIRONMENT>/report
 ```
 reports/staging/
 ├── report.html          # Interactive UI (summary, failures, tests, suites, timeline, console, network)
-├── summary.json         # Run metadata, totals, status, exit_code (no tests) for CI/tooling
+├── summary.json         # Run metadata, totals, status, exit_code, selection (`-m` filter
+│                        # and the flows it deselected; null without -m) for CI/tooling
 ├── test_cases.json      # {"run_id", "tests": [...]}: every test, full detail inline
 │                        # (steps, failures, attachments, console, network); summary
 │                        # totals are counted from this list

@@ -35,6 +35,10 @@ class ProfessionalReportPlugin:
         self.session_start = time.time()
         self.report_path: Path | None = None
         self.files: ReportFiles | None = None   # what the last generate_report wrote
+        self.deselected: list[str] = []         # node ids of the flows a `-m` filter left out
+
+    def pytest_deselected(self, items: list[pytest.Item]) -> None:
+        self.deselected += [item.nodeid for item in items if hasattr(item, "flow")]
 
     def record_flow(self, nodeid: str, flow: FlowDefinition, profile: str) -> None:
         """Suite-level facts the report needs: the file's # title, markers, profile."""
@@ -146,8 +150,15 @@ class ProfessionalReportPlugin:
             output_path=settings.report_dir / "report.html",
             environment=settings.environment,
             exit_status=int(exitstatus),
+            selection=_selection(session.config, self.deselected),
         )
         # The exit code is the model's verdict (reporter.run_status), so CI,
         # the console and the JSON can never disagree about pass / fail.
         session.exitstatus = self.files.exit_code
         self.report_path = settings.report_dir / "report.html"
+
+
+def _selection(config: pytest.Config, deselected: list[str]) -> dict | None:
+    """The run's ``-m`` filter and the flows it left out; None when there was none."""
+    expression = (config.option.markexpr or "").strip()
+    return {"markers": expression, "deselected": sorted(deselected)} if expression else None

@@ -43,7 +43,7 @@ event, with `execution_id` and the caller's `task_id` when it sent one.
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `list_flows` | `environment?` | The flows that can be run (id, title, test cases, expected outcome, sites opened, environments) and the known environments |
+| `list_flows` | `environment?`, `markers?` | The flows that can be run (id, title, test cases, `markers` — every tag, a single test's included — and `flow_markers` — the file-wide ones that select, expected outcome, sites opened, environments) and the known environments. `markers` is a `pytest -m` expression (`smoke and non_destructive`) over each flow's `flow_markers` — the same selection `pytest -m` makes; an unregistered name is `INVALID_REQUEST` with the `known` names; `deselected` lists the ids it left out. Run what it returns with `run_flow` |
 | `run_flow` | `flow`, `environment`, `profile?`, `metadata?` | An execution id and `QUEUED`, at once |
 | `get_status` | `execution_id` | `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED` or `TIMED_OUT`, plus progress |
 | `get_result` | `execution_id` | Test totals, each failure with its step, message, likely cause and evidence files, warnings, report paths |
@@ -130,7 +130,7 @@ not a copy of it:
 
 | Tool | Does |
 |------|------|
-| `describe_capabilities` | Every action keyword with its argument counts, group and meaning, every QA skill with its options, the flow file format, the names (never values) of the `{PLACEHOLDER}`s this Web Agent can fill, and the tool list — read from `ActionType`, `ACTION_ARG_SPEC`, the skill registry and `docs/ACTIONS.md` |
+| `describe_capabilities` | Every action keyword with its argument counts, group and meaning, every QA skill with its options, the flow file format, the names (never values) of the `{PLACEHOLDER}`s this Web Agent can fill, the registered marker names a flow may declare, and the tool list — read from `ActionType`, `ACTION_ARG_SPEC`, the skill registry and `docs/ACTIONS.md` |
 | `get_flow(flow)` | A flow's Markdown and its catalog entry |
 | `validate_flow(content, flow?)` | Parse and lint the text as the `lint` command does; `valid` is false on a blocking finding (`parse-error`, `no-steps`, `unknown-step`, `literal-secret`, `missing-component`); the rest is advice (`fixed-wait`, `no-assertion`…). `info` is what `list_flows` would show |
 | `save_flow(flow, content, overwrite=false)` | Validate, then write under the flows folder as `flow` (`atlas/login.md`): lower-case ids, no reserved folders, never outside the folder, never over an existing flow unless `overwrite`. The flow is listed at once |

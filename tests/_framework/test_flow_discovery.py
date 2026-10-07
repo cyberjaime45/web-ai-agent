@@ -16,6 +16,8 @@ import sys
 import uuid
 from pathlib import Path
 
+import pytest
+
 _REPO = Path(__file__).resolve().parents[2]
 
 _FLOW = """# Home Page
@@ -91,3 +93,32 @@ def test_agent_test_option_collects_a_two_step_flow():
     assert "::Agent test — https://example.com/members" in proc.stdout
     # (pytest's "N tests collected" line does not count items appended during
     # collection — the same holds for --flow; the node id above is the check)
+
+
+_TAGGED = """# Home Page
+markers: smoke, non_destructive
+
+## Test One
+markers: regression
+- goto: "https://example.com/"
+- assert_text: "Example Domain"
+"""
+
+
+@pytest.mark.parametrize("expression", ["smoke", "smoke and non_destructive", "regression or smoke", "not regression"])
+def test_m_selects_a_flow_by_its_file_wide_markers(expression):
+    proc = _collect(_TAGGED, "-m", expression)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "home.md::Home Page" in proc.stdout
+
+
+def test_a_section_marker_labels_the_test_but_does_not_select_the_flow():
+    proc = _collect(_TAGGED, "-m", "regression")
+    assert proc.returncode == 5, proc.stdout + proc.stderr          # pytest: no tests collected
+    assert "home.md::Home Page" not in proc.stdout
+
+
+def test_an_unknown_marker_in_m_is_a_usage_error():
+    proc = _collect(_TAGGED, "-m", "smokee")
+    assert proc.returncode == 4
+    assert "Unknown marker 'smokee'" in proc.stdout + proc.stderr

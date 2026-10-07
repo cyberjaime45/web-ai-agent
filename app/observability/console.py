@@ -187,6 +187,7 @@ def execution_summary(
     environment: str | None = None,
     build_name: str | None = None,
     status: str | None = None,
+    selection: str = "",
 ) -> list[str]:
     """The end-of-run summary block.
 
@@ -197,7 +198,8 @@ def execution_summary(
     filesystem access. Returns no lines when no report was written
     (collect-only, full deselect).
     *environment* is a preformatted label (e.g. ``staging · chromium · headless``);
-    *build_name* is the run label (BUILD_NAME or its fallback).
+    *build_name* is the run label (BUILD_NAME or its fallback); *selection*
+    the ``-m`` marker expression, when the run had one.
     """
     if not totals or not totals.get("total"):
         return []
@@ -226,6 +228,9 @@ def execution_summary(
         rows.append(("Interrupted", "the run stopped early; the counts cover the test cases that finished"))
     elif status == "error":
         rows.append(("Error", "the run itself failed (setup, teardown or internal) — see the output above"))
+    if selection:
+        left_out = sum(1 for item in stats.get("deselected", []) if hasattr(item, "flow"))
+        rows.append(("Selection", f"-m {selection!r} · {left_out} flow(s) deselected"))
     if timed:
         files = len(flow_files)
         rows.append(("Flows", f"{len(timed)} (in {files} file{'' if files == 1 else 's'})"))

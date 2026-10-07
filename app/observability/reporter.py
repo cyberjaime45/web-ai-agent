@@ -192,6 +192,7 @@ def generate_report(
     output_path: Path,   # e.g. reports/staging/report.html
     environment: str = "staging",
     exit_status: int | None = None,   # pytest's, to tell an interrupted run
+    selection: dict | None = None,    # `-m` filter: {"markers": expr, "deselected": [flow names]}
 ) -> ReportFiles:
     """Write report.html, summary.json, test_cases.json, junit.xml and
     assets/{report.css,report.js,data.js}. Every count comes from one list of
@@ -250,6 +251,7 @@ def generate_report(
             "pass_rate": round(passed / executed * 100, 1) if executed else 0.0,
             "duration_ms": round((time.time() - session_start) * 1000, 1),
         },
+        "selection": selection,
         "tests": tests,
     }
     status, exit_code = run_status(payload["totals"], exit_status)

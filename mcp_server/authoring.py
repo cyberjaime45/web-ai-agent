@@ -21,6 +21,7 @@ import re
 import sys
 from pathlib import Path
 
+from app.flow import selection
 from app.flow.lint import lint_markdown
 from app.flow.parser import FlowParseError
 from app.schemas.actions import ACTION_ARG_SPEC, SKILL_ACTIONS
@@ -57,7 +58,9 @@ FLOW_FORMAT = {
     "config_keys": ["timeout", "profiles", "ignore_console", "ignore_network", "allow_destructive",
                     "allow_actions", "rerun", "site_domain"],
     "expected_outcome": "## Expected Outcome — one list item per expectation; shown with every test",
-    "markers": "a plain line `markers: smoke, regression` tags tests",
+    "markers": "a plain line `markers: smoke, non_destructive` before the first ## selects the whole flow "
+               "(pytest -m / list_flows(markers=)); under a ## heading it only labels that test. "
+               "Names must be registered in pytest.ini",
     "placeholders": "{NAME} anywhere in an argument (\"{APP_URL}/path?q=1\") is filled from the run's inputs "
                     "or the environment; unset or empty fails the step; legacy <NAME> is still read; "
                     "secrets (PASSWORD, SECRET, KEY, TOKEN) are masked in reports and must be placeholders",
@@ -80,7 +83,8 @@ def describe(config: AdapterConfig, tools: list[str]) -> Capabilities:
               for a, fn in SKILLS.items()]
     return Capabilities(
         web_agent_version=APP_VERSION, actions=actions, skills=sorted(skills, key=lambda s: s.keyword),
-        flow_format=FLOW_FORMAT, configured_placeholders=configured_placeholders(), tools=sorted(tools))
+        flow_format=FLOW_FORMAT, configured_placeholders=configured_placeholders(),
+        markers=selection.markers_from_ini(config.project_root / "pytest.ini"), tools=sorted(tools))
 
 
 def configured_placeholders() -> list[str]:

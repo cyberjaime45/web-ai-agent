@@ -111,6 +111,8 @@ Static checks over flow files: no browser, no LLM. Each finding is
 | `fixed-wait` | `wait: <ms>`; prefer `wait_stable`, `wait_for_text` or `wait_for_element` |
 | `duplicate-step` | The same check, wait or `goto` twice in a row (a repeated click can be deliberate) |
 | `no-assertion` | A section that never checks anything (component flows are exempt) |
+| `unknown-marker` | A `markers:` name not registered in `pytest.ini` — `pytest -m` and `list_flows(markers=)` refuse it |
+| `destructive-step` | A flow marked `non_destructive` (or a component it runs) clicks a control the safety policy treats as destructive — remove the marker or the step, or list the control in `allow_actions` |
 | `literal-secret` | A literal typed into a password, token or API-key field instead of a `{PLACEHOLDER}` |
 | `missing-component` | A `run_flow` reference that does not resolve from the calling flow's folder |
 | `unused-component` | A flow under `components/` that no scanned flow calls |

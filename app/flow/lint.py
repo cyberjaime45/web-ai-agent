@@ -5,6 +5,10 @@ the parsed steps. Every finding is advice; ``main.py lint --strict`` is what
 turns findings into a non-zero exit.
 
     unknown-step        a line whose keyword is not an action runs as a no-op
+    unknown-marker      a ``markers:`` name not registered in pytest.ini (``-m`` and
+                        ``list_flows(markers=)`` refuse it)
+    destructive-step    a flow marked ``non_destructive`` (or a component it runs)
+                        presses a control the safety policy treats as destructive
     fixed-wait          ``wait: <ms>`` — prefer wait_stable / wait_for_*
     duplicate-step      the same check, wait or goto twice in a row (a repeated
                         click or check can be deliberate: a counter, the next box)
@@ -27,8 +31,17 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.flow.parser import FlowParseError, parse_flow_markdown, resolve_flow_path
+from app.agent.safety import SafetyPolicy
+from app.config.settings import PROJECT_ROOT
+from app.flow.parser import (
+    _MARKERS_RE,
+    FlowParseError,
+    parse_flow_file,
+    parse_flow_markdown,
+    resolve_flow_path,
+)
 from app.flow.placeholders import PLACEHOLDER_RE
+from app.flow.selection import NON_DESTRUCTIVE, markers_from_ini
 from app.schemas.actions import SKILL_ACTIONS, ActionType, FlowAction
 
 REPEAT_MIN = 3          # consecutive steps shared with another flow before it is reported
@@ -44,6 +57,13 @@ VERIFYING: frozenset[ActionType] = frozenset({
     ActionType.WAIT_FOR_URL, ActionType.WAIT_FOR_ELEMENT, ActionType.FIND_ROW,
     ActionType.READ_ROW, ActionType.AI_ASSERT,
 }) | SKILL_ACTIONS
+
+# Steps that press a named control: (action, index of the argument naming it).
+_PRESSES: dict[ActionType, int] = {
+    ActionType.CLICK: 0, ActionType.CLICK_LINK_TEXT: 0, ActionType.DOUBLE_CLICK: 0,
+    ActionType.AI_CLICK: 0, ActionType.TABLE_CLICK: 1,
+}
+_MAX_DEPTH = 5          # run_flow nesting followed by destructive-step
 
 # Steps that cannot change the page: running one twice in a row is always redundant.
 _IDEMPOTENT: frozenset[ActionType] = (VERIFYING - SKILL_ACTIONS) | {
@@ -67,6 +87,8 @@ class _Flow:
     path: Path
     actions: list[FlowAction]
     lines: list[int]            # 1-based source line of each action
+    markers: tuple[str, ...] = ()   # file-wide markers (selection)
+    allow: tuple[str, ...] = ()     # the flow's allow_actions
 
     @property
     def is_component(self) -> bool:
@@ -129,6 +151,9 @@ def _step_rules(flow: _Flow, rel: str) -> list[Finding]:
         if (prev is not None and prev.section == action.section and prev.raw == raw
                 and action.type in _IDEMPOTENT):
             out.append(Finding(rel, line, "duplicate-step", "same as the previous step"))
+    if NON_DESTRUCTIVE in flow.markers:
+        out += _destructive_steps(flow.actions, flow.lines, flow.path.parent,
+                                  SafetyPolicy(allow=flow.allow), rel)
     if not flow.is_component:
         for idx in _sections(flow):
             if not any(flow.actions[i].type in VERIFYING for i in idx):
@@ -185,6 +210,43 @@ def _repeated_steps(flows: list[_Flow], rel) -> list[Finding]:
     return out
 
 
+def _destructive_steps(actions: list[FlowAction], lines: list[int], folder: Path, policy: SafetyPolicy,
+                       rel: str, via: str = "", depth: int = 0) -> list[Finding]:
+    """``destructive-step`` findings: presses the safety policy refuses, in these
+    steps and the components they run (reported at the calling line)."""
+    out: list[Finding] = []
+    for action, line in zip(actions, lines, strict=False):
+        index = _PRESSES.get(action.type)
+        if index is not None and len(action.args) > index:
+            verdict = policy.verdict(action.args[index])
+            if not verdict.allowed:
+                out.append(Finding(rel, line, "destructive-step",
+                                   f"marked {NON_DESTRUCTIVE} but {via}{action.raw!r} is destructive "
+                                   f"({verdict.reason}); remove the marker or the step, or list it in allow_actions"))
+        elif action.type == ActionType.RUN_FLOW and action.args and depth < _MAX_DEPTH:
+            try:
+                sub = parse_flow_file(resolve_flow_path(action.args[0], folder))
+            except (FlowParseError, OSError):
+                continue                                  # missing-component reports it
+            out += _destructive_steps(sub.actions, [line] * len(sub.actions), folder, policy, rel,
+                                      f"{via}{action.args[0]} → ", depth + 1)
+    return out
+
+
+def _marker_rules(text: str, rel: str) -> list[Finding]:
+    """``unknown-marker``: names on ``markers:`` lines that pytest.ini does not register."""
+    known = set(markers_from_ini(PROJECT_ROOT / "pytest.ini"))
+    out: list[Finding] = []
+    for m in _MARKERS_RE.finditer(text):
+        line = text.count("\n", 0, m.start()) + 1
+        for name in (n.strip() for n in m.group("names").split(",")):
+            if name and name not in known:
+                out.append(Finding(rel, line, "unknown-marker",
+                                   f"marker '{name}' is not registered in pytest.ini, so -m and "
+                                   f"list_flows(markers=) cannot select it; registered: {', '.join(sorted(known))}"))
+    return out
+
+
 def lint_markdown(text: str, path: Path, root: Path | None = None) -> list[Finding]:
     """Findings for flow text that would live at *path* (components resolve from
     its folder); nothing is read from or written to disk for the flow itself."""
@@ -200,8 +262,9 @@ def lint_markdown(text: str, path: Path, root: Path | None = None) -> list[Findi
         return [Finding(rel, line, "parse-error", str(exc))]
     if not parsed.actions:
         return [Finding(rel, 1, "no-steps", "no steps found (a flow needs a ## section with list items)")]
-    flow = _Flow(path, parsed.actions, _source_lines(text, parsed.actions))
-    findings = _step_rules(flow, rel)
+    flow = _Flow(path, parsed.actions, _source_lines(text, parsed.actions),
+                  tuple(parsed.markers), tuple(parsed.allow_actions))
+    findings = _step_rules(flow, rel) + _marker_rules(text, rel)
     findings += _run_flow_refs(flow, rel)[1]
     return sorted(findings, key=lambda f: (f.path, f.line, f.rule))
 
@@ -226,8 +289,10 @@ def lint(paths: list[Path], root: Path | None = None) -> list[Finding]:
             line = next((n for n, ln in enumerate(text.splitlines(), 1) if exc.raw and exc.raw in ln), 1)
             findings.append(Finding(rel(path), line, "parse-error", str(exc)))
             continue
+        findings += _marker_rules(text, rel(path))
         if parsed.actions:
-            flows.append(_Flow(path, parsed.actions, _source_lines(text, parsed.actions)))
+            flows.append(_Flow(path, parsed.actions, _source_lines(text, parsed.actions),
+                  tuple(parsed.markers), tuple(parsed.allow_actions)))
 
     used: set[Path] = set()
     for flow in flows:

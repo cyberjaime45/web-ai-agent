@@ -32,6 +32,7 @@ from mcp.server.fastmcp import FastMCP
 from app.browser.profiles import (
     BUILTIN as PROFILES,  # also loads .env, as every entry point does
 )
+from app.flow import selection
 from app.flow.placeholders import is_sensitive
 from mcp_server import authoring, results
 from mcp_server.catalog import Catalog, load_environments
@@ -130,14 +131,29 @@ def build_server(config: AdapterConfig) -> FastMCP:
     server = FastMCP("web-agent-mcp", instructions=_INSTRUCTIONS, lifespan=lifespan)
 
     @server.tool()
-    async def list_flows(environment: str | None = None) -> FlowCatalog:
+    async def list_flows(environment: str | None = None, markers: str | None = None) -> FlowCatalog:
         """List the test flows this Web Agent can run and the environments it knows.
 
         Each flow names the sites it opens and the environments it may run
         against. Pass `environment` to list only the flows runnable there.
+        `markers` is a pytest `-m` expression over each flow's `flow_markers`
+        (its file-wide markers) — `smoke`, `smoke and non_destructive`, `regression or smoke`,
+        `not regression` — the same selection `pytest -m` makes; run the flows
+        it returns with run_flow. An unregistered marker name is an error;
+        `deselected` lists the flow ids the expression left out.
         """
         entries, unavailable = catalog.list()
         flows = [e.info for e in entries]
+        deselected: list[str] = []
+        if expression := (markers or "").strip():
+            known = selection.markers_from_ini(config.project_root / "pytest.ini")
+            try:
+                compiled = selection.compile_selection(expression, known)
+            except selection.SelectionError as exc:
+                return FlowCatalog(environments=catalog.environment_infos(), error=_error(
+                    ErrorCode.INVALID_REQUEST, str(exc), known=known))
+            deselected = [f.id for f in flows if not selection.matches(compiled, f.flow_markers)]
+            flows = [f for f in flows if f.id not in deselected]
         if environment is not None:
             env = catalog.environment(environment)
             if env is None:
@@ -145,7 +161,8 @@ def build_server(config: AdapterConfig) -> FastMCP:
                     ErrorCode.INVALID_REQUEST, f"Unknown environment {environment!r}.",
                     known=[e.name for e in catalog.environment_infos()]))
             flows = [f for f in flows if env.name in f.environments]
-        return FlowCatalog(flows=flows, environments=catalog.environment_infos(), unavailable=unavailable)
+        return FlowCatalog(flows=flows, environments=catalog.environment_infos(), unavailable=unavailable,
+                           selection=expression, deselected=deselected)
 
     @server.tool()
     async def run_flow(flow: str, environment: str, profile: str | None = None,
@@ -158,10 +175,10 @@ def build_server(config: AdapterConfig) -> FastMCP:
         may run against. `profile` is `desktop` or `mobile` (default: the flow's
         own setting). `metadata` is free-form labels kept with the execution,
         for example `requested_by` and `task_id`. `inputs` are values for the
-        flow's `<NAME>` placeholders for this run — its `inputs` from list_flows,
+        flow's `{NAME}` placeholders for this run — its `inputs` from list_flows,
         typically the URL of the application in that environment; the
         environment must own the sites they point at. `secrets` are values for
-        the flow's credential placeholders (<APP_PASSWORD>…) for this run: they
+        the flow's credential placeholders ({APP_PASSWORD}…) for this run: they
         reach the run as environment variables and are never stored or logged;
         the report masks them as any sensitive placeholder.
         """

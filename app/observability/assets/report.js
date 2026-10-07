@@ -453,7 +453,9 @@ $('tcount').textContent = TOT.total;
     ['Finished', esc(fmtDate(DATA.created_at))], ['Total test time', esc(fmtMs(T.reduce((n,t) => n + t.duration_ms, 0)))]]);
   $('sum-env').innerHTML = dl([['Environment', esc(ENV.env)], ['Build', esc(ENV.build_name || 'Web Test Report')],
     ['Browser', esc(cap(ENV.browser) + (ENV.headless ? ' · headless' : ''))], ['Devices', labels.map(esc).join('<br>')],
-    ['Operating system', esc(ENV.os)], ['Run type', ENV.ci ? badge('CI pipeline', 'success') : badge('Local run', 'primary')]]);
+    ['Operating system', esc(ENV.os)], ['Run type', ENV.ci ? badge('CI pipeline', 'success') : badge('Local run', 'primary')],
+    ['Selection', DATA.selection ? `<span class="mono">-m ${esc(DATA.selection.markers)}</span>`
+      + (DATA.selection.deselected.length ? `<br>${DATA.selection.deselected.length} flow(s) deselected: ${DATA.selection.deselected.map(esc).join(', ')}` : '') : '']]);
   $('sum-tool').innerHTML = dl([['Web Agent', esc(ENV.framework)], ['Python', esc(ENV.python)],
     ['Playwright', esc(ENV.playwright)], ['Run ID', `<span class="mono">${esc(DATA.run_id)}</span>`]]);
 

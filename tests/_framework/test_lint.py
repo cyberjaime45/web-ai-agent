@@ -102,3 +102,48 @@ def test_healings_count_reports(tmp_path):
     assert healings([tmp_path / "r1.json", tmp_path / "r2.json"]) == [{
         "file": "tests/a.md", "test": "Home", "step": 'click: "Save"',
         "healed_by": "L2 (fuzzy match)", "reports": 2}]
+
+
+def test_a_non_destructive_flow_may_not_press_a_destructive_control(tmp_path):
+    _write(tmp_path, "flows/safe.md", """# Safe
+markers: smoke, non_destructive
+
+## Account
+- goto: "https://x.test"
+- click: "Delete account"
+- table_click: "Order 7" | "Cancel order"
+- click: "Save"
+- run_flow: "components/cleanup"
+- assert_text: "Done"
+""")
+    _write(tmp_path, "flows/allowed.md", """# Allowed
+markers: non_destructive
+
+## Config
+- allow_actions: "Remove filter"
+
+## Filter
+- goto: "https://x.test"
+- click: "Remove filter"
+- assert_text: "All"
+""")
+    _write(tmp_path, "flows/untagged.md", '# Untagged\n\n## S\n- goto: "https://x.test"\n- click: "Delete account"\n'
+                                          '- assert_text: "Gone"\n')
+    _write(tmp_path, "flows/components/cleanup.md", '# Cleanup\n\n## Steps\n- click: "Remove member"\n')
+    found = [f for f in lint([tmp_path], root=tmp_path) if f.rule == "destructive-step"]
+    assert [(f.path, f.line) for f in found] == [
+        ("flows/safe.md", 6), ("flows/safe.md", 7), ("flows/safe.md", 9)]       # 9: via the component
+    assert "components/cleanup → " in found[2].message and "Remove member" in found[2].message
+
+
+def test_markers_must_be_registered(tmp_path):
+    _write(tmp_path, "flows/a.md", """# A
+markers: smoke, nightly
+
+## Open
+markers: regression, flaky_one
+- goto: "https://x.test"
+- assert_text: "Hi"
+""")
+    found = [(f.line, f.message.split("'")[1]) for f in lint([tmp_path], root=tmp_path) if f.rule == "unknown-marker"]
+    assert found == [(2, "nightly"), (5, "flaky_one")]

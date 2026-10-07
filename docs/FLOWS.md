@@ -57,10 +57,34 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
   (`## Login`, `## Home Page`, `## Steps`); each section becomes its own test
   in the report, and a failure stops the rest of that section only — execution
   resumes at the next section.
-- **`markers: smoke, regression`** — a plain line (not a list item) tagging
-  tests for the report's marker filter and drawer. Before the first `##` it
-  applies to every test in the file; under a `##` heading it applies to that
-  test only. Markers are report metadata: they do not drive `pytest -m`.
+- **`markers: smoke, non_destructive`** — a plain line (not a list item).
+  Before the first `##` it tags the **flow**: it selects the file with
+  `pytest -m` and the MCP `list_flows(markers=...)`, and labels every test in
+  it. Under a `##` heading it only labels that test in the report — it does not
+  select, because a flow's sections share one page in order (a later section
+  relies on an earlier one's sign-in), so the file is what runs. Names must be
+  registered in `pytest.ini` (`smoke`, `regression`, `non_destructive`, …);
+  lint rule `unknown-marker` reports one that is not.
+
+  ```bash
+  pytest -m smoke                              # flows tagged smoke
+  pytest -m "smoke and non_destructive"        # AND: both markers
+  pytest -m "smoke or regression"              # OR: either
+  pytest -m "not regression"                   # untagged flows too
+  ```
+
+  No `-m`: every flow runs, as before. An unregistered name in `-m` stops the
+  run with a usage error (exit 4); an expression no flow matches runs nothing
+  and exits 5 — the previous report is kept. A filtered run lists the
+  expression and the flows it left out in the console summary, the report's
+  run details and `summary.json` → `selection`.
+
+  `non_destructive` is a label you choose flows by (for example, the only
+  ones safe against production). It does not change how a flow runs: explicit
+  steps still do what they say. `python main.py lint` checks the label — rule
+  `destructive-step` reports a `non_destructive` flow, or a component it runs,
+  that clicks a control the safety policy treats as destructive (`Delete…`,
+  `Cancel order`…), unless the flow lists it in `allow_actions`.
 - **`## Credentials`, `## Expected Outcome`, `## Error Scenarios`, `## Notes`**
   are metadata sections; the runner never executes them. `## Expected Outcome`
   is the flow's intent: its lines appear with every test of the file in the

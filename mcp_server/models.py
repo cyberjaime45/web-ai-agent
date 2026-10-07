@@ -59,7 +59,8 @@ class FlowInfo(BaseModel):
     id: str                       # what run_flow takes: the path under the flows folder
     title: str
     tests: list[str] = Field(default_factory=list)       # one test case per ## section
-    markers: list[str] = Field(default_factory=list)
+    markers: list[str] = Field(default_factory=list)     # every tag: file-wide and the ones on single tests
+    flow_markers: list[str] = Field(default_factory=list)  # file-wide only: what list_flows(markers=) and pytest -m select on
     expected: list[str] = Field(default_factory=list)    # the flow's "## Expected Outcome" lines
     hosts: list[str] = Field(default_factory=list)       # every site the flow opens
     environments: list[str] = Field(default_factory=list)  # environments it may run against
@@ -117,7 +118,8 @@ class Capabilities(BaseModel):
     actions: list[ActionSpec] = Field(default_factory=list)
     skills: list[SkillSpec] = Field(default_factory=list)
     flow_format: dict[str, Any] = Field(default_factory=dict)
-    configured_placeholders: list[str] = Field(default_factory=list)   # <NAME>s the environment can fill (names only)
+    configured_placeholders: list[str] = Field(default_factory=list)   # {NAME}s the environment can fill (names only)
+    markers: list[str] = Field(default_factory=list)   # registered marker names (pytest.ini): what a flow may declare
     tools: list[str] = Field(default_factory=list)
     error: ErrorInfo | None = None
 
@@ -131,6 +133,8 @@ class FlowCatalog(BaseModel):
     flows: list[FlowInfo] = Field(default_factory=list)
     environments: list[EnvironmentInfo] = Field(default_factory=list)
     unavailable: list[UnavailableFlow] = Field(default_factory=list)
+    selection: str = ""                                   # the markers expression applied, if any
+    deselected: list[str] = Field(default_factory=list)  # flow ids it left out
     error: ErrorInfo | None = None
 
 

@@ -197,6 +197,7 @@ class Catalog:
                 title=flow.title or flow.name,
                 tests=tests or [flow.title or flow.name],
                 markers=sorted({*flow.markers, *(m for ms in flow.section_markers.values() for m in ms)}),
+                flow_markers=list(flow.markers),
                 expected=list(flow.expected),
                 hosts=sorted(targets),
                 environments=environments,

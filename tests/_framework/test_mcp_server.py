@@ -27,7 +27,7 @@ _REPO = Path(__file__).resolve().parents[2]
 _FIXTURE = (_REPO / "tests/_framework/fixtures/login.html").as_uri()
 _FINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
 
-_PASSING = f'# Fixture sign-in page\n\n## Page loads\n- goto: "{_FIXTURE}"\n- assert_text: "Welcome!"\n'
+_PASSING = f'# Fixture sign-in page\nmarkers: smoke, non_destructive\n\n## Page loads\nmarkers: regression\n- goto: "{_FIXTURE}"\n- assert_text: "Welcome!"\n'
 _FAILING = (f'# Fixture sign-in page (broken expectation)\n\n## Page loads\n- goto: "{_FIXTURE}"\n'
             '- assert_text: "Welcome!"\n\n## Signed in\n- assert_text: "This text is not on the page"\n')
 _SLOW = f'# Slow flow\n\n## Waits\n- goto: "{_FIXTURE}"\n- wait: 120000\n'
@@ -126,6 +126,16 @@ def test_tools_are_discoverable_and_the_catalog_lists_the_flows(scratch: Path):
             assert "live.md" not in {f["id"] for f in only_local["flows"]}
             unknown = await _call(session, "list_flows", environment="qa9")
             assert unknown["error"]["code"] == "INVALID_REQUEST"
+
+            # markers: every tag, as before (a test's own too); flow_markers: what selection uses
+            assert flows["passing.md"]["markers"] == ["non_destructive", "regression", "smoke"]
+            assert flows["passing.md"]["flow_markers"] == ["smoke", "non_destructive"]
+            assert (await _call(session, "list_flows", markers="regression"))["flows"] == []   # a test's tag
+            smoke = await _call(session, "list_flows", markers="smoke and non_destructive")
+            assert [f["id"] for f in smoke["flows"]] == ["passing.md"]
+            assert smoke["selection"] == "smoke and non_destructive" and "live.md" in smoke["deselected"]
+            typo = await _call(session, "list_flows", markers="smokee")
+            assert typo["error"]["code"] == "INVALID_REQUEST" and "smokee" in typo["error"]["message"]
     asyncio.run(scenario())
 
 
@@ -312,6 +322,7 @@ def test_an_exploration_describes_the_page_and_a_saved_flow_runs(scratch: Path):
             caps = await _call(session, "describe_capabilities")
             assert caps["web_agent_version"] and any(a["keyword"] == "fill" for a in caps["actions"])
             assert any(s["keyword"] == "test_page" for s in caps["skills"])
+            assert {"smoke", "regression", "non_destructive"} <= set(caps["markers"])   # what a flow may declare
 
             doc = await _call(session, "get_flow", flow="passing.md")
             assert doc["error"] is None and doc["content"].startswith("# Fixture sign-in page")

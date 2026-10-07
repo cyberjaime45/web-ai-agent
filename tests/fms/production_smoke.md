@@ -1,4 +1,5 @@
 # FMS MVC Smoke Tests
+markers: smoke, non_destructive
 
 ## Login Page
 - run_flow: "components/sso_login"
