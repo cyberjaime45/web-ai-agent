@@ -6,5 +6,5 @@
 <!-- - click: "Accept All Cookies" -->
 - fill: "[data-testid='email-login-input']" | "{MS_EMAIL}"
 - fill: "[data-testid='password-login-input']" | "{MS_PASSWORD}"
-- click: "SIGN IN"
+- click: "LOG IN"
 - wait_load

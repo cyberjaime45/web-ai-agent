@@ -1,11 +1,14 @@
 trigger: none
 parameters:
   - name: WEB_APP
-    displayName: Select Production Test
+    displayName: Select Test
     type: string
     default: FMS
     values:
       - FMS
+      - Member Site
+      - Blue Sky
+      - Marketing Site
 
 variables:
   - group: qa-automation

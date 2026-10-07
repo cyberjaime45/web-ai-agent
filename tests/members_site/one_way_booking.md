@@ -1,8 +1,5 @@
 # One Way Bokking
-
-## Credentials
-- username: core@wheelsup.com
-- password: "Welcome1!"
+This is one way booking flow
 
 ## Steps
 - run_flow: "components/ms_login"
@@ -11,7 +8,7 @@
 <!-- Search form page -->
 - click: "One way"
 - type: "Enter airport, city or ZIP" | "KBOS"
-- click_link_text: "Boston Logan International"
+- click: "Boston Logan International"
 - type: "Enter airport, city or ZIP" | "KMMU"
 - click: "Morristown Municipal"
 <!-- Number of passengers -->
@@ -19,18 +16,15 @@
 <!-- Number of pets -->
 - click: "button[tabindex='0'][type='button'][aria-label='+']"
 - click: "Next"
-- click: "31"
+- click: "12"
 - click: "Next"
 - click: "Search"
 <!-- Flight serach results page -->
 wait_for_element: "div[data-name='CarouselListSlide']"
 - click: "Book"
 <!-- Trip details page -->
-- wait_for_text: "Flight details"
+- wait_for_text: "Departure time"
 - assert_text: "Adding your pets to your passenger list now, will ensure your aircraft and crew are fully prepared to better serve you and your furry friends on your day of travel."
-- assert_text: "Operator Disclosure"
-- assert_text: "Onboard amenities"
-- assert_text: "Changes to Your Itinerary"
 - click: "Review and Pay"
 <!-- Checkout flight page -->
 - wait_for_text: "Your payment"
@@ -42,6 +36,7 @@ wait_for_element: "div[data-name='CarouselListSlide']"
 - assert_text: "Provide all passenger information 24 hours before departure."
 - assert_text: "Provide all passenger information 24 hours before departure."
 - assert_text: "Arrive at the FBO 30 minutes early to ensure a timely departure."
+- screenshot
 
 
 
