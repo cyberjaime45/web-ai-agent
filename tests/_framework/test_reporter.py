@@ -885,13 +885,36 @@ def test_an_interrupted_run_reports_what_finished(tmp_path):
 
 def test_the_exit_code_follows_the_model_and_never_lowers_pytests():
     from app.observability.reporter import run_status
-    ok = {"failed": 0, "errors": 0, "warnings": 0}
+    ok = {"total": 1, "skipped": 0, "failed": 0, "errors": 0, "warnings": 0}
     assert run_status({**ok, "failed": 1}, 0) == ("failed", 1)   # the model saw a failure pytest missed
     assert run_status(ok, 4) == ("error", 4)                      # a usage error: the run broke, its code kept
     assert run_status({**ok, "failed": 1}, 3) == ("error", 3)     # an internal error is never "failed tests"
     assert run_status(ok, 1) == ("error", 1)                      # pytest failed something the model missed
     assert run_status({**ok, "errors": 1}, 1) == ("failed", 1)
     assert run_status({**ok, "warnings": 2}, None) == ("passed_with_warnings", 0)
+    assert run_status({**ok, "skipped": 1}, 0) == ("no_tests", 0)    # every test skipped: never a pass
+
+
+def test_counts_say_what_they_count_and_the_headline_says_the_outcome(tmp_path):
+    warn = {"name": "tabs select their panel", "passed": False, "severity": "warn", "detail": "x"}
+    clean = make_result()
+    warned = make_result(nodeid="flows/w.md::W", flow_steps=_skill_run(marker_checks=[warn, {**warn, "name": "y"}]))
+    failed = make_result(nodeid="flows/f.md::F", outcome="failed", error="boom")
+    skipped = make_result(nodeid="flows/s.md::S", outcome="skipped")
+
+    _, summary = _totals(tmp_path, [warned])
+    t = summary["totals"]
+    assert (t["passed"], t["passed_with_warnings"], t["passed_without_warnings"], t["warning_count"]) == (1, 1, 0, 2)
+    assert t["pass_rate"] == 100.0 and t["executed"] == 1
+    assert summary["headline"] == "All tests passed. 1 test has warnings to review."
+
+    _, summary = _totals(tmp_path, [clean])
+    assert summary["headline"] == "All tests passed."
+    _, summary = _totals(tmp_path, [clean, warned, failed, skipped], exit_status=1)
+    assert summary["headline"] == "1 of 3 tests failed. 1 test was skipped. 1 passed test has warnings to review."
+    _, summary = _totals(tmp_path, [skipped], exit_status=0)
+    assert (summary["status"], summary["headline"]) == ("no_tests", "No tests ran: 1 test was skipped.")
+    assert summary["totals"]["pass_rate"] == 0.0
 
 
 def test_partial_execution_counts_each_section_once(tmp_path):

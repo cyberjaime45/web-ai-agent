@@ -166,11 +166,16 @@ class ExecutionStatus(BaseModel):
 class Totals(BaseModel):
     """Test cases, as the Web Agent's summary.json counts them."""
     total: int = 0
-    passed: int = 0
+    executed: int = 0                  # total - skipped
+    passed: int = 0                    # every passed test case, with or without warnings
     failed: int = 0
     skipped: int = 0
     errors: int = 0
-    warnings: int = 0
+    warnings: int = 0                  # passed test cases with warnings (tests, not findings)
+    passed_with_warnings: int = 0      # the same number, named for what it is
+    passed_without_warnings: int = 0
+    passed_on_retry: int = 0
+    warning_count: int = 0             # the findings on those tests (warnings, not tests)
     unverified: int = 0
     pass_rate: float = 0.0
     duration_ms: float = 0.0
@@ -243,7 +248,8 @@ class ExecutionResult(BaseModel):
     flow: str | None = None
     environment: str | None = None
     hosts: list[str] = Field(default_factory=list)
-    verdict: str | None = None          # the Web Agent's own run status (passed, failed, …)
+    verdict: str | None = None          # the Web Agent's own run status (passed, failed, no_tests, …)
+    headline: str | None = None         # the outcome in plain words, as the report and console say it
     exploration: Exploration | None = None   # present for explore_page executions
     summary: Totals | None = None
     tests: list[CaseOutcome] = Field(default_factory=list)

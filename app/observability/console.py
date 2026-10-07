@@ -188,6 +188,7 @@ def execution_summary(
     build_name: str | None = None,
     status: str | None = None,
     selection: str = "",
+    headline: str = "",
 ) -> list[str]:
     """The end-of-run summary block.
 
@@ -199,7 +200,8 @@ def execution_summary(
     (collect-only, full deselect).
     *environment* is a preformatted label (e.g. ``staging · chromium · headless``);
     *build_name* is the run label (BUILD_NAME or its fallback); *selection*
-    the ``-m`` marker expression, when the run had one.
+    the ``-m`` marker expression, when the run had one; *headline* the
+    outcome in plain words (``summary.json`` → ``headline``), shown first.
     """
     if not totals or not totals.get("total"):
         return []
@@ -220,6 +222,8 @@ def execution_summary(
             timed.append((float(getattr(report, "duration", 0.0) or 0.0), flow_label(info)))
 
     rows: list[tuple[str, str]] = []
+    if headline:
+        rows.append(("Result", headline))
     if build_name:
         rows.append(("Build", build_name))
     if environment:
@@ -234,11 +238,17 @@ def execution_summary(
     if timed:
         files = len(flow_files)
         rows.append(("Flows", f"{len(timed)} (in {files} file{'' if files == 1 else 's'})"))
-    rows.append(("Passed", str(totals["passed"])))
+    executed = totals["total"] - totals["skipped"]
+    warned = totals.get("warnings", 0)
+    rows.append(("Passed", f"{totals['passed']} of {executed} test{'' if executed == 1 else 's'}"
+                           + (f" ({warned} with warnings)" if warned else "") if executed else "0 — no test ran"))
     rows.append(("Failed", str(totals["failed"] + totals["errors"])))
     rows.append(("Skipped", str(totals["skipped"])))
-    if totals.get("warnings"):
-        rows.append(("Warnings", f"{totals['warnings']} passed with warnings — see the report"))
+    if warned:
+        found = totals.get("warning_count", 0)
+        rows.append(("Warnings", f"{warned} passed test{' has' if warned == 1 else 's have'} warnings"
+                                 + (f" ({found} warning{'' if found == 1 else 's'})" if found else "")
+                                 + " — they did not fail it; review them in the report"))
     if totals.get("unverified"):
         rows.append(("Not verified", f"{totals['unverified']} with checks the agent could not judge (coverage, not defects)"))
     if retries := len(stats.get("rerun", [])):
@@ -246,7 +256,8 @@ def execution_summary(
     if on_retry:
         rows.append(("Passed on retry", f"{on_retry} section(s) — flaky, see the report"))
     if healings:
-        rows.append(("Healed steps", f"{healings} (resolved by L2/L3)"))
+        healed = f"{healings} (informational: found by a fallback locator, the result is unaffected; update the flow)"
+        rows.append(("Healed steps", healed))
     rows.append(("Duration", format_duration(duration_s)))
     for index, (duration, label) in enumerate(sorted(timed, reverse=True)[:_SLOWEST_N]
                                               if len(timed) >= 2 else []):

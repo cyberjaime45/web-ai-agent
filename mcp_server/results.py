@@ -26,7 +26,7 @@ from mcp_server.models import (
     Totals,
 )
 
-_COMPLETED = frozenset({"passed", "passed_with_warnings", "failed"})
+_COMPLETED = frozenset({"passed", "passed_with_warnings", "failed", "no_tests"})   # no_tests: ran, executed nothing
 _MAX_TEXT = 2000        # a message is evidence, not a log: the full text stays in the report
 _MAX_TESTS = 500
 _MAX_WARNINGS = 50
@@ -213,6 +213,7 @@ def build_result(report_dir: Path) -> dict[str, Any] | None:
     return {
         **({"exploration": Exploration(**exploration)} if exploration else {}),
         "verdict": summary.get("status"),
+        "headline": summary.get("headline"),
         "summary": Totals(**{k: totals[k] for k in Totals.model_fields if k in totals}),
         "tests": [
             CaseOutcome(name=t.get("name") or "", file=t.get("file") or "", status=t.get("status") or "",

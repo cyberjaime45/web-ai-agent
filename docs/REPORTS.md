@@ -40,12 +40,16 @@ JSON : .../reports/staging/test_cases.json
 JUnit: .../reports/staging/junit.xml
 ```
 
-*Flows* counts the Markdown flows that ran. A flow with `## sections` is
-split into one test case per section; *Passed*, *Failed* (errors included)
-and *Skipped* count those test cases and are read from `summary.json`, so the
-console, the JSON and `junit.xml` always agree. *Warnings* (shown only when
-there are some) counts passed test cases with at least one warning — they are
-also in *Passed*. *Not verified* (shown only when there are some) counts test
+*Result* comes first: the run's outcome in plain words (`All tests passed. 1
+test has warnings to review.`), the same sentence as the report banner and
+`summary.json` → `headline`. *Flows* counts the Markdown flows that ran. A flow
+with `## sections` is split into one test case per section; *Passed* (`1 of 1
+test (1 with warnings)`), *Failed* (errors included) and *Skipped* count those
+test cases and are read from `summary.json`, so the console, the JSON and
+`junit.xml` always agree. A test that met its pass criteria counts as passed
+whether or not it has warnings. *Warnings* (shown only when there are some)
+says how many passed **tests** have warnings and, in brackets, how many
+**warnings** they hold in total (`1 passed test has warnings (3 warnings)`). *Not verified* (shown only when there are some) counts test
 cases with checks the agent could not judge — coverage gaps, not defects;
 they never make a test "with warnings". *Interrupted* appears when the run stopped before every flow
 finished (Ctrl-C); the counts then cover what completed.
@@ -58,7 +62,10 @@ failure outside the test cases (a teardown error), is status `error` with an
 Warnings never change the exit code; a test that passed on retry counts as
 *passed on retry*, not as *with warnings*.
 
-*Healed steps* counts steps that L1 could not resolve and L2/L3 recovered.
+A run that executed no test (every one skipped) is status `no_tests` — *Result*
+says `No tests ran`, never a pass. *Healed steps* counts steps that L1 could
+not resolve and L2/L3 recovered; it is informational — the result is
+unaffected, the flow is due an update — not a warning.
 Pass `-v` or `-q` to get pytest's stock output instead.
 
 A failed flow also prints its step list, one line per step with the layer
@@ -112,26 +119,35 @@ The drawer sizes to the screen: about 83% of a desktop window (never less than
 It is written for reviewers first and engineers second, top to bottom:
 
 - **Execution summary** — build name, environment, browser, device, duration,
-  run type and date; a verdict banner (`6 tests failed` / `Passed with
-  warnings` / `All tests passed` / `Run interrupted`) with a one-line
-  explanation (`Both tests passed, both with warnings to review.`); the pass
-  rate; what needs attention — failures in red (`1 test failed, 2 more with
-  warnings`), warnings alone in amber (`2 tests have warnings`); the tests by
-  status as parts that add up to the total — *passed*, *with warnings*,
-  *passed on retry*, *failed*, *skipped* — in words, a bar and its key; and
-  the number of test cases and suites
+  run type and date; a banner whose headline is the outcome in plain words
+  (`All tests passed. 1 test has warnings to review.` / `1 of 3 tests failed.` /
+  `No tests ran: 2 tests were skipped.` — `summary.json` → `headline`), then
+  what to look at, each linked to its test: the failed tests; the tests to
+  review with their warnings in plain words, noting that warnings did not
+  change the result; tests that passed only on retry. Technical detail
+  (fallback locators, console messages) stays in the tests and Run details.
+  Then the pass rate (`—` when no test ran); `1 of 1 test passed` (or `1 of 3
+  tests failed`); `1 passed · 0 failed`; `1 passed test has warnings · 3
+  warnings in total` — counts of **tests** unless they say **warnings**; and
+  a bar whose key labels each part in full and adds up to the total —
+  *Passed without warnings*, *Passed with warnings*, *Passed on retry*,
+  *Failed*, *Skipped* (`Passed without warnings: 0`, `Passed with warnings:
+  1`); and the number of tests and suites
 - **All tests** — tests grouped by suite (a flow file, named by its `# H1`, with
   the path underneath; each `## section` is its own test). Suites with failures
   come first and stay open; passing suites fold away. Search (`/`), status
-  filters (All / Failed / Passed / With warnings / Passed on retry / Skipped —
-  the same parts as the summary, so they add up to All), area and tag filters.
-  Row badges are coloured only when they carry status: console errors in red;
-  the test's warnings in amber (the amber dot says the same, so no status
-  badge repeats it); console warnings (browser messages, not checks) and
-  failed requests in grey — a cancelled request (`net::ERR_ABORTED`: a beacon,
+  filters (All / Failed / Passed / Passed with warnings / Passed on retry /
+  Skipped — *Passed* is every passed test; *with warnings* and *on retry* are
+  subsets of it), area and tag filters. A suite row reads `1 of 1 passed`
+  (skipped tests are counted apart, never as passed; a suite where nothing ran
+  reads `Not run`). Row badges are coloured only when they carry status: the
+  test's warnings in amber (the amber dot says the same, so no status badge
+  repeats it; the tooltip says the test still passed); console errors,
+  console warnings and failed requests are technical details in grey — red
+  only on a failed test, where they may explain it — a cancelled request (`net::ERR_ABORTED`: a beacon,
   a request cut off by leaving the page) is not a failure, here or in the
-  Network views, where it shows as `CANCEL`; a lightning icon marks a self-healed test (a
-  fallback locator was needed — the tooltip says so); *Autonomous* (`test_page`, `explore_page`) in blue; tags in grey. Each
+  Network views, where it shows as `CANCEL`; a lightning icon marks a self-healed test —
+  informational: a fallback locator was needed, the result is unaffected (the tooltip says so); *Autonomous* (`test_page`, `explore_page`) in blue; tags in grey. Each
   test name ends with its device icon (monitor for desktop, phone for mobile),
   and a test's profiles sit together — `Login Page 🖥`, `Login Page 📱`, then
   the next test — in the order the tests first ran
@@ -262,10 +278,15 @@ severity, detail, count, outcome}`: `name` states the expected result
 `blocked`. Each test lists its `warnings` — `{step, step_name, check, detail,
 severity, also?}`, one per flagged finding that did not fail the test, `also`
 holding the other steps that recorded the same one — and its `unverified`
-(the inconclusive checks, same shape). `summary.json` has `totals.warnings`
-(passed test cases with warnings), `totals.unverified` (test cases with
-checks not verified), `status` (`passed`,
-`passed_with_warnings`, `failed`, `error`, `interrupted`) and `exit_code`.
+(the inconclusive checks, same shape). `summary.json` has `headline` (the
+outcome in plain words), `totals.executed` (total − skipped), `totals.passed`
+(every passed test case, with or without warnings), `totals.warnings` and
+`totals.passed_with_warnings` (passed test cases with warnings — tests),
+`totals.passed_without_warnings`, `totals.passed_on_retry`,
+`totals.warning_count` (the warnings on those tests — findings, not tests),
+`totals.unverified` (test cases with checks not verified), `status`
+(`passed`, `passed_with_warnings`, `failed`, `no_tests`, `error`,
+`interrupted`) and `exit_code`.
 Step ids start at `1` in each test; a test that holds several sections it
 could not split (steps without timings) has the sections as its top level, so
 its steps read `1.1`, `2.1`…; each profile's tests have their own ids

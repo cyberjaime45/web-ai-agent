@@ -83,7 +83,7 @@ def test_summary_counts_test_cases_from_the_report_totals():
         "Build:        FMS MVC Smoke Test",
         "Environment:  production · chromium · headless",
         "Flows:        1 (in 1 file)",
-        "Passed:       30",
+        "Passed:       30 of 31 tests",
         "Failed:       1",
         "Skipped:      0",
         "Duration:     1m29s",
@@ -99,7 +99,7 @@ def test_summary_counts_flows_and_files_and_folds_errors_into_failed():
     }
     rows = _rows(execution_summary(stats, _totals(passed=8, failed=1, errors=1, skipped=2), 42.8))
     assert rows["Flows"] == "3 (in 2 files)"
-    assert (rows["Passed"], rows["Failed"], rows["Skipped"]) == ("8", "2", "2")
+    assert (rows["Passed"], rows["Failed"], rows["Skipped"]) == ("8 of 10 tests", "2", "2")
     assert rows["Retries"] == "1"
     assert rows["Duration"] == "43s"
 
@@ -107,7 +107,7 @@ def test_summary_counts_flows_and_files_and_folds_errors_into_failed():
 def test_summary_has_no_flows_row_when_no_flow_ran():
     rows = _rows(execution_summary({"passed": [_report("tests/x.py::test_a")]}, _totals(passed=1), 1.0))
     assert "Flows" not in rows and "Python tests" not in rows and "Test cases" not in rows
-    assert rows["Passed"] == "1"
+    assert rows["Passed"] == "1 of 1 test"
 
 
 def test_summary_build_row_leads_when_given():
@@ -125,7 +125,7 @@ def test_summary_counts_healed_steps_and_retry_passes_only_when_present():
         _report("tests/b.md::B", [("webagent_healings", 1)]),
     ]}
     rows = _rows(execution_summary(healed, _totals(passed=2), 1.0))
-    assert rows["Healed steps"] == "3 (resolved by L2/L3)"
+    assert rows["Healed steps"].startswith("3 (informational")       # automatic recovery: not a warning
     assert rows["Passed on retry"].startswith("1 section(s)")
 
     clean = {"passed": [_flow_report("a.md", "A"), _flow_report("b.md", "B")]}
@@ -152,7 +152,21 @@ def test_summary_skips_slowest_for_a_single_flow():
 def test_summary_shows_warnings_and_an_interrupted_run_only_when_they_apply():
     stats = {"passed": [_flow_report("a.md", "A")]}
     rows = _rows(execution_summary(stats, {**_totals(passed=3), "warnings": 2}, 1.0, status="passed_with_warnings"))
-    assert rows["Passed"] == "3" and rows["Warnings"].startswith("2 passed with warnings")
+    assert rows["Passed"] == "3 of 3 tests (2 with warnings)" and rows["Warnings"].startswith("2 passed tests have warnings")
     assert "Interrupted" not in rows
     rows = _rows(execution_summary(stats, {**_totals(passed=1), "warnings": 0}, 1.0, status="interrupted"))
     assert "Warnings" not in rows and rows["Interrupted"].startswith("the run stopped early")
+
+
+def test_summary_says_the_result_first_and_counts_tests_apart_from_warnings():
+    stats = {"passed": [_flow_report("a.md", "A")]}
+    totals = {**_totals(passed=1), "warnings": 1, "warning_count": 3}
+    rows = _rows(execution_summary(stats, totals, 1.0, headline="All tests passed. 1 test has warnings to review."))
+    assert rows["Result"] == "All tests passed. 1 test has warnings to review."
+    assert rows["Passed"] == "1 of 1 test (1 with warnings)"                  # a warned test still counts as passed
+    assert rows["Warnings"].startswith("1 passed test has warnings (3 warnings)")   # tests, then findings
+
+
+def test_summary_of_a_run_where_every_test_was_skipped_shows_no_pass():
+    rows = _rows(execution_summary({"skipped": [_flow_report("a.md", "A")]}, _totals(skipped=2), 1.0))
+    assert rows["Passed"] == "0 — no test ran" and rows["Skipped"] == "2"

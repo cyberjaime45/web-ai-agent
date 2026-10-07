@@ -63,9 +63,16 @@ can only be started by an id from `list_flows`.
 |---------------|----------|---------|---------------|
 | The flow ran; every test passed | `COMPLETED` | `null` | `summary`, `verdict: passed` |
 | The flow ran; some tests failed | `COMPLETED` | `null` | `failures[]`, each `kind: test_failure` |
+| The flow ran; every test was skipped | `COMPLETED` | `null` | `verdict: no_tests` — nothing was checked, never a pass |
 | The Web Agent could not run the flow (no report, crash, browser did not start) | `FAILED` | `WEB_AGENT_ERROR` | `error.details`: exit code, console log path and tail |
 | Stopped after the time limit | `TIMED_OUT` | `EXECUTION_TIMEOUT` | whatever was reported before the stop |
 | `cancel_execution` | `CANCELLED` | `null` | — |
+
+`get_result` also carries `headline` (the outcome in plain words, as the report
+and console say it) and `summary` with explicit counts: `passed` is every passed
+test, with or without warnings; `passed_with_warnings` (also `warnings`) and
+`passed_without_warnings` split it; `warning_count` is the number of warnings
+(findings, not tests); `executed` is `total − skipped`.
 
 A test that broke without a failed step (setup or teardown error) inside an
 otherwise completed run is listed in `failures` with `kind: execution_error`.

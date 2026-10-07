@@ -121,8 +121,9 @@ class ReportFiles(NamedTuple):
     test_cases: Path
     junit: Path
     totals: dict
-    status: str          # passed | passed_with_warnings | failed | error | interrupted
+    status: str          # passed | passed_with_warnings | failed | no_tests | error | interrupted
     exit_code: int       # what the process should exit with (see run_status)
+    headline: str = ""   # run_headline: the outcome in plain words
 
 
 INTERRUPTED = 2          # pytest.ExitCode.INTERRUPTED
@@ -135,7 +136,9 @@ def run_status(totals: dict, exit_status: int | None) -> tuple[str, int]:
     Any other code but 0 / 1 (usage or internal error) means the run itself
     broke: status ``error``, pytest's code kept. Otherwise a failed or errored
     test case means exit 1 — and so does a pytest failure the model did not
-    see (status ``error``): the report never calls a failed run passed."""
+    see (status ``error``): the report never calls a failed run passed. A run
+    that executed no test (none collected, or every one skipped) is
+    ``no_tests``, never a pass — its exit code is pytest's own."""
     if exit_status == INTERRUPTED:
         return "interrupted", INTERRUPTED
     if exit_status not in (None, 0, 1):
@@ -144,7 +147,42 @@ def run_status(totals: dict, exit_status: int | None) -> tuple[str, int]:
         return "failed", 1
     if exit_status == 1:
         return "error", 1
+    if not totals["total"] - totals["skipped"]:
+        return "no_tests", exit_status or 0
     return ("passed_with_warnings" if totals["warnings"] else "passed"), 0
+
+
+def _n(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def run_headline(totals: dict, status: str) -> str:
+    """The run's outcome in one or two plain sentences — the report banner, the
+    console summary and summary.json say exactly this. Counts are *tests*
+    unless they say *warnings*."""
+    executed = totals["total"] - totals["skipped"]
+    failing = totals["failed"] + totals["errors"]
+    if status == "interrupted":
+        return (f"The run was interrupted. {_n(totals['total'], 'test', 'tests')} finished: "
+                f"{totals['passed']} passed, {failing} failed.")
+    if status == "error":
+        return "The run itself failed (a setup, teardown or internal error)." + (
+            f" {failing} of {_n(totals['total'], 'test', 'tests')} failed." if failing else "")
+    if status == "no_tests":
+        return (f"No tests ran: {_n(totals['skipped'], 'test was', 'tests were')} skipped."
+                if totals["skipped"] else "No tests ran.")
+    if failing:
+        text = f"{failing} of {_n(executed, 'test', 'tests')} failed."
+    else:
+        text = "All tests passed." if not totals["skipped"] else "All tests that ran passed."
+    if totals["skipped"]:
+        text += f" {_n(totals['skipped'], 'test was', 'tests were')} skipped."
+    if totals.get("passed_on_retry"):
+        text += f" {_n(totals['passed_on_retry'], 'test', 'tests')} passed only on retry."
+    if totals["warnings"]:
+        text += (f" {_n(totals['warnings'], 'passed test has', 'passed tests have')} warnings to review."
+                 if failing else f" {_n(totals['warnings'], 'test has', 'tests have')} warnings to review.")
+    return text
 
 
 # XML 1.0 forbids most control characters, and ANSI colour codes are noise:
@@ -220,6 +258,10 @@ def generate_report(
     skipped = sum(1 for t in tests if t["status"] == "skipped")
     # a test that passed on retry counts there, not here (the report shows it once)
     warnings = sum(1 for t in tests if t["status"] == "passed" and t.get("warnings") and not t.get("retries"))
+    on_retry = sum(1 for t in tests if t["status"] == "passed" and t.get("retries"))
+    # individual findings (not tests) on the tests counted in `warnings`
+    warning_count = sum(len(t["warnings"]) for t in tests
+                        if t["status"] == "passed" and t.get("warnings") and not t.get("retries"))
     # coverage gaps: test cases with a check the agent could not judge — never a failure or warning
     unverified = sum(1 for t in tests if t["status"] != "skipped" and t.get("unverified"))
     executed = total - skipped
@@ -242,11 +284,16 @@ def generate_report(
         },
         "totals": {
             "total": total,
-            "passed": passed,
+            "executed": executed,          # total - skipped
+            "passed": passed,              # every passed test case, with or without warnings
             "failed": failed,
             "skipped": skipped,
             "errors": errors,
-            "warnings": warnings,          # passed test cases with at least one warning
+            "warnings": warnings,          # passed test cases with at least one warning (tests, not findings)
+            "passed_with_warnings": warnings,
+            "passed_without_warnings": passed - warnings - on_retry,
+            "passed_on_retry": on_retry,
+            "warning_count": warning_count,   # the findings on those tests (warnings, not tests)
             "unverified": unverified,      # test cases with a check the agent could not judge
             "pass_rate": round(passed / executed * 100, 1) if executed else 0.0,
             "duration_ms": round((time.time() - session_start) * 1000, 1),
@@ -256,6 +303,7 @@ def generate_report(
     }
     status, exit_code = run_status(payload["totals"], exit_status)
     payload["status"], payload["exit_code"] = status, exit_code
+    payload["headline"] = run_headline(payload["totals"], status)
 
     # Static shell + assets, overwritten every run.
     packaged = Path(__file__).parent / "assets"
@@ -307,4 +355,5 @@ def generate_report(
     cases_path.write_text(json.dumps({"run_id": payload["run_id"], "tests": tests},
                                      indent=2, ensure_ascii=False), encoding="utf-8")
     _write_junit(junit_path, tests, payload["created_at"])
-    return ReportFiles(summary_path, cases_path, junit_path, payload["totals"], status, exit_code)
+    return ReportFiles(summary_path, cases_path, junit_path, payload["totals"], status, exit_code,
+                       payload["headline"])

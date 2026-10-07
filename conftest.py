@@ -149,7 +149,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     lines = execution_summary(
         terminalreporter.stats, files.totals if files else None,
         duration, settings.run_label(), get_build_name(), files.status if files else None,
-        selection=expression,
+        selection=expression, headline=files.headline if files else "",
     )
     if lines:
         terminalreporter.section("Execution summary")

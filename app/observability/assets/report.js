@@ -55,7 +55,7 @@ const badge = (text, kind = 'neutral', title = '') =>
 // Icon-only badge: the label moves to the tooltip and to assistive tech.
 const iconBadge = (name, kind, label) =>
   `<span class="qa-badge qa-badge-${kind}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon(name)}</span>`;
-const HEALED = 'Self-healed: a fallback locator found an element the flow describes. Update the flow so it passes on the first attempt.';
+const HEALED = 'Informational — self-healed: a fallback locator found an element the flow describes. The result is unaffected; update the flow so it matches on the first try.';
 const statusBadge = st => badge(STATUS[st].label, STATUS[st].badge);
 // The device profile as an icon (monitor / phone), named for tooltips and screen readers.
 const deviceIcon = name => name ? `<span class="dev-ico" role="img" aria-label="${esc(cap(name))}" title="${esc(cap(name))}">${icon(name === 'mobile' ? 'phone' : 'monitor')}</span>` : '';
@@ -76,8 +76,20 @@ const failing = TOT.failed + TOT.errors;
 const failedReq = n => !n.ok && !/ERR_ABORTED|NS_BINDING_ABORTED|cancelled/.test(n.failure || '');   // oracle._CANCELLED
 // How many tests show each status — the parts of the hero bar and the filters, adding up to the total.
 const BY = T.reduce((m, t) => { const k = failedLike(t.status) ? 'failed' : effStatus(t); m[k] = (m[k] || 0) + 1; return m; }, {});
-const allOf = n => n === 1 ? 'The test' : n === 2 ? 'Both tests' : `All ${n} tests`;
-const healCount = T.reduce((n,t) => n + (t.healings||[]).length, 0);
+// Tests, by outcome. `TOT.passed` counts every passed test; warnings never take one away from it.
+const executed = TOT.total - TOT.skipped;
+const cleanPass = BY.passed || 0, flaky = BY.flaky || 0;
+const warnedTests = T.filter(t => hasWarnings(t) && !isFlaky(t)), warned = warnedTests.length;   // = TOT.warnings
+const warnFindings = warnedTests.reduce((n, t) => n + t.warnings.length, 0);   // warnings, not tests
+// A test's warnings as short plain titles: "JavaScript errors on the page; a field did not keep its value (2)".
+function warningSummary(t){
+  const titles = {};
+  (t.warnings || []).forEach(w => {
+    const spec = FINDINGS[w.check], title = spec ? (typeof spec.title === 'function' ? spec.title([w.detail]) : spec.title) : cap(w.check);
+    titles[title] = (titles[title] || 0) + 1;
+  });
+  return Object.entries(titles).map(([k, n]) => n > 1 ? `${k} (${n})` : k).join('; ');
+}
 const profiles = [...new Set(T.map(t => t.profile && t.profile.name).filter(Boolean))];
 // ISO-8601 strings order correctly with plain comparison — no collator needed.
 const byStart = T.map((t,i)=>i).sort((a,b) => { const x = T[a].started_at||'', y = T[b].started_at||''; return x < y ? -1 : x > y ? 1 : 0; });
@@ -290,44 +302,48 @@ $('themebtn').onclick = () => setTheme(document.documentElement.dataset.theme ==
   ].map(([i, v]) => `<span>${i}${v}</span>`).join('');
 
   const suites = Object.keys(bySuite).length;
-  const failedSuites = Object.values(bySuite).filter(ts => ts.some(t => failedLike(t.status))).length;
-  const executed = TOT.total - TOT.skipped, warns = BY.warned || 0;
-  const warnNote = warns ? ` ${plural(warns, 'other test', 'other tests')} passed with warnings.` : '';
-  const ran = TOT.skipped ? ' that ran' : '';
-  const passedWarn = warns === executed ? `${allOf(executed)}${ran} passed, ${executed === 1 ? 'with' : warns === 2 ? 'both with' : 'all with'} warnings to review.`
-    : `${allOf(executed)}${ran} passed; ${warns} with warnings to review.`;
-  const v = !TOT.total ? ['unknown', 'info', 'No tests ran', 'The run finished without executing any test.']
-    : DATA.status === 'error' ? ['bad', 'x', 'Run error', `The run itself failed (exit code ${DATA.exit_code}): a setup, teardown or internal error, not only a failed check. ${failing ? `${failing} of ${TOT.total} tests failed; ` : ''}see the test output for details.`]
-    : DATA.status === 'interrupted' ? ['warn', 'warn', 'Run interrupted',
-        `The run stopped before every flow finished. ${plural(TOT.total, 'test')} completed: ${TOT.passed} passed, ${failing} failed.`]
-    : failing ? ['bad', 'x', `${plural(failing, 'test')} failed`,
-        `${failing} of ${TOT.total} tests failed${failedSuites > 1 ? ` across ${failedSuites} suites` : ''}. Their suites come first below; open a test to see the step that failed and why.${warnNote}`]
-    : warns ? ['warn', 'warn', 'Passed with warnings', `${passedWarn}${TOT.skipped ? ` ${TOT.skipped} skipped.` : ''} Open a test to see what to review.`]
-    : TOT.skipped ? ['info', 'info', 'Passed with skipped tests', `${allOf(executed)} that ran passed; ${TOT.skipped} ${TOT.skipped === 1 ? 'was' : 'were'} skipped.`]
-    : ['good', 'check', 'All tests passed', `${allOf(TOT.total)} passed in ${fmtMs(TOT.duration_ms)}.`];
-  const healNote = healCount && !failing ? ` ${plural(healCount, 'step')} needed a fallback locator; see Run details.` : '';
-  $('verdict').innerHTML = `<div class="run-verdict run-verdict-${v[0]}" role="status">
-    <span class="run-verdict-icon">${icon(v[1])}</span>
-    <div><p class="run-verdict-headline">${v[2]}</p><p class="run-verdict-detail">${v[3]}${healNote}</p></div></div>`;
+  // The banner: the outcome in the words summary.json and the console use
+  // (DATA.headline), then what to look at, in plain words, linked to the tests.
+  const kind = DATA.status === 'no_tests' ? 'unknown' : DATA.status === 'error' || failing ? 'bad'
+    : DATA.status === 'interrupted' || warned || flaky ? 'warn' : 'good';
+  const links = ts => ts.slice(0, 3).map(t => `<button class="link-btn" data-open="${t._i}">${titleOf(t)}</button>`).join(', ')
+    + (ts.length > 3 ? ` and ${ts.length - 3} more` : '');
+  const detail = [];
+  if (DATA.status === 'no_tests')
+    detail.push('Nothing was checked, so this run is not a pass. Check the run’s marker filter (-m), skip markers or setup.');
+  if (failing) detail.push(`Failed: ${links(T.filter(t => failedLike(t.status)))}. Open a test to see the step that failed and why.`);
+  if (warned) detail.push(`To review: ${warnedTests.map(t => `${links([t])} — ${esc(warningSummary(t))}`).slice(0, 3).join('; ')}`
+    + `${warnedTests.length > 3 ? `; and ${warnedTests.length - 3} more` : ''}. `
+    + `Warnings did not change the result: the steps completed and the checks were met. They may still point to a problem in the site.`);
+  if (flaky) detail.push(`Passed only on retry: ${links(T.filter(isFlaky))} — the first attempt failed, so the result may not be reliable.`);
+  $('verdict').innerHTML = `<div class="run-verdict run-verdict-${kind}" role="status">
+    <span class="run-verdict-icon">${icon({unknown: 'info', bad: 'x', warn: 'warn', good: 'check'}[kind])}</span>
+    <div><p class="run-verdict-headline">${esc(DATA.headline || '')}</p>
+      ${detail.map(d => `<p class="run-verdict-detail">${d}</p>`).join('')}</div></div>`;
 
-  // One set of parts that add up to the total: the words, the bar and its key agree.
+  // Counts say what they count: tests, or (when they say so) warnings. The
+  // bar's parts add up to the total and carry their full labels.
   const pct = n => (n / Math.max(TOT.total, 1) * 100).toFixed(2);
-  const PARTS = [['pass', 'passed', BY.passed || 0], ['warn', 'with warnings', warns], ['flaky', 'passed on retry', BY.flaky || 0],
-    ['fail', 'failed', failing], ['skip', 'skipped', TOT.skipped]].filter(([k, , n]) => n || k === 'pass');
-  const attention = failing ? `<p class="run-attention"><span class="run-attention-value">${failing}</span> ${failing === 1 ? 'test failed' : 'tests failed'}${warns ? `<span class="run-attention-more">, ${warns} more with warnings</span>` : ''}</p>`
-    : warns ? `<p class="run-attention run-attention-warn"><span class="run-attention-value">${warns}</span> ${warns === 1 ? 'test has' : 'tests have'} warnings</p>`
-    : TOT.total ? `<p class="run-attention run-attention-clear">${icon('check')} Nothing needs attention</p>` : '';
+  const PARTS = [['pass', 'Passed without warnings', cleanPass], ['warn', 'Passed with warnings', warned],
+    ['flaky', 'Passed on retry', flaky], ['fail', 'Failed', failing], ['skip', 'Skipped', TOT.skipped]]
+    .filter(([k, , n]) => n || (k === 'pass' && (warned || flaky)));
+  const outcome = executed
+    ? (failing ? `<p class="run-attention"><span class="run-attention-value">${failing}</span> of ${plural(executed, 'test')} failed</p>`
+        : `<p class="run-attention run-attention-pass"><span class="run-attention-value">${TOT.passed}</span> of ${plural(executed, 'test')} passed</p>`)
+      + `<p class="run-outcome">${TOT.passed} passed · ${failing} failed${TOT.skipped ? ` · ${TOT.skipped} skipped` : ''}</p>`
+    : `<p class="run-attention run-attention-none">No tests ran${TOT.skipped ? ` <span class="run-outcome">· ${TOT.skipped} skipped</span>` : ''}</p>`;
+  const review = warned ? `<p class="run-review">${warned} passed ${warned === 1 ? 'test has' : 'tests have'} warnings`
+    + `<span class="run-review-more"> · ${plural(warnFindings, 'warning')} in total</span></p>` : '';
   $('hero').innerHTML = `<div class="run-hero">
-    <div class="run-rate"><span class="run-rate-value">${Math.floor(TOT.pass_rate)}<span class="run-rate-unit">%</span></span>
+    <div class="run-rate"><span class="run-rate-value">${executed ? Math.floor(TOT.pass_rate) + '<span class="run-rate-unit">%</span>' : '—'}</span>
       <span class="run-rate-label">pass rate</span></div>
-    <div class="run-hero-counts">${attention}
-      <p class="run-breakdown">${PARTS.map(([k, l, n]) => `<span class="run-breakdown-${k}">${n} ${l}</span>`).join('')}</p>
-      <div class="run-bar" role="img" aria-label="${PARTS.map(([, l, n]) => `${n} ${l}`).join(', ')}">
+    <div class="run-hero-counts">${outcome}${review}
+      ${TOT.total ? `<div class="run-bar" role="img" aria-label="${PARTS.map(([, l, n]) => `${l}: ${n}`).join(', ')}">
         ${PARTS.map(([k, , n]) => `<div class="run-bar-${k}" style="width:${pct(n)}%"></div>`).join('')}</div>
-      <p class="run-bar-key">${PARTS.filter(([, , n]) => n).map(([k, l]) => `<span class="run-key-${k}">${l}</span>`).join('')}</p>
+      <p class="run-bar-key">${PARTS.map(([k, l, n]) => `<span class="run-key-${k}">${l}: ${n}</span>`).join('')}</p>` : ''}
     </div>
     <div class="run-stats">
-      <div class="run-stat"><div class="metric-label">Test cases</div><div class="metric-value">${TOT.total}</div></div>
+      <div class="run-stat"><div class="metric-label">Tests</div><div class="metric-value">${TOT.total}</div></div>
       <div class="run-stat"><div class="metric-label">Suites</div><div class="metric-value">${suites}</div></div>
     </div></div>`;
   $('foot').textContent = `Generated ${fmtDate(DATA.created_at)} · Web Agent ${ENV.framework}`;
@@ -336,8 +352,9 @@ $('themebtn').onclick = () => setTheme(document.documentElement.dataset.theme ==
 
 /* ── 2. all tests ── */
 let statusFilter = '';
+// Overlapping on purpose: "Passed" is every passed test, the two after it are subsets of it.
 const FILTERS = [['', 'All', TOT.total, 'var(--primary)'], ['failed', 'Failed', failing, 'var(--bad)'],
-  ['passed', 'Passed', BY.passed || 0, 'var(--good)'], ['warned', 'With warnings', BY.warned || 0, 'var(--warn)'],
+  ['passed', 'Passed', TOT.passed, 'var(--good)'], ['warned', 'Passed with warnings', warned, 'var(--warn)'],
   ['flaky', 'Passed on retry', BY.flaky || 0, 'var(--warn)'], ['skipped', 'Skipped', TOT.skipped, 'var(--dot-skip)']]
   .filter(([k, , n]) => !k || n);
 $('fchips').innerHTML = FILTERS.map(([k, l, n, c]) =>
@@ -358,20 +375,23 @@ $('search').addEventListener('input', debounce(renderTests));
 ['marker','suite'].forEach(id => $(id).addEventListener('change', renderTests));
 
 function signalBadges(t){
-  // Technical signals as badges: red for errors, amber for warnings, and
-  // nothing at all when the test stayed clean.
-  const c = t.counts || {};
-  return [c.con_err && badge(plural(c.con_err, 'console error'), 'danger'),
-          c.con_warn && badge(plural(c.con_warn, 'console warning')),   // browser messages, not check warnings
-          c.net_bad && badge(plural(c.net_bad, 'failed request')),   // mostly third-party beacons: noted, not alarmed
-          !failedLike(t.status) && c.warnings && badge(plural(c.warnings, 'warning'), 'warning')].filter(Boolean).join('');
+  // Warnings to review in amber; browser console and network messages are
+  // technical details — neutral, and red only on a failed test, where they may explain it.
+  const c = t.counts || {}, failed = failedLike(t.status);
+  const TECH = 'Technical detail from the browser. ' + (failed ? 'See whether it explains the failure.' : 'The test still passed: it did not block the workflow.');
+  return [c.warnings && !failed && badge(plural(c.warnings, 'warning'), 'warning',
+            `${plural(c.warnings, 'warning')} to review. The test still passed.`),
+          c.con_err && badge(plural(c.con_err, 'console error'), failed ? 'danger' : 'neutral', TECH),
+          c.con_warn && badge(plural(c.con_warn, 'console warning'), 'neutral', TECH),
+          c.net_bad && badge(plural(c.net_bad, 'failed request'), 'neutral', TECH)].filter(Boolean).join('');
 }
 const openGroups = {};   // the reader's own open/close choices win over the defaults
 function renderTests(){
   const q = $('search').value.toLowerCase(), mk = $('marker').value, ar = $('suite').value;
   const filtering = !!(q || mk || ar || statusFilter);
   const keep = T.filter(t => {
-    if (statusFilter && (statusFilter === 'failed' ? !failedLike(t.status) : effStatus(t) !== statusFilter)) return false;
+    if (statusFilter && (statusFilter === 'failed' ? !failedLike(t.status)
+      : statusFilter === 'passed' ? t.status !== 'passed' : effStatus(t) !== statusFilter)) return false;
     if (mk && !(t.markers||[]).includes(mk)) return false;
     if (ar && areaOf(t) !== ar) return false;
     return !q || t._hay.includes(q);
@@ -391,19 +411,20 @@ function renderTests(){
   const ordered = Object.entries(groups).sort(([a], [b]) => (ko[b] > 0) - (ko[a] > 0));
   $('tests').innerHTML = keep.length ? ordered.map(([file, ts]) => {
     const failed = ko[file], time = ts.reduce((n,t) => n + t.duration_ms, 0);
+    const ok = ts.filter(t => t.status === 'passed').length, skip = ts.filter(t => t.status === 'skipped').length;
     // Passing suites fold away so the failing ones are what the eye lands on.
     const open = openGroups[file] ?? (failed > 0 || few || filtering);
     return `<div class="tgroup${open ? '' : ' closed'}" data-file="${esc(file)}">
       <button class="tgroup-head" aria-expanded="${open}">${icon('chev', 'toggle-icon')}
         <span class="tgroup-name">${esc(suiteTitle(ts[0]))}<small>${esc(file)}</small></span>
-        <span class="tgroup-counts">${ts.length - failed} of ${ts.length} passed${failed ? `<span class="bad">${failed} failed</span>` : ''}</span>
+        <span class="tgroup-counts">${ts.length - skip ? `${ok} of ${ts.length - skip} passed` : 'Not run'}${failed ? `<span class="bad">${failed} failed</span>` : ''}${skip ? `<span class="skip">${skip} skipped</span>` : ''}</span>
         <span class="trow-dur">${fmtMs(time)}</span></button>
       <div class="tgroup-body">${ts.map(t => {
         const st = effStatus(t);
         return `<button class="trow ${st}" data-open="${t._i}" aria-haspopup="dialog"><span class="sdot ${st}"></span>
           <span class="trow-name">${titleOf(t)}${t.profile ? deviceIcon(t.profile.name) : ''}${t.title && t.title !== t.name ? `<span class="fn">${esc(t.name)}</span>` : ''}</span>
           <span class="trow-tags">${signalBadges(t)}
-            ${(t.healings||[]).length ? iconBadge('zap', 'warning', HEALED) : ''}
+            ${(t.healings||[]).length ? iconBadge('zap', 'info', HEALED) : ''}
             ${t.agent ? badge(icon('bot') + 'Autonomous', 'info') : ''}
             ${(t.markers||[]).map(m => badge(esc(m))).join('')}
             ${st !== 'passed' && st !== 'warned' ? statusBadge(st) : ''}</span>
@@ -425,15 +446,16 @@ $('tcount').textContent = TOT.total;
 (function suites(){
   const rows = Object.entries(bySuite).map(([file, ts]) => {
     const ko = ts.filter(t => failedLike(t.status)).length, run = ts.filter(t => t.status !== 'skipped').length;
-    return {file, ts, ko, rate: run ? Math.floor((run - ko) / run * 100) : 0, time: ts.reduce((n,t) => n + t.duration_ms, 0)};
+    const ok = ts.filter(t => t.status === 'passed').length;
+    return {file, ts, ko, ok, run, rate: run ? Math.floor(ok / run * 100) : null, time: ts.reduce((n,t) => n + t.duration_ms, 0)};
   }).sort((a, b) => (b.ko > 0) - (a.ko > 0));
   $('scount').textContent = rows.length;
   $('suites').innerHTML = `<div class="list"><div class="list-head"><span>Suite</span><span>Pass rate</span><span>Results</span><span class="list-muted">Duration</span></div>
     ${rows.map(r => `<button class="list-row" data-suite="${esc(r.file)}">
       <span class="list-name">${esc(suiteTitle(r.ts[0]))}<small>${esc(areaLabel(areaOf(r.ts[0])))} · ${esc(r.file)}</small></span>
-      <span class="list-rate ${r.ko ? 'bad' : 'good'}">${r.rate}%</span>
-      <span class="list-counts">${r.ts.length - r.ko} of ${r.ts.length} passed${r.ko ? ` · <span class="bad">${r.ko} failed</span>` : ''}
-        <span class="list-bar"><span class="run-bar-pass" style="width:${(r.ts.length - r.ko) / r.ts.length * 100}%"></span><span class="run-bar-fail" style="width:${r.ko / r.ts.length * 100}%"></span></span></span>
+      <span class="list-rate ${r.ko ? 'bad' : r.run ? 'good' : ''}">${r.rate == null ? '—' : r.rate + '%'}</span>
+      <span class="list-counts">${r.run ? `${r.ok} of ${r.run} passed` : 'Not run'}${r.ko ? ` · <span class="bad">${r.ko} failed</span>` : ''}${r.ts.length - r.run ? ` · ${r.ts.length - r.run} skipped` : ''}
+        <span class="list-bar"><span class="run-bar-pass" style="width:${r.ok / r.ts.length * 100}%"></span><span class="run-bar-fail" style="width:${r.ko / r.ts.length * 100}%"></span></span></span>
       <span class="list-muted">${fmtMs(r.time)}</span></button>`).join('')}</div>`;
   $('suites').addEventListener('click', e => {
     const row = e.target.closest('[data-suite]');
@@ -468,7 +490,7 @@ $('tcount').textContent = TOT.total;
 
   const healed = T.filter(t => (t.healings||[]).length);
   $('healsum').innerHTML = healed.length
-    ? `<p class="sub-lede">These steps passed only because a fallback locator found the element. Update the flow so they pass on the first attempt.</p>`
+    ? `<p class="sub-lede">Informational: these steps found their element with a fallback locator. The results are unaffected; update the flow so they match on the first try.</p>`
       + healed.map(t => `<div class="slow-row"><button data-open="${t._i}">${titleOf(t)}</button>
           <span class="list-muted">${plural(t.healings.length, 'step')}</span></div>`).join('')
     : `<p class="empty-inline">${icon('check')} No steps needed a fallback locator.</p>`;

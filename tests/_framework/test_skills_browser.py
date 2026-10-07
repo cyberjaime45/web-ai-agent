@@ -570,8 +570,9 @@ def test_a_step_with_warnings_shows_them_under_a_warning_icon(page, tmp_path):
 
 
 def test_the_hero_parts_add_up_to_the_total(page, tmp_path):
-    """Passed, with warnings, passed on retry, failed and skipped are separate
-    parts: the words, the bar, its key and the filter chips all agree."""
+    """Passed without warnings, with warnings, on retry, failed and skipped are
+    separate parts of the bar, each labelled in full; "passed" counts every
+    passed test — a warning never takes a pass away — and says it counts tests."""
     from app.observability.reporter import generate_report
     warn = [{"name": "fields have labels", "passed": False, "severity": "warn", "detail": "x"}]
 
@@ -586,16 +587,18 @@ def test_the_hero_parts_add_up_to_the_total(page, tmp_path):
                result("later", "skipped")]
     generate_report(results, 1e9, tmp_path / "report.html", "qa", exit_status=1)
     page.goto((tmp_path / "report.html").as_uri())
-    assert page.locator(".run-breakdown").inner_text().split("\n") == [
-        "1 passed", "2 with warnings", "1 passed on retry", "1 failed", "1 skipped"]
-    assert page.locator(".run-attention").inner_text() == "1 test failed, 2 more with warnings"
+    assert page.locator(".run-bar-key").inner_text().split("\n") == [
+        "Passed without warnings: 1", "Passed with warnings: 2", "Passed on retry: 1", "Failed: 1", "Skipped: 1"]
+    assert page.locator(".run-attention").inner_text() == "1 of 5 tests failed"
+    assert page.locator(".run-outcome").inner_text() == "4 passed · 1 failed · 1 skipped"
+    assert page.locator(".run-review").inner_text() == "2 passed tests have warnings · 2 warnings in total"
     assert page.locator(".run-bar > div").evaluate_all("els => els.map(e => e.className)") == [
         "run-bar-pass", "run-bar-warn", "run-bar-flaky", "run-bar-fail", "run-bar-skip"]
     chips = dict(x.rsplit("\n", 1) for x in page.locator("#fchips .filter-chip").all_inner_texts())
-    assert chips == {"All": "6", "Failed": "1", "Passed": "1", "With warnings": "2", "Passed on retry": "1", "Skipped": "1"}
+    assert chips == {"All": "6", "Failed": "1", "Passed": "4", "Passed with warnings": "2", "Passed on retry": "1", "Skipped": "1"}
     page.locator('#fchips [data-f="passed"]').click()
-    assert page.locator("#tests .trow").count() == 1
-    assert page.locator('.run-stats .metric-label').all_inner_texts()[0].lower() == "test cases"
+    assert page.locator("#tests .trow").count() == 4                 # every passed test, warned and retried included
+    assert page.locator('.run-stats .metric-label').all_inner_texts()[0].lower() == "tests"
 
 
 def test_the_test_list_pairs_profiles_and_shows_the_device_icon(page, tmp_path):

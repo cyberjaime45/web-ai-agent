@@ -91,12 +91,23 @@ function wentWrongHtml(t){
 function warningsHtml(t){
   // Findings that did not fail the test (warn checks, automatic checks in warn
   // mode), each linked to the step that recorded it.
-  // An error-severity check only recorded (ORACLE=warn) is marked red: the
-  // closest thing to a failure; the rest are amber.
-  const ws = t.warnings || [];
+  // On a passed test every warning is amber: it did not change the result. On a
+  // failed one an error-severity check only recorded (ORACLE=warn) stays red —
+  // it may explain the failure.
+  const ws = t.warnings || [], failed = failedLike(t.status);
   if (!ws.length) return '';
-  return section('Warnings', `<div class="warn-list">${ws.map(w =>
-    findingBlock(asCheck(w), w.severity === 'error' ? 'error' : 'warn', findingLinks(w))).join('')}</div>`, ws.length, 'warn');
+  const lede = failed ? 'Recorded along the way; they did not fail the test themselves, but may explain what did.'
+    : 'This test passed: its steps completed and its checks were met. These warnings did not change the result — '
+      + 'review them in case they point to a problem in the site.';
+  return section('Warnings', `<p class="note">${lede}</p><div class="warn-list">${ws.map(w =>
+    findingBlock(asCheck(w), failed && w.severity === 'error' ? 'error' : 'warn', findingLinks(w))).join('')}</div>`, ws.length, 'warn');
+}
+function consoleNoteHtml(t){
+  // Browser console errors are technical: say whether they affected the test.
+  const n = (t.counts || {}).con_err || 0;
+  if (!n || failedLike(t.status)) return '';
+  return `<p class="note">The browser logged ${plural(n, 'console error')}. The test's steps and checks still passed, `
+    + `so they did not block this workflow; they are listed under Console below for developers.</p>`;
 }
 function unverifiedHtml(t){
   // Checks the agent could not judge (a control it could not press, a page it
@@ -184,7 +195,7 @@ function stepShots(s){
 }
 function stepLine(s, kids){
   const heal = s.layer > 1 && s.status === 'passed'
-    ? iconBadge('zap', 'warning', `Self-healed: found by the ${s.layer === 3 ? 'AI' : 'fuzzy-match'} fallback (layer ${s.layer})`) : '';
+    ? iconBadge('zap', 'info', `Informational — self-healed: found by the ${s.layer === 3 ? 'AI' : 'fuzzy-match'} fallback (layer ${s.layer}); the result is unaffected`) : '';
   const what = s.action ? `<span class="sverb" title="${esc(s.action)}">${esc(actionLabel(s.action))}</span>${s.args ? `<span class="sargs">${esc(s.args)}</span>` : ''}`
     : `<span class="sverb">${esc(s.name)}</span>`;
   return `<div class="sline">${what}${heal}${kids ? `<span class="skids">${plural(kids, 'step')}</span>` : ''}</div>`;
@@ -208,7 +219,8 @@ function stepNode(t, n, look){
   const reason = site ? explain(t, s) : '';
   const why = (site ? `<div class="serr" title="${esc(reason)}">${esc(reason)}</div>` : '')
     + warns.map(w => { const f = findingLine(asCheck(w));
-        return `<div class="swarn${w.severity === 'error' ? ' err' : ''}" title="${esc(findingText(asCheck(w)))}">${esc(f)}</div>`; }).join('');
+        // red only on a failed test (as in the Warnings section): on a passed one it did not change the result
+        return `<div class="swarn${w.severity === 'error' && failedLike(t.status) ? ' err' : ''}" title="${esc(findingText(asCheck(w)))}">${esc(f)}</div>`; }).join('');
   if (n.children.length){
     // Open on the way to a failure or a warning inside; everything else folds.
     const open = (st === 'failed' && !site) || look.under.has(s.id);
@@ -278,7 +290,7 @@ function relatedHtml(t){
 function healHtml(t){
   const h = t.healings || [];
   if (!h.length) return '';
-  return `<div><h4 class="sub-title">Self-healed steps</h4><p class="note">Resolved by a fallback locator at runtime — update the flow.</p>
+  return `<div><h4 class="sub-title">Self-healed steps</h4><p class="note">Informational: these steps found their element with a fallback locator. The result is unaffected; update the flow so they match on the first try.</p>
     ${facts(h.map(e => [`Layer ${e.layer}`, `${esc(e.description)}<br><span class="tech-hint">${esc(e.healed_by)} → ${esc(e.resolved)}</span>`]))}</div>`;
 }
 
@@ -303,7 +315,7 @@ function openTest(i){
       ${warningsHtml(t)}
       ${agentHtml(t)}
       ${section('Steps', stepsHtml(t), (t.steps || []).filter(s => !s.depth).length || null)}
-      ${section('Diagnostics', [fail ? failureTechHtml(t) + outputHtml(t) : '', unverifiedHtml(t),
+      ${section('Diagnostics', [consoleNoteHtml(t), fail ? failureTechHtml(t) + outputHtml(t) : '', unverifiedHtml(t),
         fail ? `<div id="d-rel">${hasDetail(t) ? relatedHtml(t) : ''}</div>` : '', healHtml(t)].filter(Boolean).join(''), null, 'tech')}
       <section class="drawer-section"><div class="subtabs" role="tablist">
           <button class="qa-tab-btn" role="tab" data-t="d-con">Console<span class="count">${(t.counts || {}).console || 0}</span></button>
