@@ -7,7 +7,7 @@ type = "agent"
 name = "web-agent"
 display_name = "Web Agent"
 description = "Autonomous web testing in a real browser: Markdown flows, Playwright, self-healing locators"
-version = "1.4.0"
+version = "1.5.0"
 homepage = "https://github.com/wheelsup/qa_web_agent"
 
 [source]
