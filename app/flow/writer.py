@@ -16,8 +16,8 @@ changes). Two sources:
                       navigation found (goto the page, click, assert_url)
 
 Generated files are plain flows the parser accepts as they are. URLs stay
-absolute (an ``<APP_URL>`` placeholder only resolves when it is the whole
-argument), so replace the origin by hand if the flow should follow ``.env``.
+absolute; replace the origin with a ``{APP_URL}`` placeholder by hand if the
+flow should follow ``.env``.
 """
 
 from __future__ import annotations

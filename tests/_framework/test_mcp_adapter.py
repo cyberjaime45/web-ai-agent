@@ -106,6 +106,18 @@ def test_a_placeholder_site_is_filled_from_the_run_inputs(catalog: Catalog):
     assert catalog.get("app/login.md").info.inputs == []            # a literal URL declares no input
 
 
+def test_a_placeholder_with_a_path_takes_its_host_from_the_value(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MCP_TEST_APP_URL", raising=False)
+    _flow(tmp_path, "app/deep.md", '# Deep\n\n## Steps\n- goto: "{MCP_TEST_APP_URL}/calendar/board?tab=1"\n'
+                                   '- fill: "Email" | "<MCP_TEST_EMAIL>"\n')
+    catalog = Catalog(_config(tmp_path), _ENVIRONMENTS)
+    listed = catalog.get("app/deep.md").info
+    assert listed.site_inputs == ["MCP_TEST_APP_URL"] and listed.inputs == ["MCP_TEST_APP_URL", "MCP_TEST_EMAIL"]
+    assert listed.environments == []
+    filled = catalog.get("app/deep.md", {"MCP_TEST_APP_URL": "https://staging.example.com/"}).info
+    assert filled.hosts == ["staging.example.com"] and filled.environments == ["staging"]
+
+
 def test_the_environment_files_are_read_on_every_call_and_merged(tmp_path: Path):
     own = tmp_path / "environments.toml"
     own.write_text('[environments.staging]\nhosts = ["staging.example.com"]\n'

@@ -42,11 +42,24 @@ Any action that targets an element can accept a **CSS selector** or **XPath expr
 
 ## Environment placeholders
 
-Any argument written as `<NAME>` (uppercase, underscores) is replaced with the
-value of that environment variable at run time — `fill: "Password" | "<FMS_PASSWORD>"`.
+A `{NAME}` placeholder (uppercase, digits, underscores) anywhere in any
+argument is replaced with the value of that environment variable (`.env` or CI
+variables) before the step runs; the rest of the argument is kept as written:
+
+```markdown
+- goto: "{FMS_URL}/calendar/scheduleboard/"
+- goto: "{FMS_URL}/operations?tab=dashboard"
+- fill: "Password" | "{FMS_PASSWORD}"
+```
+
+When the value ends in `/` and the text after the placeholder starts with one,
+the doubled slash is dropped, so `FMS_URL` may be set with or without a
+trailing `/`. Resolution is deterministic — no LLM is involved.
 Names containing `PASSWORD`, `SECRET`, `KEY` or `TOKEN` are masked as `******`
-in the console and the report. An unset variable fails the step with a message
-naming it.
+in the console and the report. A variable that is unset or empty fails the step
+before it runs — nothing is navigated or typed — with a message naming the
+variable, the step number and its section. The older `<NAME>` spelling is
+still read the same way; new flows use `{NAME}`.
 
 ---
 
@@ -720,7 +733,7 @@ and pressing them while exploring could change data. Going back (`back`,
 Escape, `goto`) is cleanup.
 
 ```markdown
-1. goto: "<APP_URL>/members"
+1. goto: "{APP_URL}/members"
 2. explore_page
 3. explore_page: "depth=2" | "max_actions=20" | "max_pages=8" | "max_ai_calls=3"
 ```
@@ -749,7 +762,7 @@ skills and ordinary actions → judge → write a deterministic Markdown flow of
 what ran under `reports/<ENVIRONMENT>/generated/`.
 
 ```markdown
-1. goto: "<APP_URL>/members"
+1. goto: "{APP_URL}/members"
 2. test_page
 3. test_page: "depth=1" | "max_actions=20" | "max_ai_calls=3" | "submit=false"
 ```
@@ -799,7 +812,7 @@ cookies: `HEAD` first, `GET` when `HEAD` is refused. Visible images that
 failed to load are reported too.
 
 ```markdown
-1. goto: "<APP_URL>/members"
+1. goto: "{APP_URL}/members"
 2. check_links
 3. check_links: "external=true" | "max_links=100"
 4. check_links: "images=false"
@@ -863,7 +876,7 @@ Exercise the first visible table (`<table>`, `role=grid` or `role=table`;
   changes or a dialog opens; then *Back* or *Escape*
 
 ```markdown
-1. goto: "<APP_URL>/members"
+1. goto: "{APP_URL}/members"
 2. test_table
 3. test_table: "table=2" | "sort=false" | "paginate=false" | "open=false"
 ```
@@ -887,7 +900,7 @@ row, else the first list item — so no test data is needed:
 - **clearing restores the results** — clearing the field brings back the count
 
 ```markdown
-1. goto: "<APP_URL>/members"
+1. goto: "{APP_URL}/members"
 2. test_search
 3. test_search: "term=John Smith" | "search=Find a member"
 ```
@@ -904,7 +917,7 @@ Structural regression without pixels: save what the page is made of, and on
 later runs report what disappeared.
 
 ```markdown
-1. goto: "<APP_URL>/members"
+1. goto: "{APP_URL}/members"
 2. snapshot_page: "members_list"
 3. snapshot_page: "members_list" | "update=true"
 4. snapshot_page: "members_list" | "strict=true" | "ignore=Promo,Chat"
@@ -953,7 +966,7 @@ budgets. Nothing is clicked, and nothing fails: over-budget metrics are
 warnings, because test machines and networks are noisy.
 
 ```markdown
-1. goto: "<APP_URL>/members"
+1. goto: "{APP_URL}/members"
 2. wait_load: "load"
 3. check_performance
 4. check_performance: "lcp=4000" | "load=8000"

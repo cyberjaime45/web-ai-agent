@@ -58,7 +58,8 @@ FLOW_FORMAT = {
                     "allow_actions", "rerun", "site_domain"],
     "expected_outcome": "## Expected Outcome — one list item per expectation; shown with every test",
     "markers": "a plain line `markers: smoke, regression` tags tests",
-    "placeholders": "<NAME> as a whole argument is filled from the run's inputs or the environment; "
+    "placeholders": "{NAME} anywhere in an argument (\"{APP_URL}/path?q=1\") is filled from the run's inputs "
+                    "or the environment; unset or empty fails the step; legacy <NAME> is still read; "
                     "secrets (PASSWORD, SECRET, KEY, TOKEN) are masked in reports and must be placeholders",
     "targets": "an element is named by its label, placeholder or visible text; a CSS selector (.x, #x, [x], tag[...]) "
                "or XPath (//...) is used as written",
@@ -84,7 +85,7 @@ def describe(config: AdapterConfig, tools: list[str]) -> Capabilities:
 
 def configured_placeholders() -> list[str]:
     """Names (never values) of the environment variables a flow may reference
-    as <NAME>: application URLs and credentials the Web Agent is configured with."""
+    as {NAME}: application URLs and credentials the Web Agent is configured with."""
     return sorted(k for k in os.environ if _PLACEHOLDER_NAME_RE.match(k) and os.environ[k].strip()
                   and not k.startswith(_INTERNAL_PREFIXES))
 

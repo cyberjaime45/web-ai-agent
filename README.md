@@ -10,8 +10,8 @@ last resort — with a live console and a portable HTML report per environment.
 
 ## Steps
 - goto: "https://example.com/login"
-- fill: "Email" | "<APP_EMAIL>"
-- fill: "Password" | "<APP_PASSWORD>"
+- fill: "Email" | "{APP_EMAIL}"
+- fill: "Password" | "{APP_PASSWORD}"
 - click: "Sign in"
 - assert_text: "Welcome back"
 ```
@@ -114,7 +114,8 @@ Copy `.env.example` to `.env`. Every variable is read once by
 
 Layer 3 is optional: it is enabled only when `AI_PROVIDER` is set, and then `LLM_KEY` and `LLM_MODEL` are required. An empty or missing `AI_PROVIDER` disables it.
 Setting only some is a startup error. Flow secrets never go in the flow file —
-reference environment variables as `<NAME>` in any step argument.
+reference environment variables as `{NAME}` anywhere in a step argument
+(`goto: "{APP_URL}/members"`).
 
 ## How a step runs
 

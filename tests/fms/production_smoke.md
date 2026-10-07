@@ -5,154 +5,154 @@
 - wait_load
 
 ## Home Page
-- goto: "https://one.wheelsup.com/home"
+- goto: "{FMS_URL}"
 - wait_load
 - assert_text: "My Tasks"
 - assert_text: "My Schedule"
 - screenshot
 ## Schedule Page
-- goto: "https://one.wheelsup.com/calendar/scheduleboard/"
+- goto: "{FMS_URL}/calendar/scheduleboard/"
 - wait_load
 - wait_for_element: "#divTimeline"
 - screenshot
 ## Leads Page
-- goto: "https://one.wheelsup.com/leads"
+- goto: "{FMS_URL}/leads"
 - wait_load
 - wait_for_element: "#dtResults"
 - screenshot
 ## Opportunity Page
-- goto: "https://one.wheelsup.com/opportunity"
+- goto: "{FMS_URL}/opportunity"
 - wait_load
 - wait_for_element: "#dtResults"
 - screenshot
 ## Quote Page
-- goto: "https://one.wheelsup.com/quote"
+- goto: "{FMS_URL}/quote"
 - wait_load
 - wait_for_element: "#dtResults"
 - screenshot
 ## Operations Page
-- goto: "https://one.wheelsup.com/operations?tab=dashboard"
+- goto: "{FMS_URL}/operations?tab=dashboard"
 - wait_load
 - assert_text: "DEPARTING 48 HRS"
 - screenshot
 ## Trip Search Page
-- goto: "https://one.wheelsup.com/operations?tab=flightsearch"
+- goto: "{FMS_URL}/operations?tab=flightsearch"
 - wait_load
 - wait_for_element: "#dtResults"
 - screenshot
 ## Feasibility Page
-- goto: "https://one.wheelsup.com/portal/operations/feasibility"
+- goto: "{FMS_URL}/portal/operations/feasibility"
 - wait_load
 - assert_text: "Feasibility"
 - wait: 5000
 - screenshot
 ## Aircraft Page
-- goto: "https://one.wheelsup.com/aircraft?tab=search"
+- goto: "{FMS_URL}/aircraft?tab=search"
 - wait_load
 - wait_for_element: "#dtResults"
 - screenshot
 ## Fleet Page
-- goto: "https://one.wheelsup.com/aircraft?tab=fleet"
+- goto: "{FMS_URL}/aircraft?tab=fleet"
 - wait_load
 - assert_text: "Automation_F01"
 - screenshot
 ## Discrepancy Page
-- goto: "https://one.wheelsup.com/discrepancy"
+- goto: "{FMS_URL}/discrepancy"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Inspections Page
-- goto: "https://one.wheelsup.com/inspectionitem"
+- goto: "{FMS_URL}/inspectionitem"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Job Cards Page
-- goto: "https://one.wheelsup.com/jobcards"
+- goto: "{FMS_URL}/jobcards"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Integration Page
-- goto: "https://one.wheelsup.com/maintenance/integration"
+- goto: "{FMS_URL}/maintenance/integration"
 - wait_load
 - assert_text: "Logs"
 - screenshot
 ## Reports Page (Fleet)
-- goto: "https://one.wheelsup.com/portal/reporting/AircraftFleet"
+- goto: "{FMS_URL}/portal/reporting/AircraftFleet"
 - wait_load
 - assert_visible: "iframe[class='reportClass']"
 - screenshot
 ## Personnel Page
-- goto: "https://one.wheelsup.com/personnel"
+- goto: "{FMS_URL}/personnel"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## FSI Logs Page
-- goto: "https://one.wheelsup.com/fsi/integration"
+- goto: "{FMS_URL}/fsi/integration"
 - wait_load
 - assert_visible: "#dtPostLogBook_wrapper"
 - screenshot
 ## Programs Page
-- goto: "https://one.wheelsup.com/programs"
+- goto: "{FMS_URL}/programs"
 - wait_load
 - assert_visible: "Create New"
 - screenshot
 ## Training Items Page
-- goto: "https://one.wheelsup.com/crewrecords"
+- goto: "{FMS_URL}/crewrecords"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Accounts Page
-- goto: "https://one.wheelsup.com/accounts"
+- goto: "{FMS_URL}/accounts"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Contacs Page
-- goto: "https://one.wheelsup.com/contacts"
+- goto: "{FMS_URL}/contacts"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Cases Page
-- goto: "https://one.wheelsup.com/casemanagement"
+- goto: "{FMS_URL}/casemanagement"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Vendor/Aircraft Page
-- goto: "https://one.wheelsup.com/vendors?tab=vendors"
+- goto: "{FMS_URL}/vendors?tab=vendors"
 - wait_load
 - assert_visible: "#dtResults"
 - screenshot
 ## Argus Page
-- goto: "https://one.wheelsup.com/argus"
+- goto: "{FMS_URL}/argus"
 - wait_load
 - assert_text: "Aircraft Model Mapping"
 - screenshot
 ## Avinode Page
-- goto: "https://one.wheelsup.com/avinode"
+- goto: "{FMS_URL}/avinode"
 - wait_load
 - assert_text: "Avinode"
 - screenshot
 ## Fsi Page
-- goto: "https://one.wheelsup.com/fsi"
+- goto: "{FMS_URL}/fsi"
 - wait_load
 - assert_text: "Aircraft Model Mapping"
 - screenshot
 ## Foreflight Page
-- goto: "https://one.wheelsup.com/foreflight"
+- goto: "{FMS_URL}/foreflight"
 - wait_load
 - assert_text: "Configuration"
 - screenshot
 ## Airports Page
-- goto: "https://one.wheelsup.com/airports"
+- goto: "{FMS_URL}/airports"
 - wait_load
 - assert_visible: "#mapDiv"
 - screenshot
 ## Notes Page
-- goto: "https://one.wheelsup.com/airports/notes"
+- goto: "{FMS_URL}/airports/notes"
 - wait_load
 - assert_visible: "Create New"
 - screenshot
 ## Company Page
-- goto: "https://one.wheelsup.com/company"
+- goto: "{FMS_URL}/company"
 - wait_load
 - assert_visible: "OPERATOR CERTIFICATE"
 - screenshot

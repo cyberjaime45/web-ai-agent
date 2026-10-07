@@ -28,12 +28,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.flow.parser import FlowParseError, parse_flow_markdown, resolve_flow_path
+from app.flow.placeholders import PLACEHOLDER_RE
 from app.schemas.actions import SKILL_ACTIONS, ActionType, FlowAction
 
 REPEAT_MIN = 3          # consecutive steps shared with another flow before it is reported
 _SKIP_DIRS = {".venv", "node_modules", ".git", "__pycache__"}
 _LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
-_PLACEHOLDER_RE = re.compile(r"^<[A-Z_][A-Z0-9_]*>$")
 _SECRET_FIELD_RE = re.compile(r"pass(word|code|phrase)?\b|secret|token|api[\s_-]?key|\bpin\b", re.IGNORECASE)
 
 # Steps that verify something: a section with none of these only proves nothing errored.
@@ -122,9 +122,9 @@ def _step_rules(flow: _Flow, rel: str) -> list[Finding]:
                                    f"fixed wait of {ms} ms; prefer wait_stable, wait_for_text or wait_for_element"))
         if action.type in (ActionType.FILL, ActionType.TYPE) and len(action.args) == 2:
             target, value = action.args
-            if value and not _PLACEHOLDER_RE.match(value) and _SECRET_FIELD_RE.search(target):
+            if value and not PLACEHOLDER_RE.search(value) and _SECRET_FIELD_RE.search(target):
                 out.append(Finding(rel, line, "literal-secret",
-                                   f"literal value typed into '{target}'; use a <PLACEHOLDER> set in .env"))
+                                   f"literal value typed into '{target}'; use a {{PLACEHOLDER}} set in .env"))
         prev = flow.actions[i - 1] if i else None
         if (prev is not None and prev.section == action.section and prev.raw == raw
                 and action.type in _IDEMPOTENT):

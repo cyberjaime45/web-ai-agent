@@ -26,7 +26,7 @@ def test_step_rules(tmp_path):
 - goto: "https://x.test"
 - goto: "https://x.test"
 - fill: "Password" | "hunter2"
-- fill: "API key" | "<API_KEY>"
+- fill: "API key" | "{API_KEY}"
 - wait: 3000
 - wait: 0
 - clikc: "Save"
@@ -38,7 +38,7 @@ def test_step_rules(tmp_path):
     got = _rules(lint([tmp_path], root=tmp_path))
     assert got == [
         ("flows/a.md", 5, "duplicate-step"),     # goto twice; the two "+" clicks are fine
-        ("flows/a.md", 6, "literal-secret"),     # the <API_KEY> placeholder is fine
+        ("flows/a.md", 6, "literal-secret"),     # the {API_KEY} placeholder is fine
         ("flows/a.md", 8, "fixed-wait"),         # wait: 0 is not flagged
         ("flows/a.md", 10, "unknown-step"),
         ("flows/a.md", 14, "duplicate-step"),

@@ -20,7 +20,7 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
 1. goto: "https://example.com/login"
 2. wait_load
 3. fill: "Username" | "admin"
-4. fill: "Password" | "<APP_PASSWORD>"
+4. fill: "Password" | "{APP_PASSWORD}"
 5. click: "Sign In"
 6. assert_url: "dashboard"
 7. assert_text: "Welcome back"
@@ -65,7 +65,7 @@ For every keyword a step can use, see [ACTIONS.md](ACTIONS.md).
   are metadata sections; the runner never executes them. `## Expected Outcome`
   is the flow's intent: its lines appear with every test of the file in the
   report's drawer, so a failure is read against what the flow set out to prove.
-  Put real secrets in `.env` and reference them with `<NAME>` placeholders,
+  Put real secrets in `.env` and reference them with `{NAME}` placeholders,
   never in the flow file.
 
 ## Reusable sub-flows
@@ -79,9 +79,9 @@ A component flow is an ordinary flow file under `components/`:
 
 ## Login
 - goto: "https://one.wheelsup.com/"
-- fill: "input[type='email']" | "<FMS_EMAIL>"
+- fill: "input[type='email']" | "{FMS_EMAIL}"
 - click: "Next"
-- fill: "Password" | "<FMS_PASSWORD>"
+- fill: "Password" | "{FMS_PASSWORD}"
 - click: "Sign in"
 ```
 
@@ -245,14 +245,14 @@ QA skills go further and can replace a page of hand-written assertions:
 - ignore_console: "ResizeObserver loop"
 
 ## Overview
-- goto: "<APP_URL>/members"
+- goto: "{APP_URL}/members"
 - inspect_page
 - check_console_network
 - check_accessibility
 - check_links
 
 ## Table and search
-- goto: "<APP_URL>/members"
+- goto: "{APP_URL}/members"
 - test_table
 - test_search
 
@@ -261,22 +261,22 @@ QA skills go further and can replace a page of hand-written assertions:
 - test_form: "submit=false"
 
 ## Layout
-- goto: "<APP_URL>/members"
+- goto: "{APP_URL}/members"
 - test_responsive
 - test_widgets
 
 ## Regression
-- goto: "<APP_URL>/members"
+- goto: "{APP_URL}/members"
 - wait_load: "load"
 - snapshot_page: "members"
 - check_performance
 
 ## Explore
-- goto: "<APP_URL>/members"
+- goto: "{APP_URL}/members"
 - explore_page: "depth=2" | "max_actions=20"
 
 ## Autonomous
-- goto: "<APP_URL>/members"
+- goto: "{APP_URL}/members"
 - test_page: "depth=1" | "max_actions=12"
 ```
 
@@ -306,7 +306,7 @@ collects evidence on the spot and the report shows it under that step:
   or earlier in its section, a JavaScript error during the step, a blank page
   or a stuck loading indicator), `test` (the target was covered, ambiguous or disabled, or a
   control with a very similar name is on the page — the text changed),
-  `environment` (network or browser errors, an unset `<PLACEHOLDER>`, a
+  `environment` (network or browser errors, an unset `{PLACEHOLDER}`, a
   sign-in page or a 401/403 — the session is gone) or `unclassified`, with the
   signals behind it (an earlier JavaScript error is listed, but third-party
   noise is common enough that it never decides the verdict alone; the flow's

@@ -111,7 +111,7 @@ Static checks over flow files: no browser, no LLM. Each finding is
 | `fixed-wait` | `wait: <ms>`; prefer `wait_stable`, `wait_for_text` or `wait_for_element` |
 | `duplicate-step` | The same check, wait or `goto` twice in a row (a repeated click can be deliberate) |
 | `no-assertion` | A section that never checks anything (component flows are exempt) |
-| `literal-secret` | A literal typed into a password, token or API-key field instead of a `<PLACEHOLDER>` |
+| `literal-secret` | A literal typed into a password, token or API-key field instead of a `{PLACEHOLDER}` |
 | `missing-component` | A `run_flow` reference that does not resolve from the calling flow's folder |
 | `unused-component` | A flow under `components/` that no scanned flow calls |
 | `repeated-steps` | Three or more steps, in order, already in another flow — a component candidate |

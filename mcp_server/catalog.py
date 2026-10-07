@@ -3,9 +3,11 @@
 Flows are read with the Web Agent's own parser; nothing here executes one.
 For each flow the catalog works out every site it opens (its ``goto`` steps
 and those of the components it calls with ``run_flow``) and from that the
-environments it may run against. A ``goto`` written as ``<NAME>`` takes its
-URL from the run's inputs (``run_flow(inputs=...)``) or else from this
-process's environment; the flow lists such names as ``inputs``.
+environments it may run against. A ``goto`` written with a ``{NAME}``
+placeholder (``"{APP_URL}/members"``; legacy ``<NAME>`` too) takes that part of
+its URL from the run's inputs (``run_flow(inputs=...)``) or else from this
+process's environment — the engine's own substitution; the flow lists such
+names as ``inputs``.
 
 The environment allow-list is the server's own file plus, when the
 orchestrator supplies one (``JANUS_ENVIRONMENTS_FILE``), the environments it
@@ -17,7 +19,6 @@ from __future__ import annotations
 
 import fnmatch
 import os
-import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ from app.flow.parser import (
     parse_flow_markdown,
     resolve_flow_path,
 )
+from app.flow.placeholders import placeholder_names, substitute
 from app.schemas.actions import ActionType
 from mcp_server.config import AdapterConfig, ConfigError
 from mcp_server.models import EnvironmentInfo, FlowInfo, UnavailableFlow
@@ -37,7 +39,6 @@ from mcp_server.models import EnvironmentInfo, FlowInfo, UnavailableFlow
 FILE_TARGET = "file://"          # how a local file page shows up among a flow's hosts
 _GENERIC_SECTIONS = frozenset({"steps"})   # the generic heading: the test is named after the flow
 _SKIP_DIRS = frozenset({"_framework", "components", "baselines", "generated", "fixtures"})
-_PLACEHOLDER_RE = re.compile(r"^<([A-Z_][A-Z0-9_]*)>$")
 _MAX_DEPTH = 5                   # the engine's own nesting limit for run_flow
 
 
@@ -156,7 +157,7 @@ class Catalog:
     def get(self, flow_id: str, inputs: dict[str, str] | None = None) -> FlowEntry | None:
         """The flow with this id, or None — also for anything that is not a
         catalog flow (a path outside the folder, a component, a non-.md file).
-        *inputs* fill the flow's ``<NAME>`` sites for this call."""
+        *inputs* fill the flow's ``{NAME}`` sites for this call."""
         flow_id = (flow_id or "").strip()
         if not flow_id or not flow_id.endswith(".md"):
             return None
@@ -212,16 +213,15 @@ def _targets(flow: FlowDefinition, flows_dir: Path, inputs: dict[str, str], dept
              seen: frozenset[str] = frozenset()) -> tuple[set[str], set[str], list[str]]:
     """``(sites, placeholders, problems)``: every host the flow opens — components
     included, resolved from the top flow's folder as the engine does — the
-    ``<NAME>`` placeholders those sites come from, and why any could not be
+    ``{NAME}`` placeholders those sites come from, and why any could not be
     worked out."""
     targets: set[str] = set()
     names: set[str] = set()
     problems: list[str] = []
     for action in flow.actions:
         if action.type == ActionType.GOTO and action.args:
-            target, name, problem = _site(action.args[0], inputs)
-            if name:
-                names.add(name)
+            target, site_names, problem = _site(action.args[0], inputs)
+            names |= site_names
             if target:
                 targets.add(target)
             if problem:
@@ -245,12 +245,11 @@ def _targets(flow: FlowDefinition, flows_dir: Path, inputs: dict[str, str], dept
 
 def _placeholders(flow: FlowDefinition, flows_dir: Path, depth: int = 0,
                   seen: frozenset[str] = frozenset()) -> set[str]:
-    """Every ``<NAME>`` any step argument uses, components included."""
+    """Every ``{NAME}`` any step argument uses, components included."""
     names: set[str] = set()
     for action in flow.actions:
         for arg in action.args:
-            if m := _PLACEHOLDER_RE.match(arg.strip()):
-                names.add(m.group(1))
+            names.update(placeholder_names(arg))
         if action.type == ActionType.RUN_FLOW and action.args:
             ref = action.args[0]
             if ref in seen or depth >= _MAX_DEPTH:
@@ -263,20 +262,18 @@ def _placeholders(flow: FlowDefinition, flows_dir: Path, depth: int = 0,
     return names
 
 
-def _site(url: str, inputs: dict[str, str]) -> tuple[str | None, str | None, str | None]:
-    """``(host, placeholder, problem)`` of a ``goto`` argument: a ``<NAME>``
+def _site(url: str, inputs: dict[str, str]) -> tuple[str | None, set[str], str | None]:
+    """``(host, placeholders, problem)`` of a ``goto`` argument: each ``{NAME}``
     placeholder is filled from *inputs*, else from the environment."""
     url = url.strip()
-    name = None
-    if m := _PLACEHOLDER_RE.match(url):
-        name = m.group(1)
-        value = inputs.get(name) or os.environ.get(name)
-        if not value:
-            return None, name, f"goto {url}: {name} is neither a run input nor an environment variable"
-        url = value.strip()
+    names = set(placeholder_names(url))
+    url, unfilled = substitute(url, lambda n: inputs.get(n) or os.environ.get(n))
+    if unfilled:
+        return None, names, f"goto {url}: {', '.join(unfilled)} is neither a run input nor an environment variable"
+    url = url.strip()
     parsed = urlparse(url)
     if parsed.scheme == "file":
-        return FILE_TARGET, name, None
+        return FILE_TARGET, names, None
     if parsed.scheme in ("http", "https") and parsed.hostname:
-        return parsed.hostname.lower().rstrip("."), name, None
-    return None, name, f"goto {url!r}: not an http(s) or file URL"
+        return parsed.hostname.lower().rstrip("."), names, None
+    return None, names, f"goto {url!r}: not an http(s) or file URL"

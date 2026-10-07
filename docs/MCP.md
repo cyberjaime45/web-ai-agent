@@ -95,7 +95,7 @@ hosts = ["one.wheelsup.com", "wheelsup.com", "www.wheelsup.com"]
 ```
 
 Hosts match exactly; `*.example.com` matches any subdomain. A flow whose
-sites span two environments, or cannot be worked out (an unset `<PLACEHOLDER>`
+sites span two environments, or cannot be worked out (an unset `{PLACEHOLDER}`
 URL), runs against none and `list_flows` shows it with no environments.
 `ENVIRONMENT` for the run is set to the environment's name.
 
@@ -107,10 +107,12 @@ are re-read on every call, so a change needs no restart.
 
 ### Inputs: one flow, every environment
 
-A `goto` written as `<NAME>` (for example `goto: "<MEMBERS_SITE_URL>"`) takes
-its URL from the run: `run_flow(inputs={"MEMBERS_SITE_URL": "https://..."})`,
+A `goto` written with a `{NAME}` placeholder (for example
+`goto: "{MEMBERS_SITE_URL}"` or `goto: "{MEMBERS_SITE_URL}/booking"`; the legacy
+`<NAME>` spelling is read too) takes that part of its URL from the run:
+`run_flow(inputs={"MEMBERS_SITE_URL": "https://..."})`,
 or else from the environment the Web Agent MCP runs in. `list_flows` reports
-every `<NAME>` a flow's steps use as `inputs`, and the ones its sites come
+every `{NAME}` a flow's steps use as `inputs`, and the ones its sites come
 from as `site_inputs`. The environment named in `run_flow` must own the site
 an input points at, like any other site the flow opens. Inputs are upper-case
 names; a name that looks like a credential (`PASSWORD`, `SECRET`, `KEY`,
@@ -128,7 +130,7 @@ not a copy of it:
 
 | Tool | Does |
 |------|------|
-| `describe_capabilities` | Every action keyword with its argument counts, group and meaning, every QA skill with its options, the flow file format, the names (never values) of the `<PLACEHOLDER>`s this Web Agent can fill, and the tool list — read from `ActionType`, `ACTION_ARG_SPEC`, the skill registry and `docs/ACTIONS.md` |
+| `describe_capabilities` | Every action keyword with its argument counts, group and meaning, every QA skill with its options, the flow file format, the names (never values) of the `{PLACEHOLDER}`s this Web Agent can fill, and the tool list — read from `ActionType`, `ACTION_ARG_SPEC`, the skill registry and `docs/ACTIONS.md` |
 | `get_flow(flow)` | A flow's Markdown and its catalog entry |
 | `validate_flow(content, flow?)` | Parse and lint the text as the `lint` command does; `valid` is false on a blocking finding (`parse-error`, `no-steps`, `unknown-step`, `literal-secret`, `missing-component`); the rest is advice (`fixed-wait`, `no-assertion`…). `info` is what `list_flows` would show |
 | `save_flow(flow, content, overwrite=false)` | Validate, then write under the flows folder as `flow` (`atlas/login.md`): lower-case ids, no reserved folders, never outside the folder, never over an existing flow unless `overwrite`. The flow is listed at once |

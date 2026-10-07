@@ -59,7 +59,8 @@ def test_blank_page_and_stuck_spinner(page_state):
 
 @pytest.mark.parametrize("error, verdict, expected", [
     ("page.goto: net::ERR_NAME_NOT_RESOLVED at https://x.test", "environment", "ERR_NAME_NOT_RESOLVED"),
-    ("Environment variable 'FMS_PASSWORD' is not set (referenced in step 3)", "framework", "<FMS_PASSWORD>"),
+    ("Variable 'FMS_PASSWORD' is not set — set it in .env (referenced in step 3)", "framework", "FMS_PASSWORD is not set"),
+    ("Variable 'FMS_URL' is empty — set it in .env (referenced in step 1)", "framework", "FMS_URL is empty"),
     ("Failed to load sub-flow 'components/login': Flow file not found", "framework", "sub-flow"),
     ("Target page, context or browser has been closed", "environment", "closed"),
 ])
