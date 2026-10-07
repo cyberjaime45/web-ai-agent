@@ -19,7 +19,7 @@ variables:
   # Parameter → flow file. Add one block per new value of TEST.
   - ${{ if eq(parameters.WEB_APP, 'FMS') }}:
       - name: FLOW_PATH
-        value: tests/fms/production_smoke.md
+        value: tests/fms/mvc_smoke.md
 
 stages:
   - stage:
