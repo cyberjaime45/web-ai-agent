@@ -43,7 +43,7 @@ _NET_ENV_RE = re.compile(r"net::(ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_REFUSED|ER
                          r"ERR_CERT_[A-Z_]+|ERR_SSL_[A-Z_]+|ERR_PROXY_[A-Z_]+)")
 _CLOSED_RE = re.compile(r"(Target page, context or browser has been closed|Browser has been closed|"
                         r"browser has disconnected)", re.IGNORECASE)
-_PLACEHOLDER_RE = re.compile(r"Environment variable '([A-Z_][A-Z0-9_]*)' is not set")
+_PLACEHOLDER_RE = re.compile(r"Variable '([A-Z_][A-Z0-9_]*)' is (not set|empty)")
 _NOT_FOUND_RE = re.compile(r"Timeout \d+ms exceeded|could not resolve|not found|No table row", re.IGNORECASE)
 
 _TEXT_TARGETS = frozenset({
@@ -251,8 +251,8 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list], notes: list
 
     # ── framework: the flow or its setup, not the site ──
     if m := _PLACEHOLDER_RE.search(error):
-        signals.append(f"placeholder <{m.group(1)}> has no value")
-        conclude("framework", f"<{m.group(1)}> is not set in the environment (.env or CI variables).")
+        signals.append(f"placeholder {{{m.group(1)}}} has no value")
+        conclude("framework", f"{m.group(1)} is {m.group(2)} in the environment (.env or CI variables).")
     if re.search(r"sub-flow|nesting depth|Circular flow", error):
         signals.append("the flow could not be assembled")
         conclude("framework", "The flow references a sub-flow that could not be loaded.")
