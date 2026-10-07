@@ -391,10 +391,26 @@ def test_the_exploration_flow_inspects_and_tests_without_submitting():
 
 def test_an_orchestrator_without_an_llm_keeps_the_agents_llm_off_too(monkeypatch):
     from mcp_server import authoring
-    monkeypatch.delenv("JANUS_LLM", raising=False)
+    for name in ("WEB_AGENT_MCP_LLM", "JANUS_LLM"):
+        monkeypatch.delenv(name, raising=False)
     assert "max_ai_calls" not in authoring.explore_markdown("https://a/", 1, 4)
-    monkeypatch.setenv("JANUS_LLM", "off")
+    monkeypatch.setenv("WEB_AGENT_MCP_LLM", "off")                     # the Web Agent's own name, for any client
     assert '"max_ai_calls=0"' in authoring.explore_markdown("https://a/", 1, 4)
+    monkeypatch.delenv("WEB_AGENT_MCP_LLM")
+    monkeypatch.setenv("JANUS_LLM", "off")                             # still read as an alias
+    assert '"max_ai_calls=0"' in authoring.explore_markdown("https://a/", 1, 4)
+    monkeypatch.setenv("WEB_AGENT_MCP_LLM", "on")                      # the Web Agent name wins
+    assert "max_ai_calls" not in authoring.explore_markdown("https://a/", 1, 4)
+
+
+def test_the_extra_environments_file_has_a_client_neutral_name_and_an_alias(monkeypatch, tmp_path: Path):
+    for name in ("WEB_AGENT_MCP_EXTRA_ENVIRONMENTS_FILE", "JANUS_ENVIRONMENTS_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    assert load_config().extra_environments_file is None
+    monkeypatch.setenv("JANUS_ENVIRONMENTS_FILE", str(tmp_path / "janus.toml"))
+    assert load_config().extra_environments_file == tmp_path / "janus.toml"
+    monkeypatch.setenv("WEB_AGENT_MCP_EXTRA_ENVIRONMENTS_FILE", str(tmp_path / "client.toml"))
+    assert load_config().extra_environments_file == tmp_path / "client.toml"
 
 
 def test_an_orchestrator_file_with_no_environments_yet_merges_nothing(tmp_path: Path):

@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp_server import results
-from mcp_server.config import AdapterConfig
+from mcp_server.config import AdapterConfig, llm_off
 from mcp_server.models import TERMINAL_STATES, ErrorCode, ErrorInfo, ExecutionState
 
 logger = logging.getLogger("web_agent.mcp")
@@ -236,7 +236,7 @@ class ExecutionManager:
         }
         if self._config.headless:
             env["HEADLESS"] = "true"
-        if os.environ.get("JANUS_LLM", "").strip().lower() == "off":
+        if llm_off():
             env["AI_PROVIDER"], env["LLM_KEY"] = "", ""       # the orchestrator runs without an LLM: so does the run
         # The console goes to a file: kept for debugging, never read for results.
         # stdin/stdout must not be inherited — they are the MCP channel.
