@@ -10,11 +10,24 @@ from __future__ import annotations
 
 import shutil
 import sys
+import tomllib
 
-from app.config.settings import settings
+from app.config.settings import PROJECT_ROOT, settings
 from app.utils.build import get_build_name
 
-APP_VERSION = "1.2.0"
+
+def _release_version() -> str:
+    """The one version of the Web Agent: ``[extension] version`` in
+    janus-extension.toml — what JANUS installs and updates by, and what the
+    banner, the report and the MCP results show. Bump it there only."""
+    try:
+        with (PROJECT_ROOT / "janus-extension.toml").open("rb") as fh:
+            return str(tomllib.load(fh)["extension"]["version"])
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        return "unknown"
+
+
+APP_VERSION = _release_version()
 CREATED_BY = "Cyberjaime45"
 
 _ART = (

@@ -250,5 +250,8 @@ web-agent/
 Displayed once at the start of every pytest session, before pytest's own
 `test session starts` header: the art plus `Version`, `Created by`, `Build`
 (the `BUILD_NAME` label) and the environment label `env · browser ·
-mode[ · lambda]`, centered and green on a TTY. Change the art,
-`APP_VERSION` or `CREATED_BY` in `app/utils/banner.py`.
+mode[ · lambda]`, centered and green on a TTY. Change the art or
+`CREATED_BY` in `app/utils/banner.py`. The version has one source:
+`[extension] version` in `janus-extension.toml` — what JANUS installs and
+updates by. `APP_VERSION` reads it, so the banner, the report footer and
+`web_agent_version` in MCP results always match it; bump it there only.

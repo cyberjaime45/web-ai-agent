@@ -29,3 +29,10 @@ def test_banner_is_centered_and_plain_without_color():
 def test_banner_wraps_in_green_when_colored():
     text = banner_text(color=True, width=100)
     assert text.startswith("\033[32m") and text.endswith("\033[0m")
+
+
+def test_the_version_is_the_janus_manifest_version():
+    """One version: what JANUS installs (janus-extension.toml) is what the banner, report and MCP show."""
+    import tomllib
+    with (banner.PROJECT_ROOT / "janus-extension.toml").open("rb") as fh:
+        assert banner.APP_VERSION == tomllib.load(fh)["extension"]["version"]
