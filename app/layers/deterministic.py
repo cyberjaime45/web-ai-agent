@@ -24,6 +24,8 @@ from app.schemas.actions import ActionType, Check, FlowAction, RunContext, StepR
 logger = logging.getLogger(__name__)
 
 
+FULL_PAGE = "full_page"    # screenshot option: the whole scrollable page, not the viewport
+
 class DeterministicRunner(L2Handlers):
     # L1 action timeout (ms) — caps Playwright's auto-wait for action calls
     # (click, fill, check, etc.) so L2/L3 can be tried quickly on failure.
@@ -475,9 +477,15 @@ class DeterministicRunner(L2Handlers):
     # ── L1 handlers: Utilities ────────────────────────────────────
 
     def _h_screenshot(self, action: FlowAction) -> StepResult:
-        name = action.args[0] if action.args else f"step_{action.step_num}"
-        path = self._screenshot(name)
-        return self._ok(action, f"Screenshot saved: {path}", 1, screenshot=path)
+        """``screenshot`` (the viewport), ``screenshot: "name"``, and with the
+        option ``"full_page"`` (either argument) the whole scrollable page."""
+        full = any(a.strip().lower() == FULL_PAGE for a in action.args)
+        names = [a for a in action.args if a.strip().lower() != FULL_PAGE]
+        if len(names) > 1:
+            raise ValueError(f'screenshot takes a name and the option "{FULL_PAGE}", got {action.args}')
+        name = names[0] if names and names[0].strip() else f"step_{action.step_num}"
+        path = self._screenshot(name, full_page=full)
+        return self._ok(action, f"{'Full-page screenshot' if full else 'Screenshot'} saved: {path}", 1, screenshot=path)
 
     def _h_press(self, action: FlowAction) -> StepResult:
         key = action.args[0] if action.args else "Enter"
@@ -499,9 +507,9 @@ class DeterministicRunner(L2Handlers):
             layer_used=layer, screenshot_path=screenshot,
         )
 
-    def _screenshot(self, name: str) -> str:
+    def _screenshot(self, name: str, full_page: bool = False) -> str:
         self._shot_counter += 1
         safe = name.replace("/", "_").replace(" ", "_")
         path = self.artifacts_dir.resolve() / f"{self._shot_counter:03d}_{safe}.png"
-        self.page.screenshot(path=str(path), full_page=False)
+        self.page.screenshot(path=str(path), full_page=full_page)
         return str(path)

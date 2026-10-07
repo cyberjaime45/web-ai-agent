@@ -484,11 +484,15 @@ Generate a 2-4 sentence summary of the current page content.
 ## Utilities (2)
 
 #### `screenshot`
-Capture a screenshot of the current page. Optionally provide a name. Saved to `reports/<env>/images/`.
+Capture the visible part of the page (the viewport). Optionally provide a name.
+Add the option `"full_page"` to capture the whole scrollable page instead.
+Saved to `reports/<env>/images/` and shown on the step in the report.
 
 ```markdown
-1. screenshot
-2. screenshot: "after_login"
+1. screenshot                               # the viewport, named after the step
+2. screenshot: "after_login"                # the viewport, named
+3. screenshot: "results" | "full_page"      # the whole page, named
+4. screenshot: "full_page"                  # the whole page, named after the step
 ```
 
 #### `press`

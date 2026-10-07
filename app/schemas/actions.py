@@ -145,7 +145,7 @@ ACTION_ARG_SPEC: dict[ActionType, tuple[int, int]] = {
 
     ActionType.RUN_FLOW:        (1, 1),
 
-    ActionType.SCREENSHOT:      (0, 1),
+    ActionType.SCREENSHOT:      (0, 2),     # name, "full_page"
     ActionType.PRESS:           (1, 1),
 
     # Skills take `key=value` options; see app/skills/__init__.py
