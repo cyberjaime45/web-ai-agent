@@ -95,6 +95,31 @@ def test_agent_test_option_collects_a_two_step_flow():
     # collection — the same holds for --flow; the node id above is the check)
 
 
+@pytest.mark.parametrize("option", ["--flow_file", "--flow", "--agent-test"])
+def test_an_injected_flow_without_a_path_runs_alone(option):
+    # No path on the command line: pytest falls back to testpaths (tests/),
+    # which must not add the whole suite to the one flow that was asked for.
+    root = _REPO / "reports" / "_discovery_test"
+    scratch = root / uuid.uuid4().hex
+    scratch.mkdir(parents=True)
+    flow = scratch / "home.md"
+    flow.write_text(_FLOW, encoding="utf-8")
+    value = {"--flow_file": str(flow), "--flow": _FLOW, "--agent-test": "https://example.com/members"}[option]
+    env = {**os.environ, "AI_PROVIDER": "", "LLM_KEY": "", "LLM_MODEL": "", "PROFILE": "desktop"}
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", f"{option}={value}"],
+            cwd=_REPO, env=env, capture_output=True, text=True, timeout=120, check=False,
+        )
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    nodes = [line for line in proc.stdout.splitlines() if "::" in line]
+    assert len(nodes) == 1, proc.stdout
+    expected = "::Agent test — https://example.com/members" if option == "--agent-test" else "::Home Page"
+    assert nodes[0].endswith(expected), proc.stdout
+
+
 _TAGGED = """# Home Page
 markers: smoke, non_destructive
 

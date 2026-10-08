@@ -174,6 +174,19 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
 # Items are appended to the collected list so they go through the
 # same execution pipeline as file-discovered flows — no duplicate logic.
 
+_INJECTING_OPTIONS = ("--flow", "--flow_file", "--agent-test")
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
+    """An injected flow runs alone: with no path on the command line, pytest's
+    fallback (testpaths, else the invocation dir) is not collected beside it.
+    Paths given explicitly are still collected."""
+    if config.args_source == pytest.Config.ArgsSource.ARGS:
+        return None
+    if any(config.getoption(o, default=None) is not None for o in _INJECTING_OPTIONS):
+        return True
+    return None
+
 
 def pytest_collection_modifyitems(
     session: pytest.Session,
