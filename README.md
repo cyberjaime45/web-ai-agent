@@ -96,8 +96,8 @@ Copy `.env.example` to `.env`. Every variable is read once by
 | `BUILD_NAME` | `Web Test Report` | Run label: report title, banner, console summary, `summary.json`, LambdaTest build |
 | `RUNNING_MODE` | `local` | `local` or `lambda` (LambdaTest cloud; needs `LT_USERNAME`, `LT_ACCESS_KEY`) |
 | `BROWSER` | `chromium` | `chromium`, `firefox`, or `webkit` |
-| `HEADLESS` | `true` | `false` shows the browser, maximized |
-| `VIEWPORT` | `1920x1080` | Viewport size (`WIDTHxHEIGHT`) of the `desktop` profile |
+| `HEADLESS` | `true` | `false` shows the browser (window sized to `VIEWPORT`) |
+| `VIEWPORT` | `1920x1080` | Viewport size (`WIDTHxHEIGHT`) of the `desktop` profile, headed or headless — screenshots match it |
 | `SLOW_MO` | `0` | Milliseconds between actions, for debugging |
 | `PROFILE` | `desktop` | Device profile(s) flows run under by default: `desktop`, `mobile`, or both (comma-separated). `pytest --profile …` and a flow's `## Config` `profiles:` line override it |
 | `MOBILE_DEVICE` | `iPhone 13` | Playwright device descriptor behind the `mobile` profile |

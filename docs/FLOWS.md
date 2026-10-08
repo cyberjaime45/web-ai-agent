@@ -233,7 +233,7 @@ step stay the same.
 
 | Profile | Context |
 |---------|---------|
-| `desktop` | The session's own viewport (`VIEWPORT`, or the maximized window in headed Chromium) |
+| `desktop` | The session's own viewport (`VIEWPORT`, headed or headless) |
 | `mobile` | Playwright's device descriptor named by `MOBILE_DEVICE` (default `iPhone 13`: 390×664, touch, mobile user agent) |
 
 ```bash

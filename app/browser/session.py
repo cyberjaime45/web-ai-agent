@@ -76,11 +76,8 @@ def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
       SLOW_MO    milliseconds                 (default: 0)
       VIEWPORT   WIDTHxHEIGHT                 (default: 1920x1080)
 
-    Headed mode:  ``--start-maximized`` + ``no_viewport=True`` so the page
-                  fills the entire OS window (Chromium only; other browsers
-                  fall back to the VIEWPORT size).
-    Headless mode: Uses VIEWPORT (default 1920×1080) since there is no OS
-                   window to maximize.
+    Headed and headless both render at VIEWPORT, so screenshots have the same
+    size either way; headed, Playwright sizes the window to fit it.
     """
     browser_name = settings.browser
     headless = settings.headless
@@ -100,10 +97,6 @@ def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
     except (ValueError, AttributeError):
         viewport = {"width": 1920, "height": 1080}
 
-    launch_args = []
-    if browser_name == "chromium" and not headless:
-        launch_args.append("--start-maximized")
-
     logger.debug(
         "[provider:local] browser=%s headless=%s slow_mo=%d viewport=%s",
         browser_name, headless, slow_mo, viewport_str,
@@ -111,13 +104,7 @@ def _local_browser(pw: Playwright) -> tuple[Browser, dict]:
     browser = browser_type.launch(
         headless=headless,
         slow_mo=slow_mo,
-        args=launch_args,
     )
-
-    # Headed Chromium: no_viewport lets the page fill the maximized OS window.
-    # Everything else: use an explicit viewport for consistent rendering.
-    if browser_name == "chromium" and not headless:
-        return browser, {"no_viewport": True}
     return browser, {"viewport": viewport}
 
 

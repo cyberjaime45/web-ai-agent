@@ -4,8 +4,7 @@ A profile only changes context creation (viewport, device emulation); the
 browser process, the flow and every step stay the same. The same Markdown
 therefore runs unchanged on desktop and on a phone.
 
-    desktop   the session's own context options (VIEWPORT, or the maximized
-              window in headed Chromium)
+    desktop   the session's own context options (VIEWPORT)
     mobile    Playwright's device descriptor named by MOBILE_DEVICE
               (default "iPhone 13": 390x664, touch, mobile user agent)
 
@@ -51,8 +50,8 @@ def context_options(name: str, base: dict, devices: Mapping[str, dict]) -> dict:
     """Merge the profile's emulation options into the session's context options.
 
     *base* comes from ``create_browser()``; *devices* is ``playwright.devices``.
-    The mobile profile always sets an explicit viewport, so headed Chromium's
-    ``no_viewport`` (maximized window) is dropped for it.
+    The mobile profile always sets an explicit viewport, so a ``no_viewport``
+    in *base* is dropped for it.
     """
     validate([name])
     if name == DESKTOP:
