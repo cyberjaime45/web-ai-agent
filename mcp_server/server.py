@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from app.browser.profiles import (
     BUILTIN as PROFILES,  # also loads .env, as every entry point does
@@ -52,6 +53,9 @@ from mcp_server.models import (
 )
 
 logger = logging.getLogger("web_agent.mcp")
+
+# Reads, as MCP says them: JANUS lists a tool that says nothing as destructive (janus.mcp_provider)
+READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
 
 _INSTRUCTIONS = (
     "The Web Agent MCP: the interface to the Web Agent, which runs Markdown test flows in a real browser. Call list_flows to see the flows "
@@ -130,7 +134,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
 
     server = FastMCP("web-agent-mcp", instructions=_INSTRUCTIONS, lifespan=lifespan)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     async def list_flows(environment: str | None = None, markers: str | None = None) -> FlowCatalog:
         """List the test flows this Web Agent can run and the environments it knows.
 
@@ -224,7 +228,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 ErrorCode.EXECUTION_START_FAILED, f"The execution could not be created: {exc}"))
         return _status(execution)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     async def describe_capabilities() -> Capabilities:
         """What a flow may contain: every action keyword with its argument counts
         and meaning, every QA skill with its options, the flow file format, and
@@ -232,7 +236,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
         Read from the Web Agent itself, so it is always its current version."""
         return authoring.describe(config, _TOOLS)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     async def get_flow(flow: str) -> FlowDocument:
         """A flow's Markdown content and its catalog entry (sites, environments, inputs)."""
         entry, content, error = authoring.read(catalog, config, flow)
@@ -240,7 +244,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
             return FlowDocument(error=error)
         return FlowDocument(info=entry.info, content=content, path=str(entry.path))
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     async def validate_flow(content: str, flow: str | None = None) -> ValidationResult:
         """Parse and lint flow Markdown without saving it. `flow` is the id it
         would be saved as (components resolve from its folder). `valid` is false
@@ -302,7 +306,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 ErrorCode.EXECUTION_START_FAILED, f"The execution could not be created: {exc}"))
         return _status(execution)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     async def get_status(execution_id: str) -> ExecutionStatus:
         """Where an execution is: QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED or TIMED_OUT.
 
@@ -315,7 +319,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 ErrorCode.EXECUTION_NOT_FOUND, f"No execution {execution_id!r}."))
         return _status(execution)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     async def get_result(execution_id: str) -> ExecutionResult:
         """The result of a finished execution: test totals, each failure with its
         step, message, likely cause and evidence files, warnings, and the report paths.
