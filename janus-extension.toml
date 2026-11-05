@@ -1,5 +1,5 @@
 # JANUS extension manifest — lets JANUS (the QA Orchestrator Agent) install,
-# configure, start, update and remove this agent. See JANUS docs/MASTER_PROMPT.md §46.
+# configure, start, update and remove this agent. The contract is JANUS src/janus/manifest.py.
 schema = 1
 
 [extension]
