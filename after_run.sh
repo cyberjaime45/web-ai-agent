@@ -19,8 +19,11 @@ zipFileName=${run_id}
 fileExt=".zip"
 zipName=$zipFileName$fileExt
 
-# Create a zip archive of the production reports folder
-zip -r -q $zipName "${ENVIRONMENT}/"
+# Zip the CONTENTS of the environment folder: build uploads (buildId) need
+# report.html at the archive root, served at
+# /automation_reports/<script>/<environment>/<buildId>/report.html.
+# The archive is still written here in reports/, where the upload reads it.
+(cd "${ENVIRONMENT}" && zip -r -q "../$zipName" .)
 echo "Created zip archive: $zipName"
 
 sleep 2s
