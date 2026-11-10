@@ -28,7 +28,10 @@ sleep 2s
 upload_url="https://automation.wheelsup.com/api/reports/simple-upload"
 payload=$(cat <<EOF
 {
-  "script": "${WEB_APP}"
+  "script": "${WEB_APP}",
+  "environment": "${ENVIRONMENT}",
+  "buildId": "${BUILD_ID}",
+  "requestedBy": "${REQUESTED_BY}"
 }
 EOF
 )
