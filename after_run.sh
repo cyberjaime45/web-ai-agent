@@ -31,7 +31,7 @@ payload=$(cat <<EOF
   "script": "${WEB_APP}",
   "environment": "${ENVIRONMENT}",
   "buildId": "${BUILD_ID}",
-  "requestedBy": "${REQUESTED_BY}"
+  "requestedBy": "${BUILD_REQUESTEDFOR}"
 }
 EOF
 )
