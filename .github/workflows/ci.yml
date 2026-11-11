@@ -30,7 +30,19 @@ jobs:
           enable-cache: true            # the Python version comes from .python-version
       - name: Install (the lockfile must match pyproject.toml; the mcp extra for the MCP server's tests)
         run: uv sync --locked --extra mcp
-      - name: Install Chromium (the *_browser tests skip without it)
-        run: uv run --no-sync playwright install --with-deps chromium
+      # The browser only: the runner image already carries Chromium's system libraries, and --with-deps adds
+      # font packages whose download fails on it. The *_browser tests skip when Chromium cannot start, so the
+      # next step proves it does, and a broken browser fails the job instead of quietly skipping them.
+      - name: Install Chromium
+        run: uv run --no-sync playwright install chromium
+      - name: Check that Chromium starts
+        run: |
+          uv run --no-sync python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              print("chromium", browser.version)
+              browser.close()
+          PY
       - name: Test
         run: uv run --no-sync pytest tests/_framework
