@@ -93,3 +93,16 @@ def test_word_similarity_keeps_a_legitimate_rename_working(page, tmp_path):
     result = _run(page, tmp_path, body, '- click: "Sign up now"\n- assert_text: "signed"\n')
     assert result.success, _error(result)
     assert "closest wording of a control" in result.steps[0].resolved
+
+
+def test_the_similarity_pass_parses_the_page_and_finds_the_closest_label():
+    """L2's last resort (selectolax): a near-miss label still resolves to its input.
+    selectolax 1.0 removed the old parser module; a failed import must not
+    quietly turn this pass off."""
+    from types import SimpleNamespace
+
+    from app.layers.locator import FallbackLocator
+    html = '<label for="em">  Email   address </label><input id="em"><label for="pw">Password</label>'
+    node = FallbackLocator._best_fuzzy(SimpleNamespace(content=lambda: html), "label", "Emial adress")
+    assert node is not None and node.attributes.get("for") == "em"
+    assert node.text(strip=True) == "Email   address"

@@ -22,7 +22,7 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
-from _pytest.mark.expression import Expression, ParseError
+from _pytest.mark.expression import Expression
 
 _NAME_RE = re.compile(r"[A-Za-z_][\w.-]*")
 _KEYWORDS = frozenset({"and", "or", "not"})
@@ -51,8 +51,8 @@ def compile_selection(expression: str, known: Iterable[str]) -> Expression:
     a marker that is not in *known*."""
     try:
         compiled = Expression.compile(expression)
-    except ParseError as exc:
-        raise SelectionError(f"Invalid marker expression {expression!r}: {exc.message}") from None
+    except SyntaxError as exc:      # pytest >= 9 reports a malformed expression as SyntaxError
+        raise SelectionError(f"Invalid marker expression {expression!r}: {exc.msg}") from None
     known = set(known)
     unknown = sorted({n for n in _NAME_RE.findall(expression) if n not in _KEYWORDS} - known)
     if unknown:

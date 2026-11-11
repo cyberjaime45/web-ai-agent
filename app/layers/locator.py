@@ -178,11 +178,12 @@ class FallbackLocator:
         node reaches the similarity floor or selectolax is unavailable.
         """
         try:
-            from selectolax.parser import HTMLParser
-        except ImportError:
-            logger.warning("[L2] selectolax not installed — fuzzy HTML matching disabled")
+            # selectolax >= 1.0 removed the old `selectolax.parser` (modest) engine.
+            from selectolax.lexbor import LexborHTMLParser
+        except ImportError as exc:
+            logger.warning("[L2] selectolax could not be imported (%s) — fuzzy HTML matching disabled", exc)
             return None
-        tree = HTMLParser(page.content())
+        tree = LexborHTMLParser(page.content())
         best_score, best = cls._FUZZY_MIN, None
         for node in tree.css(css):
             text = node.text(strip=True)

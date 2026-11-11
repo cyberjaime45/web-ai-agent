@@ -110,7 +110,7 @@ def test_factory_returns_gemini_provider():
     from app.layers.providers.gemini_provider import GeminiProvider
     with patch("app.layers.providers.settings",
                _stub_settings(provider="gemini", key="k", model="gemini-1.5-flash")), \
-         patch("app.layers.providers.gemini_provider.genai.configure"):
+         patch("app.layers.providers.gemini_provider.genai.Client"):
         p = get_provider()
     assert isinstance(p, GeminiProvider)
 
