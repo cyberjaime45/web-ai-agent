@@ -135,3 +135,16 @@ flow can be tightened up.
 uv run pytest tests/_framework        # the runtime's own tests (no browser)
 uv run ruff check app conftest.py main.py tests
 ```
+
+Dependencies: `pyproject.toml` declares them and `uv.lock` is what the pipeline and JANUS install
+(`uv sync --locked`); `requirements.txt` repeats the declarations for tools that read that format and is edited
+with them.
+
+```bash
+uv lock --upgrade-package playwright   # one package, within its pin (edit the pin in pyproject.toml first to move it)
+uv lock --upgrade                      # refresh the transitive packages
+uv lock --check                        # the lockfile is in step with pyproject.toml
+uv sync --locked --extra mcp && uv run playwright install chromium
+uv run pytest tests/_framework         # includes the real-Chromium tests
+git checkout -- pyproject.toml requirements.txt uv.lock && uv sync --locked --extra mcp   # roll back
+```
