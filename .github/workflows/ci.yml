@@ -1,0 +1,36 @@
+# The framework's own tests (tests/_framework) on every push to staging and every pull request.
+# The flows under tests/<app>/ open real sites and stay with azure_pipelines.yml; they never run here.
+# No lint step: the project has no ruff configuration yet.
+name: CI
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a newer push to a pull request replaces its run; runs on the main line always finish
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true            # the Python version comes from .python-version
+      - name: Install (the lockfile must match pyproject.toml; the mcp extra for the MCP server's tests)
+        run: uv sync --locked --extra mcp
+      - name: Install Chromium (the *_browser tests skip without it)
+        run: uv run --no-sync playwright install --with-deps chromium
+      - name: Test
+        run: uv run --no-sync pytest tests/_framework
