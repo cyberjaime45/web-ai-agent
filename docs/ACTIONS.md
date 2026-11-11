@@ -488,6 +488,19 @@ Capture the visible part of the page (the viewport). Optionally provide a name.
 Add the option `"full_page"` to capture the whole scrollable page instead.
 Saved to `reports/<env>/images/` and shown on the step in the report.
 
+A capture is capped at 10 s (30 s for `"full_page"`). Playwright waits for the
+page's web fonts before every capture, so a font that never finishes loading
+used to time the step out on a page that was already loaded. In Chromium the
+step then captures the visible part of the page without that wait (at 1x
+scale, and the visible part only for `"full_page"`) and records a
+`web fonts loaded` warning (the image may show fallback fonts).
+
+A screenshot step records the page; it checks nothing. So a capture that still
+cannot happen does not fail the step or stop its section: the step passes with
+a `screenshot captured` warning that gives the reason, after one attempt (no
+wait-and-retry, no AI). It still fails on invalid arguments (two names) and
+when the browser has closed.
+
 ```markdown
 1. screenshot                               # the viewport, named after the step
 2. screenshot: "after_login"                # the viewport, named

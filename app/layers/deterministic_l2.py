@@ -5,7 +5,8 @@ Mixed into ``DeterministicRunner`` and registered by name, like L1: a method
 returns a ``StepResult`` on success or ``None`` when its looser strategy
 found nothing, and ``_layer2`` turns that ``None`` into the ``RuntimeError``
 the engine expects. Handlers use the runner's ``page``, ``_locator``
-(FallbackLocator), ``_ok`` and ``_L1_TIMEOUT``.
+(FallbackLocator), ``_ok`` and ``_L1_TIMEOUT`` (``screenshot`` also its
+``_screenshot_args`` / ``_shot_path`` / ``_shot_counter``).
 
 Element actions retry with looser locators (partial names, labels,
 placeholders, a similarity pass). Text checks fall back to the page's
@@ -16,15 +17,19 @@ scripts would make an absent text look present.
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 
 from app.layers.locator import _is_selector
-from app.schemas.actions import FlowAction, StepResult
+from app.schemas.actions import Check, FlowAction, StepResult
 
 logger = logging.getLogger(__name__)
 
 _SPACES = re.compile(r"\s+")
+FONTS_CHECK = "web fonts loaded"   # warn on a screenshot taken without the font wait
+# Resolves on the next animation frame — the page is drawing — with the font status.
+_FRAME_PROBE = "() => new Promise(done => requestAnimationFrame(() => done(document.fonts.status)))"
 
 
 def _norm(text: str) -> str:
@@ -171,3 +176,45 @@ class L2Handlers:
         if not self._visible_text_has(action.args[0]):
             return self._ok(action, f'[L2] Text "{action.args[0]}" absent from the visible text', 2)
         return None
+
+    # ── utilities ─────────────────────────────────────────────────
+
+    def _l2_screenshot(self, action: FlowAction) -> StepResult | None:
+        """Playwright waits for ``document.fonts.ready`` before every capture,
+        so one web font that never arrives makes ``screenshot`` time out on a
+        loaded page. When fonts are what is pending, capture what is drawn
+        through CDP, which has no font wait (Chromium only), and warn that the
+        text may show fallback fonts. ``None`` otherwise: a busy page or a slow
+        grid is reported, not retried.
+
+        The probe is bounded and waits for one animation frame: CDP calls take
+        no timeout, so they run only once the page has shown it is drawing.
+        The capture is the visible part, with no ``clip``: a clipped capture
+        from a second CDP session resets Playwright's device emulation (scale
+        factor, viewport) for the rest of the flow. So it is at 1x scale, and
+        a ``full_page`` step gets the visible part — the warning says so."""
+        try:
+            name, full = self._screenshot_args(action)
+            fonts = self.page.wait_for_function(_FRAME_PROBE, polling=100, timeout=self._L1_TIMEOUT).json_value()
+            if fonts != "loading":
+                return None
+            path = self._shot_path(name)
+            cdp = self.page.context.new_cdp_session(self.page)
+            try:
+                data = cdp.send("Page.captureScreenshot", {"format": "png"})["data"]
+            finally:
+                try:
+                    cdp.detach()
+                except Exception as exc:   # the page closing must not discard a capture already taken
+                    logger.debug("[L2] CDP detach failed: %s", exc)
+            path.write_bytes(base64.b64decode(data))
+        except Exception as exc:
+            logger.debug("[L2] screenshot without the font wait failed: %s", exc)
+            return None
+        self._shot_counter += 1
+        sr = self._ok(action, f"[L2] Screenshot of the visible page saved without waiting for web fonts: {path}",
+                      2, screenshot=str(path))
+        sr.checks.append(Check(FONTS_CHECK, False, "warn",
+                               "web fonts were still loading; the screenshot may show fallback fonts"
+                               + (" and has the visible part only, not the full page" if full else "")))
+        return sr

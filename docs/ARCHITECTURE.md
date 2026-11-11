@@ -64,6 +64,8 @@ L1 fails ─► blocker dismissed? (interactions) ─► L1 once more
               loading                 ─► wait_stable once (≤ 10 s) ─► L1 once more (warning: page settled in time)
               not_found               ─► L2 ─► L3 (element interactions, provider set)
               server / script         ─► L2 only — an LLM cannot fix a 5xx or a JS error
+              capture (screenshot)    ─► L2 only — capture without the web-font wait (Chromium);
+                                         still nothing: the step passes with a "screenshot captured" warning
               blank / session / covered / ambiguous / disabled / network / closed
                                       ─► no retry: it could only hide the problem
                                                               ─► failed StepResult (_fail: what each layer,

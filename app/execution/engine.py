@@ -53,6 +53,7 @@ _RESOLVE_PROVIDER = object()   # sentinel: FlowRunner(provider=...) not given
 L1, L2, L3 = "L1 exact", "L2 fuzzy", "L3 AI"
 _SETTLE_MS = 10_000            # the one bounded wait a still-loading page gets before L1 runs again
 SETTLED_CHECK = "page settled in time"
+SHOT_CHECK = "screenshot captured"
 
 def _append_error(result, msg: str) -> None:
     result.error = f"{result.error}\n{msg}" if result.error else msg
@@ -71,6 +72,24 @@ def _fail(action: FlowAction, message: str, layer: int, layers: dict[str, str],
         error=error if error is not None else message,
         evidence=Evidence(layers=layers),
     )
+
+
+def _screenshot_warning(sr: StepResult) -> StepResult:
+    """A ``screenshot`` step records the page; it checks nothing. When it could
+    not capture — after L1 and the font fallback — it passes with a warning.
+    It still fails on invalid arguments (the flow is wrong) and on a closed
+    browser (a crash on a flow's last step must not pass)."""
+    try:
+        DeterministicRunner._screenshot_args(sr.action)
+    except ValueError:
+        return sr
+    triage = sr.evidence.layers.get("triage", "") if sr.evidence else ""
+    if triage.rsplit(" ", 1)[-1] == "closed":           # also "loading, then closed"
+        return sr
+    why = _first_line((sr.error or sr.message or "").rsplit("Original: ", 1)[-1]) or "no error message"
+    return StepResult(action=sr.action, success=True, layer_used=sr.layer_used,
+                      message=f"Screenshot not taken: {why}",
+                      checks=[*sr.checks, Check(SHOT_CHECK, False, "warn", f"the screenshot could not be taken: {why}")])
 
 
 class FlowRunner:
@@ -352,6 +371,8 @@ class FlowRunner:
         t0 = time.monotonic()
         self._step_seq = since_seq
         sr = self._run_step(resolved, page, runner, ctx)
+        if not sr.success and resolved.type == ActionType.SCREENSHOT:
+            sr = _screenshot_warning(sr)
         if sr.success:
             self._verify(sr, page, runner, since_seq)
         sr.duration = round(time.monotonic() - t0, 3)
@@ -481,7 +502,9 @@ class FlowRunner:
         # ── Layer 3 — AI fallback, only for element interactions (assertions,
         # waits and keys have no L3 path) and only for a locator problem. One
         # call: the prompt carries the URL, title, error and every control.
-        if final in diagnosis.L2_ONLY:
+        if final == "capture":
+            why = "no L3 path for this action"
+        elif final in diagnosis.L2_ONLY:
             why = f"{final} error on the page"
         elif not self._ai.available:
             why = "provider not configured"

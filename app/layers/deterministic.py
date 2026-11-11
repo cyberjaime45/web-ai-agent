@@ -9,6 +9,7 @@ Raises if both fail — caller may then try Layer 3 (AI).
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 FULL_PAGE = "full_page"    # screenshot option: the whole scrollable page, not the viewport
+_SHOT_NAME_RE = re.compile(r"[^\w.-]+")   # anything else in a screenshot name becomes "_"
 
 class DeterministicRunner(L2Handlers):
     # L1 action timeout (ms) — caps Playwright's auto-wait for action calls
@@ -35,6 +37,11 @@ class DeterministicRunner(L2Handlers):
     # truly missing.  The page's default_timeout (30s) is preserved for
     # explicit waits and assertions.
     _L1_TIMEOUT = 5000
+    # A `screenshot` step's own ceiling: Playwright waits for web fonts
+    # (document.fonts.ready) and a rendered frame before capturing, so a font
+    # that never loads would otherwise hold the step for the flow's 30 s.
+    _SHOT_TIMEOUT = 10_000
+    _FULL_SHOT_TIMEOUT = 30_000   # long pages take a while to stitch (the old default; a slow grid needs it)
 
     def __init__(
         self,
@@ -479,13 +486,13 @@ class DeterministicRunner(L2Handlers):
     def _h_screenshot(self, action: FlowAction) -> StepResult:
         """``screenshot`` (the viewport), ``screenshot: "name"``, and with the
         option ``"full_page"`` (either argument) the whole scrollable page."""
-        full = any(a.strip().lower() == FULL_PAGE for a in action.args)
-        names = [a for a in action.args if a.strip().lower() != FULL_PAGE]
-        if len(names) > 1:
-            raise ValueError(f'screenshot takes a name and the option "{FULL_PAGE}", got {action.args}')
-        name = names[0] if names and names[0].strip() else f"step_{action.step_num}"
-        path = self._screenshot(name, full_page=full)
-        return self._ok(action, f"{'Full-page screenshot' if full else 'Screenshot'} saved: {path}", 1, screenshot=path)
+        name, full = self._screenshot_args(action)
+        path = self._shot_path(name)
+        self.page.screenshot(path=str(path), full_page=full,
+                             timeout=self._FULL_SHOT_TIMEOUT if full else self._SHOT_TIMEOUT)
+        self._shot_counter += 1
+        return self._ok(action, f"{'Full-page screenshot' if full else 'Screenshot'} saved: {path}", 1,
+                        screenshot=str(path))
 
     def _h_press(self, action: FlowAction) -> StepResult:
         key = action.args[0] if action.args else "Enter"
@@ -507,9 +514,16 @@ class DeterministicRunner(L2Handlers):
             layer_used=layer, screenshot_path=screenshot,
         )
 
-    def _screenshot(self, name: str, full_page: bool = False) -> str:
-        self._shot_counter += 1
-        safe = name.replace("/", "_").replace(" ", "_")
-        path = self.artifacts_dir.resolve() / f"{self._shot_counter:03d}_{safe}.png"
-        self.page.screenshot(path=str(path), full_page=full_page)
-        return str(path)
+    @staticmethod
+    def _screenshot_args(action: FlowAction) -> tuple[str, bool]:
+        """``(name, full_page)`` from ``screenshot`` / ``screenshot: "name"`` / ``… | "full_page"``."""
+        full = any(a.strip().lower() == FULL_PAGE for a in action.args)
+        names = [a for a in action.args if a.strip().lower() != FULL_PAGE]
+        if len(names) > 1:
+            raise ValueError(f'screenshot takes a name and the option "{FULL_PAGE}", got {action.args}')
+        return (names[0] if names and names[0].strip() else f"step_{action.step_num}"), full
+
+    def _shot_path(self, name: str) -> Path:
+        """The next screenshot's file; the counter moves only when a capture is saved."""
+        safe = _SHOT_NAME_RE.sub("_", name.strip())[:100]     # file names cap at 255 bytes
+        return self.artifacts_dir.resolve() / f"{self._shot_counter + 1:03d}_{safe}.png"

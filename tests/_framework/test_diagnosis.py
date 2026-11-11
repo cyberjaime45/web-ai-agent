@@ -197,6 +197,18 @@ def test_triage_tells_session_covered_ambiguous_and_disabled_apart():
     assert _triage("element is not enabled") == "disabled"
 
 
+def test_a_screenshot_that_could_not_capture_is_its_own_cause():
+    error = "Page.screenshot: Timeout 10000ms exceeded."
+    assert _triage(error, kind=ActionType.SCREENSHOT) == "capture"
+    assert _triage(error, kind=ActionType.SCREENSHOT, page=_Page(spinner=1)) == "capture"   # no settle-and-retry
+    assert _triage("Target page, context or browser has been closed", kind=ActionType.SCREENSHOT) == "closed"
+    # a flow-authoring or disk error is not a capture that ran out of time
+    assert _triage('screenshot takes a name and the option "full_page"', kind=ActionType.SCREENSHOT) != "capture"
+    assert _triage("[Errno 13] Permission denied: 'images/001_x.png'", kind=ActionType.SCREENSHOT) != "capture"
+    assert "capture" in diagnosis.L2_ONLY and "capture" not in diagnosis.FULL_CHAIN
+    assert diagnosis.expected_of(FlowAction(type=ActionType.SCREENSHOT, args=["home"])) == "a screenshot of the page is saved"
+
+
 def test_triage_never_raises():
     class Dead:
         url = "https://x.test/"
@@ -224,3 +236,4 @@ def test_expected_and_observed_frame_the_verdict(page_state):
     assert d["signals"][0].startswith("the step before")
     assert diagnosis.expected_of(FlowAction(type=ActionType.FILL, args=["Name", "Ada"])) == '"Name" accepts the value "Ada"'
     assert diagnosis.expected_of(FlowAction(type=ActionType.TEST_PAGE, args=[])) == "test page completes"
+

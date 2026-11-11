@@ -44,6 +44,7 @@ _NET_ENV_RE = re.compile(r"net::(ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_REFUSED|ER
 _CLOSED_RE = re.compile(r"(Target page, context or browser has been closed|Browser has been closed|"
                         r"browser has disconnected)", re.IGNORECASE)
 _PLACEHOLDER_RE = re.compile(r"Variable '([A-Z_][A-Z0-9_]*)' is (not set|empty)")
+_TIMEOUT_RE = re.compile(r"Timeout \d+ms exceeded")
 _NOT_FOUND_RE = re.compile(r"Timeout \d+ms exceeded|could not resolve|not found|No table row", re.IGNORECASE)
 
 _TEXT_TARGETS = frozenset({
@@ -64,7 +65,8 @@ _ELEMENT_TARGETS = frozenset({
 # neither L2 nor L3: a fuzzier locator or an LLM cannot fix a blank page, a
 # sign-in redirect, a covered control or a network that is down.
 RETRY_AFTER_SETTLE = frozenset({"loading"})              # wait_stable once, then L1 again
-L2_ONLY = frozenset({"server", "script"})                # fuzzy is cheap; an LLM call cannot help
+L2_ONLY = frozenset({"server", "script",                # fuzzy is cheap; an LLM call cannot help
+                     "capture"})                       # a screenshot not taken: L2 captures without the font wait
 FULL_CHAIN = frozenset({"not_found"})                    # the ordinary locator problem: L2 → L3
 
 _COVERED_RE = re.compile(r"intercepts pointer events")
@@ -78,7 +80,8 @@ def triage(error: str, action: Any, page: Any, recorder: Any = None, since_seq: 
            section_seq: int = 0, ignore: Any = None, prev_url: str = "") -> str:
     """The likely cause of an L1 failure, from what is already in memory plus
     one probe: ``network`` / ``closed`` (environment), ``server`` / ``script``
-    / ``blank`` (application), ``loading`` (timing), ``session`` (the browser
+    / ``blank`` (application), ``loading`` (timing), ``capture`` (a
+    ``screenshot`` step that timed out), ``session`` (the browser
     was sent from *prev_url* to a sign-in page), ``covered`` / ``ambiguous``
     / ``disabled`` (test), else ``not_found``. Never raises."""
     try:
@@ -94,6 +97,11 @@ def _triage(error: str, action: Any, page: Any, recorder: Any, since_seq: int,
         return "network"
     if _CLOSED_RE.search(error):
         return "closed"
+    if getattr(action, "type", None) == ActionType.SCREENSHOT and _TIMEOUT_RE.search(error):
+        # Not a locator problem, and waiting for the page to settle would only
+        # repeat the capture's own wait (fonts, a rendered frame). Any other
+        # screenshot error (bad arguments, an unwritable folder) is not this.
+        return "capture"
     if recorder is not None:
         if oracle.broken_requests(recorder, section_seq, ignore):
             return "server"
@@ -185,6 +193,7 @@ _EXPECTED = {
     ActionType.WAIT_FOR_TEXT: 'the text "{t}" appears',
     ActionType.WAIT_FOR_URL: 'the address changes to contain "{t}"',
     ActionType.WAIT_STABLE: "the page settles",
+    ActionType.SCREENSHOT: "a screenshot of the page is saved",
 }
 
 
