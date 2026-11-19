@@ -19,6 +19,7 @@ no file access and no code execution behind any of them.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import re
@@ -120,6 +121,16 @@ def _bad_inputs(inputs: dict[str, str] | None, *, secrets: bool = False) -> str 
     return None
 
 
+def _recovered(task: asyncio.Task[list[str]]) -> None:
+    """What the start-up recovery came to, in the log: it runs beside the server and nobody awaits it."""
+    if task.cancelled():
+        return
+    if (problem := task.exception()) is not None:
+        logger.error("recovering the runs an earlier server left failed: %s: %s", type(problem).__name__, problem)
+    elif closed := task.result():
+        logger.info("closed %d run(s) an earlier server left unfinished: %s", len(closed), ", ".join(closed))
+
+
 def build_server(config: AdapterConfig) -> FastMCP:
     load_environments(config.environments_file, config.extra_environments_file)   # fail at start if unreadable
     catalog = Catalog(config)
@@ -127,9 +138,15 @@ def build_server(config: AdapterConfig) -> FastMCP:
 
     @asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[None]:
+        # runs a killed server left going are stopped while this one already answers: a start is never held up
+        # by them (each gets a moment to write its report first)
+        recovering = asyncio.create_task(manager.recover(), name="recover-orphans")
+        recovering.add_done_callback(_recovered)
         try:
             yield
         finally:
+            recovering.cancel()
+            await asyncio.gather(recovering, return_exceptions=True)
             await manager.shutdown()
 
     server = FastMCP("web-agent-mcp", instructions=_INSTRUCTIONS, lifespan=lifespan)
