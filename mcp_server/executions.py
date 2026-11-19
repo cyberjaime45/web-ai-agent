@@ -102,6 +102,8 @@ class Execution:
     metadata: dict[str, str]
     directory: str
     inputs: dict[str, str] = field(default_factory=dict)   # <NAME> values for this run (never secrets)
+    withheld: list[str] = field(default_factory=list)      # names this run fills from nowhere of the agent's own
+    traced: bool = True                                    # False: the run was handed secrets, so no trace is kept
     state: ExecutionState = ExecutionState.QUEUED
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
@@ -182,11 +184,14 @@ class ExecutionManager:
     def start(self, *, flow_id: str, flow_path: Path | None, environment: str, hosts: list[str],
               profile: str | None, label: str, metadata: dict[str, str],
               inputs: dict[str, str] | None = None, flow_text: str | None = None,
-              secrets: dict[str, str] | None = None) -> Execution:
+              secrets: dict[str, str] | None = None, withheld: list[str] | None = None) -> Execution:
         """Register an execution and schedule its run. Returns at once, QUEUED.
         With *flow_text* instead of *flow_path*, the flow is written into the
         execution's folder (an exploration, which is not a catalog flow).
-        *secrets* reach the run as environment variables and nothing else."""
+        *secrets* reach the run as environment variables and nothing else; a run that is handed any keeps no
+        Playwright trace (a trace records what is typed and sent). *withheld* names the placeholders this run
+        must not fill from the agent's own environment or ``.env``: without a value among *inputs* or
+        *secrets*, a step that uses one fails and says so."""
         execution_id = f"web-{uuid.uuid4().hex[:12]}"
         directory = self._config.executions_dir / execution_id
         directory.mkdir(parents=True, exist_ok=False)
@@ -198,6 +203,7 @@ class ExecutionManager:
             flow_path=flow_path.relative_to(self._config.project_root).as_posix(),
             environment=environment, hosts=hosts, profile=profile, label=label,
             metadata=metadata, directory=str(directory), inputs=dict(inputs or {}),
+            withheld=sorted(set(withheld or []) - set(inputs or {}) - set(secrets or {})), traced=not secrets,
             server=self._server_id if self._presence is not None else None, host=self._host,
         )
         self._executions[execution_id] = execution
@@ -316,8 +322,14 @@ class ExecutionManager:
             command += ["--profile", execution.profile]
         env = {
             **os.environ,
+            # a name set to nothing here is not filled from .env either (a variable that is set is never loaded
+            # over), and an empty placeholder fails its step: what the orchestrator withholds stays withheld
+            **dict.fromkeys(execution.withheld, ""),
+            "WEB_AGENT_WITHHELD": ",".join(execution.withheld),
             **execution.inputs,                 # the run's <NAME> values win over .env
-            **self._secrets.pop(execution.execution_id, {}),   # handed over once, kept nowhere
+            **(secrets := self._secrets.pop(execution.execution_id, {})),   # handed over once, kept nowhere
+            # their names (never a value): the report masks each as it does a password, whatever it is called
+            "WEB_AGENT_SECRET_NAMES": ",".join(sorted(secrets)),
             "ENVIRONMENT": execution.environment,
             "REPORT_DIR": str(execution.report_dir),
             "BUILD_NAME": execution.label,
@@ -325,6 +337,8 @@ class ExecutionManager:
             "WEB_AGENT_EXECUTION_ID": execution.execution_id,
             "PYTHONUNBUFFERED": "1",
         }
+        if not execution.traced:
+            env["TRACE"] = "off"                # a trace keeps every value typed and every request sent
         if self._config.headless:
             env["HEADLESS"] = "true"
         if llm_off():

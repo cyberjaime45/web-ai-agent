@@ -1,6 +1,6 @@
 [project]
 name = "web-agent"
-version = "1.5.1"          # the Web Agent version; janus-extension.toml repeats it (test_banner checks)
+version = "1.5.2"          # the Web Agent version; janus-extension.toml repeats it (test_banner checks)
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"

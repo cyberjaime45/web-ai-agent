@@ -44,7 +44,7 @@ event, with `execution_id` and the caller's `task_id` when it sent one.
 | Tool | Arguments | Returns |
 |------|-----------|---------|
 | `list_flows` | `environment?`, `markers?` | The flows that can be run (id, title, test cases, `markers` — every tag, a single test's included — and `flow_markers` — the file-wide ones that select, expected outcome, sites opened, environments) and the known environments. `markers` is a `pytest -m` expression (`smoke and non_destructive`) over each flow's `flow_markers` — the same selection `pytest -m` makes; an unregistered name is `INVALID_REQUEST` with the `known` names; `deselected` lists the ids it left out. Run what it returns with `run_flow` |
-| `run_flow` | `flow`, `environment`, `profile?`, `metadata?` | An execution id and `QUEUED`, at once |
+| `run_flow` | `flow`, `environment`, `profile?`, `metadata?`, `inputs?`, `secrets?`, `withhold?` | An execution id and `QUEUED`, at once |
 | `get_status` | `execution_id` | `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED` or `TIMED_OUT`, plus progress |
 | `get_result` | `execution_id` | Test totals, each failure with its step, message, likely cause and evidence files, warnings, report paths |
 | `cancel_execution` | `execution_id` | The status after stopping |
@@ -127,8 +127,20 @@ names; a name that looks like a credential (`PASSWORD`, `SECRET`, `KEY`,
 `run_flow(secrets={"ATLAS_PASSWORD": "…"})`. Secrets reach the run as
 environment variables for that execution only — never written to
 `execution.json`, never logged — and the report masks them like any sensitive
-placeholder. Without `secrets`, a placeholder resolves from the Web Agent's
-own `.env` as before.
+placeholder, whatever they are called (a seed or a pin as much as a password).
+A run that is given secrets keeps no Playwright trace: a trace records every
+value typed and every request sent. Screenshots are kept: a browser shows a
+password field as dots, but a secret typed into an ordinary text field is
+readable in one, and the network evidence masks by field name only. Without
+`secrets`, a placeholder
+resolves from the Web Agent's own `.env` as before — unless the caller says
+otherwise: `run_flow(withhold=["FMS_PASSWORD", …])` names placeholders this run
+must not fill from the Web Agent's own environment or `.env`. An orchestrator
+that brokers credentials lists the ones it hands no value for; a step that
+uses one then fails and says so, instead of signing in with a value the
+orchestrator never released. A name also given in `inputs` or `secrets` is
+filled from there; a name that is the run's own setting (`PATH`, `REPORT_DIR`,
+`WEB_AGENT_…`) is refused.
 
 ## Writing flows through the MCP
 

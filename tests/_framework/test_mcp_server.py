@@ -9,6 +9,7 @@ environment (file:// pages). Skipped when the `mcp` extra or Chromium is missing
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -381,4 +382,62 @@ def test_secrets_reach_the_run_and_nothing_else(scratch: Path):
                                  if p.is_file() and p.suffix in (".json", ".log", ".html", ".xml", ".md"))
             assert "hunter2-for-the-run" not in everything                 # not in the record, report or console
             assert "MCP_TEST_LOGIN_PASSWORD" in (folder / "report" / "test_cases.json").read_text() or True
+    asyncio.run(scenario())
+
+
+def test_a_name_the_orchestrator_withholds_is_not_filled_from_the_agents_own_environment(scratch: Path):
+    """The Web Agent has a value of its own for the placeholder (its environment, as its .env would give it).
+    A run started without a word about it still uses that value; a run told to withhold the name does not: its
+    step fails and says why. A value handed to the run wins either way."""
+    own = _env(scratch, MCP_TEST_LOGIN_PASSWORD="the-agents-own-copy")
+
+    async def scenario():
+        async with _session(own) as session:
+            run = {"flow": "secret.md", "environment": "local", "inputs": {"MCP_TEST_PAGE_URL": _FIXTURE}}
+            as_before = await _call(session, "run_flow", **run)
+            assert (await _finish(session, as_before["execution_id"]))["status"] == "COMPLETED"
+            assert (await _call(session, "get_result", execution_id=as_before["execution_id"]))["summary"]["passed"] == 1
+
+            withheld = await _call(session, "run_flow", **run, withhold=["MCP_TEST_LOGIN_PASSWORD"])
+            assert withheld["error"] is None, withheld
+            await _finish(session, withheld["execution_id"])
+            result = await _call(session, "get_result", execution_id=withheld["execution_id"])
+            assert result["summary"]["passed"] == 0
+            folder = scratch / "executions" / withheld["execution_id"]
+            reported = (folder / "report" / "test_cases.json").read_text()
+            assert "the orchestrator that started it handed no value" in reported
+            assert "the-agents-own-copy" not in "".join(
+                p.read_text(errors="replace") for p in folder.rglob("*") if p.is_file() and p.suffix != ".zip")
+            assert json.loads((folder / "execution.json").read_text())["withheld"] == ["MCP_TEST_LOGIN_PASSWORD"]
+
+            handed = await _call(session, "run_flow", **run, withhold=["MCP_TEST_LOGIN_PASSWORD"],
+                                 secrets={"MCP_TEST_LOGIN_PASSWORD": "handed-to-the-run"})
+            assert (await _finish(session, handed["execution_id"]))["status"] == "COMPLETED"
+            assert (await _call(session, "get_result", execution_id=handed["execution_id"]))["summary"]["passed"] == 1
+
+            refused = await _call(session, "run_flow", **run, withhold=["not a name; rm -rf"])
+            assert refused["error"]["code"] == "INVALID_REQUEST" and "placeholder name" in refused["error"]["message"]
+            for own_setting in ("PATH", "WEB_AGENT_MCP_EXECUTIONS_DIR", "REPORT_DIR", "PYTHONPATH"):
+                emptied = await _call(session, "run_flow", **run, withhold=[own_setting])
+                assert "the run's own setting" in emptied["error"]["message"], emptied
+    asyncio.run(scenario())
+
+
+def test_a_run_that_was_handed_secrets_keeps_no_trace_of_what_it_typed(scratch: Path):
+    """A Playwright trace records every value typed and every request sent. A failed run keeps one, unless the
+    run was given secrets: then none is recorded."""
+    (scratch / "flows" / "secret_failing.md").write_text(_SECRET.replace('"Welcome!"', '"This text is not on the page"'))
+
+    async def scenario():
+        async with _session(_env(scratch, TRACE="on-failure", MCP_TEST_LOGIN_PASSWORD="plain-input-here")) as session:
+            run = {"flow": "secret_failing.md", "environment": "local", "inputs": {"MCP_TEST_PAGE_URL": _FIXTURE}}
+            plain = await _call(session, "run_flow", **run)
+            await _finish(session, plain["execution_id"])
+            secret = await _call(session, "run_flow", **run, secrets={"MCP_TEST_LOGIN_PASSWORD": "typed-in-secret"})
+            await _finish(session, secret["execution_id"])
+            traces = {name: list((scratch / "executions" / started["execution_id"] / "report").rglob("*.zip"))
+                      for name, started in (("plain", plain), ("secret", secret))}
+            assert traces["plain"] and not traces["secret"], traces
+            record = json.loads((scratch / "executions" / secret["execution_id"] / "execution.json").read_text())
+            assert record["traced"] is False and "typed-in-secret" not in json.dumps(record)
     asyncio.run(scenario())
