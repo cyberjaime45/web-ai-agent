@@ -121,6 +121,28 @@ def _bad_inputs(inputs: dict[str, str] | None, *, secrets: bool = False) -> str 
     return None
 
 
+_PLACEHOLDER_NAME = re.compile(r"^[A-Z_][A-Z0-9_]{0,99}$")
+_MOST_WITHHELD = 100
+# what the run itself is started with: withholding one would empty it for the run
+_NOT_WITHHELD = frozenset({"PATH", "HOME", "USER", "SHELL", "LANG", "TMPDIR", "VIRTUAL_ENV", "ENVIRONMENT", "REPORT_DIR",
+                           "BUILD_NAME", "TRACE", "HEADLESS", "RUNNING_MODE", "BROWSER", "PROFILE", "AI_PROVIDER",
+                           "RERUN_FAILED", "ORACLE", "REPORT_REDACT", "CI"})
+
+
+def _bad_names(names: list[str] | None) -> str | None:
+    """Why *names* cannot be withheld, or None: each is a placeholder's name, as a flow writes it."""
+    if names is None:
+        return None
+    if not isinstance(names, list) or len(names) > _MOST_WITHHELD:
+        return f"a list of at most {_MOST_WITHHELD} placeholder names"
+    for name in names:
+        if not isinstance(name, str) or not _PLACEHOLDER_NAME.match(name):
+            return f"{str(name)[:40]!r} is not a placeholder name (upper-case letters, digits, underscores)"
+        if name in _NOT_WITHHELD or name.startswith(("WEB_AGENT_", "PYTHON", "PLAYWRIGHT_", "UV_")):
+            return f"{name!r} is the run's own setting, not a flow's placeholder"
+    return None
+
+
 def _recovered(task: asyncio.Task[list[str]]) -> None:
     """What the start-up recovery came to, in the log: it runs beside the server and nobody awaits it."""
     if task.cancelled():
@@ -189,7 +211,8 @@ def build_server(config: AdapterConfig) -> FastMCP:
     async def run_flow(flow: str, environment: str, profile: str | None = None,
                        metadata: dict[str, str] | None = None,
                        inputs: dict[str, str] | None = None,
-                       secrets: dict[str, str] | None = None) -> ExecutionStatus:
+                       secrets: dict[str, str] | None = None,
+                       withhold: list[str] | None = None) -> ExecutionStatus:
         """Start one flow against one environment. Returns at once with an execution id.
 
         `flow` is a flow id from list_flows; `environment` must be one the flow
@@ -201,12 +224,20 @@ def build_server(config: AdapterConfig) -> FastMCP:
         environment must own the sites they point at. `secrets` are values for
         the flow's credential placeholders ({APP_PASSWORD}…) for this run: they
         reach the run as environment variables and are never stored or logged;
-        the report masks them as any sensitive placeholder.
+        the report masks them as any sensitive placeholder, and a run that is
+        given any keeps no Playwright trace (a trace records what is typed).
+        `withhold` names placeholders this run must not fill from the Web
+        Agent's own environment or .env: an orchestrator that brokers
+        credentials lists the ones it hands no value for, and a step that uses
+        one then fails saying so instead of signing in with a value the
+        orchestrator never released.
         """
         if problem := _bad_inputs(inputs):
             return ExecutionStatus(error=_error(ErrorCode.INVALID_REQUEST, f"Invalid inputs: {problem}."))
         if problem := _bad_inputs(secrets, secrets=True):
             return ExecutionStatus(error=_error(ErrorCode.INVALID_REQUEST, f"Invalid secrets: {problem}."))
+        if problem := _bad_names(withhold):
+            return ExecutionStatus(error=_error(ErrorCode.INVALID_REQUEST, f"Invalid withhold: {problem}."))
         entry = catalog.get(flow, inputs)
         if entry is None:
             return ExecutionStatus(error=_error(
@@ -239,7 +270,7 @@ def build_server(config: AdapterConfig) -> FastMCP:
                 flow_id=entry.info.id, flow_path=entry.path, environment=env.name,
                 hosts=entry.info.hosts, profile=profile,
                 label=labels.get("build_name") or f"{entry.info.title} · {env.name}",
-                metadata=labels, inputs=inputs, secrets=secrets)
+                metadata=labels, inputs=inputs, secrets=secrets, withheld=withhold)
         except OSError as exc:
             return ExecutionStatus(flow=entry.info.id, environment=env.name, error=_error(
                 ErrorCode.EXECUTION_START_FAILED, f"The execution could not be created: {exc}"))

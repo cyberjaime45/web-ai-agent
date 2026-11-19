@@ -29,9 +29,24 @@ class PlaceholderError(RuntimeError):
 
 
 def is_sensitive(var_name: str) -> bool:
-    """Return True if the env var name contains a sensitive keyword."""
+    """Whether the variable holds something to keep out of the report: its name contains a sensitive keyword,
+    or the run was handed it as a secret whatever its name (the Web Agent MCP lists those names, never their
+    values, in ``WEB_AGENT_SECRET_NAMES``: a seed, a pin, a user name an orchestrator brokers)."""
     upper = var_name.upper()
-    return any(kw in upper for kw in _SENSITIVE_KEYWORDS)
+    return any(kw in upper for kw in _SENSITIVE_KEYWORDS) or var_name in _named("WEB_AGENT_SECRET_NAMES")
+
+
+def _named(variable: str) -> frozenset[str]:
+    return frozenset(n for n in os.environ.get(variable, "").split(",") if n)
+
+
+def mask_sensitive_values(text: str) -> str:
+    """*text* with the value of every sensitive variable of this run masked: for words about a step that are
+    made from its filled-in arguments (what a failed step was expected to do) rather than from its text."""
+    values = sorted({v for n, v in os.environ.items() if v and len(v) >= 4 and is_sensitive(n)}, key=len, reverse=True)
+    for value in values:
+        text = text.replace(value, _MASK)
+    return text
 
 
 def placeholder_names(text: str) -> list[str]:
@@ -94,9 +109,17 @@ def resolve_env_placeholders(action: FlowAction) -> FlowAction:
 
 
 def _unfilled_message(names: list[str], action: FlowAction) -> str:
+    where = f"step {action.step_num}" + (f" in section '{action.section}'" if action.section else "")
+    # names the orchestrator of this run withheld (the Web Agent MCP sets them to nothing, so that neither this
+    # process's environment nor .env fills them): the advice to set them here would be wrong
+    # (worded as any unset variable is, so that it is diagnosed as the flow's setup: observability.diagnosis)
+    if kept_back := [n for n in names if n in _named("WEB_AGENT_WITHHELD")]:
+        problems = "; ".join(f"Variable '{n}' is not set" for n in kept_back)
+        return (f"{problems} for this run — the orchestrator that started it handed no value, and the Web "
+                f"Agent's own environment and .env are not used for {'them' if len(kept_back) > 1 else 'it'} "
+                f"(referenced in {where}: {action.raw!r})")
     problems = "; ".join(
         f"Variable '{n}' is {'empty' if n in os.environ else 'not set'}" for n in names)
-    where = f"step {action.step_num}" + (f" in section '{action.section}'" if action.section else "")
     return f"{problems} — set it in .env or the CI variables (referenced in {where}: {action.raw!r})"
 
 

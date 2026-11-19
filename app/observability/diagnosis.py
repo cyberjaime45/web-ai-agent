@@ -30,6 +30,7 @@ import re
 from typing import Any
 
 from app.execution import oracle
+from app.flow.placeholders import mask_sensitive_values
 from app.schemas.actions import ActionType, StepResult
 from app.utils.urls import LOGIN_RE
 
@@ -204,7 +205,8 @@ def expected_of(action: Any) -> str:
     v = args[1] if len(args) > 1 else ""
     template = _EXPECTED.get(action.type)
     if template:
-        return template.format(t=t, v=v)
+        # the arguments are the filled-in ones: a password or any other secret of the run is not repeated here
+        return mask_sensitive_values(template.format(t=t, v=v))
     return f"{action.type.value.replace('_', ' ')}{' ' + repr(t) if t else ''} completes"
 
 
@@ -261,7 +263,9 @@ def _diagnose(sr: StepResult, page: Any, section: tuple[list, list], notes: list
     # ── framework: the flow or its setup, not the site ──
     if m := _PLACEHOLDER_RE.search(error):
         signals.append(f"placeholder {{{m.group(1)}}} has no value")
-        conclude("framework", f"{m.group(1)} is {m.group(2)} in the environment (.env or CI variables).")
+        conclude("framework", f"{m.group(1)} was handed no value by the orchestrator that started this run."
+                 if "the orchestrator that started it handed no value" in error else
+                 f"{m.group(1)} is {m.group(2)} in the environment (.env or CI variables).")
     if re.search(r"sub-flow|nesting depth|Circular flow", error):
         signals.append("the flow could not be assembled")
         conclude("framework", "The flow references a sub-flow that could not be loaded.")

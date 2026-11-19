@@ -303,6 +303,10 @@
         "secrets": {
           "type": "null|object",
           "required": false
+        },
+        "withhold": {
+          "type": "array|null",
+          "required": false
         }
       },
       "outputs": {
