@@ -229,7 +229,30 @@ reports/_executions/web-2676df41967b/
 
 A finished execution can be read by a later server process. One that was
 running when its server stopped is reported `FAILED`: stopping the server
-stops its runs.
+stops its runs. A server that is killed outright cannot stop them (each run is
+a process group of its own); the next server to start on the same executions
+folder does, once, as it starts: it interrupts the run so that it writes the
+report of what it finished (up to 10 seconds, or the stop grace if shorter),
+kills it and whatever is left in its process group, and closes its record as
+`FAILED`. A run that had finished by itself is closed by the report it left;
+one that could not be stopped keeps its record and is tried again at the next
+start. (A browser is not in the run's process group: it goes when the driver
+the run started for it does.)
+
+Who is still alive is told by file locks, which the operating system drops
+when a process ends: a server holds `<executions>/.servers/<id>.lock`, a run
+holds its folder's `run.lock`, and a record names its server and its machine.
+A run is stopped only while its own lock is held and its server's is seen
+free. So a process that merely has a run's number is not signalled, and these
+are left alone: the runs of another server still working on the same folder,
+of a server whose lock file was removed or that could hold none, and records
+written on another machine (or by this one under another name). Where it
+cannot be told whether a run's server is alive, the record is read as `FAILED`
+only once the run is a minute past its time limit and stop grace; nothing is
+signalled or written for it. `cancel_execution` on another living server's run
+returns it as it stands: only its own server stops it. A server of an earlier
+version still running during an upgrade holds no lock: its unfinished records
+are closed as `FAILED` and written again by that server when its runs end.
 
 ## Limits (Phase 1)
 
@@ -238,7 +261,11 @@ stops its runs.
 - Only catalog flows can be run: no inline Markdown, no `--agent-test` URL.
 - Execution folders are not cleaned up automatically.
 - If the server process is killed outright (`kill -9`), a run in progress
-  finishes on its own and is not tracked.
+  goes on until a server starts again on the same executions folder and stops
+  it. Its record is then `FAILED`; `get_result` still returns whatever report
+  it wrote. A run killed before its process number was written down cannot be
+  stopped, and a run of a server killed later is not stopped until the next
+  start.
 
 ## Tests
 
