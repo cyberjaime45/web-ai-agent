@@ -242,6 +242,15 @@ class Exploration(BaseModel):
     generated_flow: GeneratedFlow | None = None
 
 
+class ExecutionLogs(BaseModel):
+    """The last lines of what a run printed (tool ``get_logs``): the test runner's own console output."""
+    execution_id: str | None = None
+    lines: list[str] = Field(default_factory=list)
+    source: str = ""                    # which log: "console.log"
+    truncated: bool = False             # the log has more lines before these
+    error: ErrorInfo | None = None
+
+
 class ExecutionResult(BaseModel):
     execution_id: str | None = None
     status: ExecutionState | None = None

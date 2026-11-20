@@ -129,6 +129,28 @@
         "path": "string"
       }
     },
+    "get_logs": {
+      "inputs": {
+        "execution_id": {
+          "type": "string",
+          "required": true
+        },
+        "lines": {
+          "type": "integer",
+          "required": false
+        }
+      },
+      "outputs": {
+        "error": "null|object",
+        "error.code": "enum[INVALID_REQUEST,ENVIRONMENT_NOT_ALLOWED,EXECUTION_NOT_FOUND,EXECUTION_START_FAILED,EXECUTION_TIMEOUT,RESULT_NOT_AVAILABLE,WEB_AGENT_ERROR]",
+        "error.details": "object",
+        "error.message": "string",
+        "execution_id": "null|string",
+        "lines": "array",
+        "source": "string",
+        "truncated": "boolean"
+      }
+    },
     "get_result": {
       "inputs": {
         "execution_id": {

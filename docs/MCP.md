@@ -47,6 +47,7 @@ event, with `execution_id` and the caller's `task_id` when it sent one.
 | `run_flow` | `flow`, `environment`, `profile?`, `metadata?`, `inputs?`, `secrets?`, `withhold?` | An execution id and `QUEUED`, at once |
 | `get_status` | `execution_id` | `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED` or `TIMED_OUT`, plus progress |
 | `get_result` | `execution_id` | Test totals, each failure with its step, message, likely cause and evidence files, warnings, report paths |
+| `get_logs` | `execution_id`, `lines` (50; at most 500) | The last lines the run printed (its console output), with the value of every credential the Web Agent holds masked. A run that was handed `secrets` gives none (`RESULT_NOT_AVAILABLE`) |
 | `cancel_execution` | `execution_id` | The status after stopping |
 
 Every answer has an `error` field: `null`, or `{code, message, details}`.

@@ -49,6 +49,17 @@ def tail(path: Path, lines: int = 40) -> list[str]:
         return []
 
 
+def log_tail(path: Path, lines: int) -> tuple[list[str], bool]:
+    """``(the last *lines* lines of a log, whether it has more before them)``; nothing when it cannot be read."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            kept = deque(fh, maxlen=lines + 1)
+    except OSError:
+        return [], False
+    more = len(kept) > lines
+    return [line.rstrip("\n") for line in list(kept)[-lines:]], more
+
+
 def _clip(text: Any) -> str:
     text = "" if text is None else str(text)
     return text if len(text) <= _MAX_TEXT else text[:_MAX_TEXT] + " …[truncated]"
