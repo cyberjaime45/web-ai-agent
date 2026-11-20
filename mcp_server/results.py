@@ -9,9 +9,15 @@ not say by itself: whether the *execution* worked.
 from __future__ import annotations
 
 import json
+import os
 from collections import deque
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, quote_plus
+
+from dotenv import dotenv_values
+
+from app.flow.placeholders import is_sensitive
 
 from mcp_server.models import (
     CaseOutcome,
@@ -49,6 +55,48 @@ def tail(path: Path, lines: int = 40) -> list[str]:
         return []
 
 
+_MASK = "******"
+_MAX_LOG_LINE = 2000                # characters of one line: a page dumped on one line is cut
+
+
+def credential_values(project_root: Path | None) -> list[str]:
+    """What to mask in console output: the values this Web Agent holds for variables whose names mark them as
+    credentials (``is_sensitive``: PASSWORD, SECRET, KEY, TOKEN) — its own environment and the .env its runs load
+    — as written, as a URL carries them, and line by line when a value spans lines (a private key). Longest
+    first, so a value that contains another is masked whole. Read when asked, never kept. A credential under
+    another name, or one shown transformed some other way, is not known here and is not masked."""
+    held: dict[str, str | None] = dict(os.environ)
+    if project_root is not None:
+        held = {**dotenv_values(project_root / ".env"), **held}
+    found: set[str] = set()
+    for name, value in held.items():
+        if not value or len(value) < 4 or not is_sensitive(name):
+            continue
+        found |= {value, quote(value, safe=""), quote_plus(value)}
+        if "\n" in value:              # a line of output holds a line of it at most
+            found |= {line.strip() for line in value.splitlines() if len(line.strip()) >= 8}
+    return sorted(found, key=len, reverse=True)
+
+
+def masked(line: str, values: list[str]) -> str:
+    for value in values:
+        line = line.replace(value, _MASK)
+    return line if len(line) <= _MAX_LOG_LINE else line[:_MAX_LOG_LINE] + " …[cut]"
+
+
+def safe_tail(console_log: Path, *, secret_run: bool, project_root: Path | None, lines: int = 40) -> list[str]:
+    """The console's last lines for an error's details: none for a run that was handed secrets (nothing here can
+    tell their values from the rest), the agent's own credentials masked otherwise, none when they cannot be read
+    to mask."""
+    if secret_run:
+        return []
+    try:
+        values = credential_values(project_root)
+    except (OSError, ValueError):
+        return []
+    return [masked(line, values) for line in tail(console_log, lines)]
+
+
 def log_tail(path: Path, lines: int) -> tuple[list[str], bool]:
     """``(the last *lines* lines of a log, whether it has more before them)``; nothing when it cannot be read."""
     try:
@@ -68,7 +116,8 @@ def _clip(text: Any) -> str:
 # ── Did the execution work? ──────────────────────────────────────────────────
 
 def judge(report_dir: Path, console_log: Path, exit_code: int | None, *,
-          timed_out: bool, cancelled: bool, timeout_seconds: float) -> tuple[ExecutionState, ErrorInfo | None]:
+          timed_out: bool, cancelled: bool, timeout_seconds: float, secret_run: bool = False,
+          project_root: Path | None = None) -> tuple[ExecutionState, ErrorInfo | None]:
     """The final state of a finished run.
 
     COMPLETED means the Web Agent ran the flow and reported on it — failed
@@ -87,14 +136,14 @@ def judge(report_dir: Path, console_log: Path, exit_code: int | None, *,
         return ExecutionState.FAILED, ErrorInfo(
             code=ErrorCode.WEB_AGENT_ERROR,
             message=f"The Web Agent exited with code {exit_code} without writing a report.",
-            details={**details, "console_tail": tail(console_log)})
+            details={**details, "console_tail": safe_tail(console_log, secret_run=secret_run, project_root=project_root)})
 
     status = summary.get("status")
     if status not in _COMPLETED:
         return ExecutionState.FAILED, ErrorInfo(
             code=ErrorCode.WEB_AGENT_ERROR,
             message=f"The Web Agent reported the run as {status!r}: it did not complete normally.",
-            details={**details, "console_tail": tail(console_log)})
+            details={**details, "console_tail": safe_tail(console_log, secret_run=secret_run, project_root=project_root)})
 
     tests = (read_json(report_dir / "test_cases.json") or {}).get("tests") or []
     broken = [t for t in tests if _kind(t) == "execution_error"]
@@ -104,7 +153,7 @@ def judge(report_dir: Path, console_log: Path, exit_code: int | None, *,
         return ExecutionState.FAILED, ErrorInfo(
             code=ErrorCode.WEB_AGENT_ERROR,
             message=f"The flow could not start: {message}",
-            details={**details, "console_tail": tail(console_log)})
+            details={**details, "console_tail": safe_tail(console_log, secret_run=secret_run, project_root=project_root)})
     return ExecutionState.COMPLETED, None
 
 

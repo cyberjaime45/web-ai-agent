@@ -479,20 +479,63 @@ def test_a_run_that_was_handed_secrets_gives_no_log(scratch: Path):
 
 
 def test_the_agent_s_own_credentials_are_masked_in_a_log(tmp_path: Path, monkeypatch):
+    from urllib.parse import quote
+
     from mcp_server import results
-    from mcp_server.server import _credential_values, _masked
-    (tmp_path / ".env").write_text("ATLAS_PASSWORD=from-the-env-file\nATLAS_URL=https://atlas.example\nPIN_KEY=abc\n")
-    monkeypatch.setenv("API_TOKEN", "from-the-environment")
+    (tmp_path / ".env").write_text(
+        'ATLAS_PASSWORD=from-the-env-file\nATLAS_URL=https://atlas.example\nPIN_KEY=abc\n'
+        'SIGNING_KEY="-----BEGIN KEY-----\nline-one-of-the-key\nline-two-of-the-key\n-----END KEY-----"\n')
+    monkeypatch.setenv("API_TOKEN", "p@ss word/1")
     monkeypatch.setenv("LONG_SECRET", "from-the-environment-and-more")
-    values = _credential_values(tmp_path)
-    assert {"from-the-env-file", "from-the-environment", "from-the-environment-and-more"} <= set(values)
+    values = results.credential_values(tmp_path)
+    assert {"from-the-env-file", "p@ss word/1", "from-the-environment-and-more"} <= set(values)
     assert "https://atlas.example" not in values and "abc" not in values     # not a credential; too short to mask
     line = "typed from-the-env-file at https://atlas.example with from-the-environment-and-more"
-    assert _masked(line, values) == "typed ****** at https://atlas.example with ******"
-    assert _masked("x" * 3000, values).endswith(" …[cut]") and len(_masked("x" * 3000, values)) < 2100
-    assert _credential_values(tmp_path / "no-such-folder") is not None       # no .env: the environment's alone
+    assert results.masked(line, values) == "typed ****** at https://atlas.example with ******"
+    assert results.masked(f"GET /login?token={quote('p@ss word/1', safe='')}", values) == "GET /login?token=******"
+    assert results.masked("key: line-two-of-the-key", values) == "key: ******"       # a value that spans lines
+    assert results.masked("x" * 3000, values).endswith(" …[cut]") and len(results.masked("x" * 3000, values)) < 2100
+    assert results.credential_values(tmp_path / "no-such-folder") is not None       # no .env: the environment's alone
     log = tmp_path / "console.log"
     log.write_text("one\ntwo\nthree\n")
     assert results.log_tail(log, 2) == (["two", "three"], True) and results.log_tail(log, 3) == (["one", "two", "three"], False)
     assert results.log_tail(tmp_path / "missing.log", 5) == ([], False)
 
+
+def test_an_error_s_console_tail_is_as_careful_as_the_log(tmp_path: Path, monkeypatch):
+    from mcp_server import results
+    monkeypatch.setenv("ATLAS_PASSWORD", "the-agents-own-password")
+    console = tmp_path / "console.log"
+    console.write_text("starting\nfilled the-agents-own-password\ncrashed\n")
+    judged = {"timed_out": False, "cancelled": False, "timeout_seconds": 60.0, "project_root": tmp_path}
+    _, plain = results.judge(tmp_path / "report", console, 3, **judged)
+    assert plain.details["console_tail"] == ["starting", "filled ******", "crashed"]
+    _, secret = results.judge(tmp_path / "report", console, 3, secret_run=True, **judged)
+    assert secret.details["console_tail"] == []                     # a run handed secrets: none of it
+    (tmp_path / ".env").write_bytes(b"\xff\xfe not text")
+    _, unreadable = results.judge(tmp_path / "report", console, 3, **judged)
+    assert unreadable.details["console_tail"] == []                 # nothing could be masked: nothing is given
+
+
+def test_a_record_that_does_not_say_it_was_handed_no_secrets_gives_no_log(scratch: Path):
+    """A Web Agent before 1.5.2 wrote no `traced`: such a run may have been handed secrets."""
+    from mcp_server.executions import ExecutionManager
+
+    async def scenario():
+        async with _session(_env(scratch)) as session:
+            started = await _call(session, "run_flow", flow="passing.md", environment="local")
+            await _finish(session, started["execution_id"])
+            return started["execution_id"]
+    execution_id = asyncio.run(scenario())
+    folder = scratch / "executions" / execution_id
+    record = json.loads((folder / "execution.json").read_text())
+    assert ExecutionManager._read(folder).traced is True
+    for untold in ({k: v for k, v in record.items() if k != "traced"}, {**record, "traced": "true"}):
+        (folder / "execution.json").write_text(json.dumps(untold))
+        assert ExecutionManager._read(folder).traced is False
+
+    async def after_a_restart():
+        async with _session(_env(scratch)) as session:
+            logs = await _call(session, "get_logs", execution_id=execution_id)
+            assert logs["lines"] == [] and logs["error"]["code"] == "RESULT_NOT_AVAILABLE"
+    asyncio.run(after_a_restart())
