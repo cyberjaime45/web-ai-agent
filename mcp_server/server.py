@@ -4,6 +4,7 @@
     run_flow               start one flow against one environment → execution id
     get_status             where an execution is
     get_result             what it found: totals, failures with evidence, report files
+    get_logs               the last lines it printed, credentials masked
     cancel_execution       stop it
     describe_capabilities  the actions, skills and flow format a flow may use
     get_flow               a flow's content and catalog entry
@@ -44,6 +45,7 @@ from mcp_server.models import (
     Capabilities,
     ErrorCode,
     ErrorInfo,
+    ExecutionLogs,
     ExecutionResult,
     ExecutionState,
     ExecutionStatus,
@@ -62,12 +64,14 @@ _INSTRUCTIONS = (
     "The Web Agent MCP: the interface to the Web Agent, which runs Markdown test flows in a real browser. Call list_flows to see the flows "
     "and the environments each may run against, run_flow to start one, get_status until the status "
     "is COMPLETED, FAILED, CANCELLED or TIMED_OUT, then get_result. A COMPLETED execution may still "
-    "contain failed tests: read the result. FAILED means the Web Agent itself could not run the flow. "
+    "contain failed tests: read the result. FAILED means the Web Agent itself could not run the flow; "
+    "get_logs gives the last lines the run printed. "
     "To write a flow: describe_capabilities for the actions and format, explore_page to inspect a page "
     "and get a draft, validate_flow, then save_flow."
 )
-_TOOLS = ["list_flows", "run_flow", "get_status", "get_result", "cancel_execution",
+_TOOLS = ["list_flows", "run_flow", "get_status", "get_result", "cancel_execution", "get_logs",
           "describe_capabilities", "get_flow", "validate_flow", "save_flow", "explore_page"]
+_MAX_LOG_LINES = 500
 _MAX_METADATA = 20
 _MAX_INPUTS = 20
 _INPUT_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -390,6 +394,36 @@ def build_server(config: AdapterConfig) -> FastMCP:
         # A stopped or broken run may still have reported what finished before it stopped.
         report = results.build_result(execution.report_dir) or {}
         return base.model_copy(update={**report, "error": execution.error_info()})
+
+    @server.tool(annotations=READ_ONLY)
+    async def get_logs(execution_id: str, lines: int = 50) -> ExecutionLogs:
+        """The last lines the run printed (the test runner's console output), for when the result does not say
+        enough: at most 500, a running execution's too. The values of this Web Agent's own credentials (the
+        variables named PASSWORD, SECRET, KEY or TOKEN in its environment and its .env) are masked as written
+        and as a URL carries them; a credential under another name, or shown transformed, is not. A run that was
+        handed `secrets` gives no log: nothing here can tell their values from the rest of the output, so its
+        result and report (which mask them) are what there is.
+        """
+        execution = manager.get(execution_id)
+        if execution is None:
+            return ExecutionLogs(execution_id=execution_id, error=_error(
+                ErrorCode.EXECUTION_NOT_FOUND, f"No execution {execution_id!r}."))
+        if not execution.traced:
+            return ExecutionLogs(execution_id=execution_id, source="console.log", error=_error(
+                ErrorCode.RESULT_NOT_AVAILABLE,
+                f"Execution {execution_id} was handed credentials (or its record does not say it was not): its "
+                "console output is not given out. Its result and its report mask them."))
+        try:
+            values = await asyncio.to_thread(results.credential_values, config.project_root)
+        except (OSError, ValueError) as exc:        # the .env cannot be read: nothing could be masked, nothing is given
+            return ExecutionLogs(execution_id=execution_id, source="console.log", error=_error(
+                ErrorCode.RESULT_NOT_AVAILABLE,
+                f"The Web Agent's .env could not be read to mask its credentials ({type(exc).__name__}): no "
+                "console output is given out."))
+        count = max(1, min(int(lines), _MAX_LOG_LINES))
+        tail, more = await asyncio.to_thread(results.log_tail, execution.console_log, count)
+        return ExecutionLogs(execution_id=execution_id, source="console.log", truncated=more,
+                             lines=[results.masked(line, values) for line in tail])
 
     @server.tool()
     async def cancel_execution(execution_id: str) -> ExecutionStatus:

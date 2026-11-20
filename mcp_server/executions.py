@@ -294,7 +294,8 @@ class ExecutionManager:
                 state, error = results.judge(
                     execution.report_dir, execution.console_log, execution.exit_code,
                     timed_out=timed_out, cancelled=execution.cancel_requested,
-                    timeout_seconds=self._config.timeout_seconds)
+                    timeout_seconds=self._config.timeout_seconds, secret_run=not execution.traced,
+                    project_root=self._config.project_root)
                 self._finish(execution, state, error)
         except asyncio.CancelledError:
             if process is not None and process.returncode is None:
@@ -428,7 +429,10 @@ class ExecutionManager:
         write: every field that is acted on is checked for what it must be)."""
         record = results.read_json(folder / "execution.json")
         try:
-            execution = Execution(**{**record, "state": ExecutionState(record["state"])})
+            # a record that does not say, as a plain true, that the run was handed no secrets is taken as one that
+            # was (a Web Agent before 1.5.2 wrote no such field): its console output is never given out
+            execution = Execution(**{**record, "state": ExecutionState(record["state"]),
+                                     "traced": record.get("traced") is True})
         except (KeyError, TypeError, ValueError):
             return None
         pid, plain = execution.pid, lambda v: v is None or isinstance(v, str)       # noqa: E731
@@ -548,7 +552,9 @@ class ExecutionManager:
         if not going and lock_free(execution.run_lock) is True and execution.started_at is not None:
             # it ended by itself after its server was gone: what it reported stands
             judged, problem = results.judge(execution.report_dir, execution.console_log, None, timed_out=False,
-                                            cancelled=False, timeout_seconds=self._config.timeout_seconds)
+                                            cancelled=False, timeout_seconds=self._config.timeout_seconds,
+                                            secret_run=not execution.traced,
+                                            project_root=self._config.project_root)
             if judged is ExecutionState.COMPLETED:
                 state, error = judged, problem
         execution.state, execution.finished_at = state, time.time()
